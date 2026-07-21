@@ -1,16 +1,24 @@
+<div align="center">
+
+<img src="assets/logo-card.svg" alt="Velociportal logo" width="128" height="128" />
+
 # Velociportal
 
-> **Concept stage — no code yet.** This repo captures the design for a potential future project.
+### Your network access policy *is* your dashboard policy.
 
-Identity-aware service dashboard that integrates Headscale/Tailscale ACLs with Nginx Proxy Manager to dynamically generate per-user application portals. Your network access policy **is** your dashboard policy.
+Identity-aware service dashboard that reads Headscale/Tailscale ACLs and Nginx Proxy Manager proxy hosts to render per-user portals. Each user sees only the services their ACL groups grant access to — no separate dashboard permissions to maintain.
 
-**[Documentation](https://cybersader.github.io/velociportal/)**
+**Complements IdPs (Authentik, Authelia, Keycloak) — doesn't replace them.**
 
-## What it does
+[![Docs](https://github.com/cybersader/velociportal/actions/workflows/docs.yml/badge.svg)](https://github.com/cybersader/velociportal/actions/workflows/docs.yml)
 
-Velociportal reads your Tailscale ACL policy and NPM proxy host list, correlates them, and renders a per-user portal — each user sees only the services their ACL groups grant access to. No separate dashboard permissions to maintain.
+[Documentation](https://cybersader.github.io/velociportal/) · [How it works](#how-it-works) · [Reference architectures](#reference-architectures) · [Roadmap](#roadmap)
 
-**It complements IdPs (Authentik, Authelia, Keycloak) — it doesn't replace them.** The IdP handles authentication and access enforcement. Velociportal handles visibility: what shows up on the dashboard.
+</div>
+
+---
+
+## How it works
 
 ```
 Headscale ACL ──┐
@@ -19,38 +27,57 @@ NPM proxy hosts─┘     (matches ACLs     (alice sees App1, App3)
                         to services)     (bob sees App1, App2, App4)
 ```
 
-## Reference Architectures
+Velociportal polls two APIs on a background timer:
+
+1. **Headscale** `GET /api/v1/policy` — groups, tag owners, ACL rules
+2. **NPM** `GET /api/nginx/proxy-hosts` — services, domains, forward targets
+
+It caches both in memory, then on each request reads the Tailscale identity headers (`Tailscale-User-Login`, `Tailscale-User-Name`) from the trusted proxy, resolves which ACL groups the user belongs to, filters the cached services down to the authorized set, and renders only those as service cards.
+
+The IdP still handles authentication, SSO, and access enforcement. Velociportal just makes the dashboard reflect what the network already permits.
+
+## Tech stack
+
+Single Docker container. Single static Go binary (`FROM scratch`).
+
+| Layer | Choice |
+|---|---|
+| Language | Go 1.22 (stdlib HTTP, `encoding/json`) |
+| Templates | Server-rendered HTML with `html/template` |
+| Interactivity | htmx (embedded, no CDN) |
+| Identity | Tailscale Serve headers from trusted proxy CIDR |
+| Container | Multi-stage build → `FROM scratch` + CA certs |
+| Target | TrueNAS Scale, any Docker host |
+
+## Reference architectures
 
 | Architecture | Control Plane | Reverse Proxy | Status |
 |---|---|---|---|
-| [Headscale + NPM](https://cybersader.github.io/velociportal/guides/headscale-npm/) | Self-hosted | Nginx Proxy Manager | Primary |
+| [Headscale + NPM](https://cybersader.github.io/velociportal/guides/headscale-npm/) | Self-hosted | Nginx Proxy Manager | **Primary** |
 | [Tailscale SaaS + NPM](https://cybersader.github.io/velociportal/guides/tailscale-saas-npm/) | Managed | Nginx Proxy Manager | Planned |
 | [Headscale + Caddy](https://cybersader.github.io/velociportal/guides/headscale-caddy/) | Self-hosted | Caddy | Future |
 | [Headscale + Traefik](https://cybersader.github.io/velociportal/guides/headscale-traefik/) | Self-hosted | Traefik | Future |
 
-## IdP Integrations
-
 Works standalone with Tailscale identity headers, or pair with an IdP for SSO and MFA:
-
-- [Authentik](https://cybersader.github.io/velociportal/integrations/authentik/) — Full IdP with forward-auth
-- [Authelia](https://cybersader.github.io/velociportal/integrations/authelia/) — Lightweight auth middleware
-- [No IdP](https://cybersader.github.io/velociportal/integrations/no-idp/) — Tailscale identity headers only
-
-## Tech Stack
-
-Single Docker container. Go + templ + htmx. Minimal dependencies. Designed for TrueNAS Scale.
+[Authentik](https://cybersader.github.io/velociportal/integrations/authentik/) ·
+[Authelia](https://cybersader.github.io/velociportal/integrations/authelia/) ·
+[No IdP](https://cybersader.github.io/velociportal/integrations/no-idp/)
 
 ## Roadmap
 
-- [ ] Read NPM proxy hosts via API
-- [ ] Read Headscale ACL policy via API
-- [ ] ACL-to-service matching engine
-- [ ] Per-user portal rendering (Tailscale identity headers)
-- [ ] Web UI with service cards
-- [ ] Docker Compose deployment
-- [ ] Caddy / Traefik adapter support
+- [x] Headscale API client (policy, users, nodes)
+- [x] NPM API client (proxy hosts, access lists, JWT auth)
+- [x] Background polling cache with atomic swap
+- [x] Tailscale identity middleware with trusted proxy CIDR
+- [x] ACL-to-service matching engine
+- [x] Per-user portal rendering (server-side filtered)
+- [x] Service card UI with htmx auto-refresh
+- [x] Multi-stage Dockerfile (`FROM scratch`)
+- [x] Unit tests (matcher, auth, config)
+- [ ] Docker Compose deployment example
+- [ ] Health check dashboard
 - [ ] Custom service metadata (icons, descriptions)
-- [ ] Health checks for proxied services
+- [ ] Caddy / Traefik adapter support
 
 ## License
 
