@@ -1,0 +1,66 @@
+site_name: Velociportal
+site_description: Identity-aware service dashboard — your Tailscale ACLs drive your dashboard
+site_url: https://cybersader.github.io/velociportal
+repo_url: https://github.com/cybersader/velociportal
+repo_name: cybersader/velociportal
+
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: deep purple
+      accent: amber
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: deep purple
+      accent: amber
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - content.code.copy
+    - content.tabs.link
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - search.highlight
+  icon:
+    repo: fontawesome/brands/github
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - attr_list
+  - md_in_html
+  - toc:
+      permalink: true
+
+nav:
+  - Home: index.md
+  - Concept:
+    - Overview: concept/overview.md
+    - How It Works: concept/how-it-works.md
+    - Alternatives: concept/alternatives.md
+  - Reference Architectures:
+    - guides/index.md
+    - Headscale + NPM: guides/headscale-npm.md
+    - Tailscale SaaS + NPM: guides/tailscale-saas-npm.md
+    - Headscale + Caddy: guides/headscale-caddy.md
+    - Headscale + Traefik: guides/headscale-traefik.md
+  - IdP Integrations:
+    - integrations/index.md
+    - Authentik: integrations/authentik.md
+    - Authelia: integrations/authelia.md
+    - No IdP (Tailscale Only): integrations/no-idp.md
+  - Reference:
+    - Headscale API: reference/headscale-api.md
+    - NPM API: reference/npm-api.md
+    - Tailscale Identity Headers: reference/tailscale-headers.md
