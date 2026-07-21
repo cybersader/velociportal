@@ -1,0 +1,11 @@
+# Workspace file for portagenty. See:
+# https://cybersader.github.io/portagenty/reference/schema/
+name = "velociportal"
+id = "2a8e0f75-4861-456e-b4dc-24323a4cedf8"
+multiplexer = "zellij"
+
+[[session]]
+name = "shell"
+cwd = "."
+command = "bash"
+kind = "shell"
