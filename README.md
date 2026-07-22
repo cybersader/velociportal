@@ -81,4 +81,4 @@ Works standalone with Tailscale identity headers, or pair with an IdP for SSO an
 
 ## License
 
-TBD
+[MIT](./LICENSE)
