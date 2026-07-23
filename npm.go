@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"sync"
@@ -72,6 +73,7 @@ type TokenResponse struct {
 }
 
 func (c *NPMClient) authenticate(ctx context.Context) error {
+	start := time.Now()
 	body, err := json.Marshal(map[string]string{
 		"identity": c.email,
 		"secret":   c.password,
@@ -109,6 +111,7 @@ func (c *NPMClient) authenticate(ctx context.Context) error {
 
 	c.token = tr.Token
 	c.tokenExpiry = expiry
+	slog.Info("npm: authenticated", "duration", time.Since(start))
 	return nil
 }
 
@@ -172,6 +175,7 @@ func (c *NPMClient) doRequest(ctx context.Context, method, path string) (*http.R
 }
 
 func (c *NPMClient) FetchProxyHosts(ctx context.Context) ([]ProxyHost, error) {
+	start := time.Now()
 	resp, err := c.doRequest(ctx, http.MethodGet, "/api/nginx/proxy-hosts")
 	if err != nil {
 		return nil, fmt.Errorf("FetchProxyHosts: %w", err)
@@ -182,10 +186,12 @@ func (c *NPMClient) FetchProxyHosts(ctx context.Context) ([]ProxyHost, error) {
 	if err := json.NewDecoder(resp.Body).Decode(&hosts); err != nil {
 		return nil, fmt.Errorf("FetchProxyHosts: %w", err)
 	}
+	slog.Debug("npm: fetched proxy hosts", "count", len(hosts), "duration", time.Since(start))
 	return hosts, nil
 }
 
 func (c *NPMClient) FetchAccessLists(ctx context.Context) ([]AccessList, error) {
+	start := time.Now()
 	resp, err := c.doRequest(ctx, http.MethodGet, "/api/nginx/access-lists")
 	if err != nil {
 		return nil, fmt.Errorf("FetchAccessLists: %w", err)
@@ -196,5 +202,6 @@ func (c *NPMClient) FetchAccessLists(ctx context.Context) ([]AccessList, error) 
 	if err := json.NewDecoder(resp.Body).Decode(&lists); err != nil {
 		return nil, fmt.Errorf("FetchAccessLists: %w", err)
 	}
+	slog.Debug("npm: fetched access lists", "count", len(lists), "duration", time.Since(start))
 	return lists, nil
 }

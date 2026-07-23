@@ -30,8 +30,8 @@ func TestLoadConfig(t *testing.T) {
 		if cfg.HeadscaleURL != "http://headscale:8080" {
 			t.Errorf("HeadscaleURL = %q", cfg.HeadscaleURL)
 		}
-		if cfg.ListenAddr != ":8080" {
-			t.Errorf("ListenAddr = %q, want :8080", cfg.ListenAddr)
+		if cfg.ListenAddr != "127.0.0.1:8080" {
+			t.Errorf("ListenAddr = %q, want 127.0.0.1:8080", cfg.ListenAddr)
 		}
 		if cfg.PollInterval.String() != "30s" {
 			t.Errorf("PollInterval = %v, want 30s", cfg.PollInterval)

@@ -36,7 +36,7 @@ func loadConfig() (*Config, error) {
 		NPMURL:          os.Getenv("NPM_URL"),
 		NPMEmail:        os.Getenv("NPM_EMAIL"),
 		NPMPassword:     os.Getenv("NPM_PASSWORD"),
-		ListenAddr:      envOr("LISTEN_ADDR", ":8080"),
+		ListenAddr:      envOr("LISTEN_ADDR", "127.0.0.1:8080"),
 	}
 
 	missing := []string{}
@@ -113,6 +113,7 @@ func run() error {
 
 	mux := http.NewServeMux()
 	mux.Handle("GET /", IdentityMiddleware(cfg.TrustedProxyCIDR, NewPortalHandler(cache)))
+	mux.Handle("GET /portal", IdentityMiddleware(cfg.TrustedProxyCIDR, NewPortalHandler(cache)))
 	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServerFS(static)))
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		age := time.Since(cache.LastUpdated())
@@ -131,7 +132,7 @@ func run() error {
 
 	errCh := make(chan error, 1)
 	go func() {
-		slog.Info("listening", "addr", cfg.ListenAddr, "poll_interval", cfg.PollInterval.String())
+		slog.Info("listening", "addr", cfg.ListenAddr, "poll_interval", cfg.PollInterval.String(), "trusted_proxy_cidr", cfg.TrustedProxyCIDR.String())
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- err
 		}

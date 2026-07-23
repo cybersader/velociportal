@@ -1,0 +1,59 @@
+# Velociportal — example Docker Compose deployment.
+#
+# 1. Copy .env.example to .env and fill in the required values.
+# 2. Run: docker compose up -d --build
+#
+# Velociportal is a visibility layer, not an auth layer. Keep it behind your
+# trusted reverse proxy (the one that injects the Tailscale identity headers)
+# and never expose it directly on the LAN.
+
+services:
+  velociportal:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: velociportal:latest
+    container_name: velociportal
+    restart: unless-stopped
+
+    # Load the required secrets/config from .env (see .env.example).
+    env_file: .env
+
+    environment:
+      # Inside a container the app must bind to the container interface, not
+      # loopback, or the published port below will never reach it. This
+      # overrides the app default of 127.0.0.1:8080 (which is correct only for
+      # bare-metal runs behind a local proxy).
+      LISTEN_ADDR: ${LISTEN_ADDR:-0.0.0.0:8080}
+      POLL_INTERVAL: ${POLL_INTERVAL:-30s}
+      # The proxy that forwards requests here lives on the Docker bridge, so
+      # trust that range by default. Tighten this to the exact proxy IP/CIDR.
+      TRUSTED_PROXY_CIDR: ${TRUSTED_PROXY_CIDR:-172.17.0.0/16}
+
+    ports:
+      # host:container — adjust the host side (left) and/or the container side
+      # (right) to match the port in LISTEN_ADDR if you change it.
+      - "8080:8080"
+
+    # FROM scratch image: no writable dirs are needed at runtime.
+    read_only: true
+
+    # Drop all privileges — the process runs as uid 65534 (nobody).
+    security_opt:
+      - no-new-privileges:true
+
+    # Health check hits the app's /healthz endpoint, which reports 503 while the
+    # in-memory cache is empty or stale (older than 3x POLL_INTERVAL).
+    #
+    # NOTE: the `FROM scratch` image ships ONLY the static binary + CA certs —
+    # there is no shell, wget, or curl inside the container, so an exec-style
+    # HEALTHCHECK cannot run. Probe /healthz from your reverse proxy or an
+    # external monitor instead. The block below is kept commented as a template
+    # for anyone who rebuilds on a base image that includes wget/curl.
+    #
+    # healthcheck:
+    #   test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/healthz"]
+    #   interval: 30s
+    #   timeout: 3s
+    #   retries: 3
+    #   start_period: 40s

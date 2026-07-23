@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"html"
 	"io"
@@ -10,8 +9,6 @@ import (
 	"strings"
 	"time"
 )
-
-const staleAfter = 5 * time.Minute
 
 type PortalHandler struct {
 	cache *Cache
@@ -34,47 +31,15 @@ func (h *PortalHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	start := time.Now()
 	cards := MatchServices(identity, data)
+	slog.Info("portal request", "login", identity.Login, "cards", len(cards))
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := renderPortal(w, identity, cards); err != nil {
 		slog.Error("render portal", "login", identity.Login, "err", err)
 	}
-}
-
-type HealthHandler struct {
-	cache *Cache
-}
-
-func (h *HealthHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	data := h.cache.Get()
-
-	switch {
-	case data == nil || data.UpdatedAt.IsZero():
-		writeJSON(w, http.StatusServiceUnavailable, map[string]any{
-			"status": "unavailable",
-		})
-	case time.Since(data.UpdatedAt) > staleAfter:
-		writeJSON(w, http.StatusServiceUnavailable, map[string]any{
-			"status":      "stale",
-			"last_update": data.UpdatedAt.UTC().Format(time.RFC3339),
-		})
-	default:
-		writeJSON(w, http.StatusOK, map[string]any{
-			"status":      "ok",
-			"last_update": data.UpdatedAt.UTC().Format(time.RFC3339),
-			"services":    len(data.ProxyHosts),
-			"users":       len(data.Users),
-		})
-	}
-}
-
-func writeJSON(w http.ResponseWriter, status int, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	if err := json.NewEncoder(w).Encode(v); err != nil {
-		slog.Error("encode json", "err", err)
-	}
+	slog.Debug("portal rendered", "login", identity.Login, "duration", time.Since(start))
 }
 
 func renderPortal(w io.Writer, id *Identity, cards []ServiceCard) error {
@@ -83,6 +48,12 @@ func renderPortal(w io.Writer, id *Identity, cards []ServiceCard) error {
 		body.WriteString(`<p class="empty">No services are available to your account.</p>`)
 	}
 	for _, c := range cards {
+		// Scheme allowlist: only render cards whose URL is an http(s) link.
+		// A malicious NPM entry could otherwise inject a javascript:/data: URL.
+		if !strings.HasPrefix(c.URL, "http://") && !strings.HasPrefix(c.URL, "https://") {
+			slog.Warn("skipping card with disallowed URL scheme", "service", c.Name)
+			continue
+		}
 		fmt.Fprintf(&body,
 			`<a class="card" href="%s" data-service="%s"><span class="card-name">%s</span></a>`,
 			html.EscapeString(c.URL),
@@ -107,6 +78,7 @@ const portalPage = `<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" type="image/svg+xml" href="/static/logo.svg">
 <title>Velociportal</title>
 <style>
 :root { color-scheme: light dark; }
