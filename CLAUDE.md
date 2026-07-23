@@ -18,7 +18,7 @@ Velociportal is a self-hosted, identity-aware service dashboard that bridges **H
 
 ## Current stage
 
-**Concept / Pre-development — no code exists yet.** This repo captures the design. Before writing any implementation, confirm the approach against the hard constraints below and record non-trivial decisions in `knowledgebase/`.
+**Sprint 1 complete — core implementation exists and is tested.** The codebase has a working Go binary with API clients, ACL matching, identity middleware, and a server-rendered portal. 58 tests pass with `-race`. CI runs on push/PR. See `knowledgebase/04-handoff-context.md` for detailed state. Confirm changes against the hard constraints below and record non-trivial decisions in `knowledgebase/`.
 
 ## Hard constraints (locked)
 

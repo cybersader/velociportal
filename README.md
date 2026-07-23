@@ -74,7 +74,12 @@ Works standalone with Tailscale identity headers, or pair with an IdP for SSO an
 - [x] Service card UI with htmx auto-refresh
 - [x] Multi-stage Dockerfile (`FROM scratch`)
 - [x] Unit tests (matcher, auth, config)
-- [ ] Docker Compose deployment example
+- [x] Docker Compose deployment example
+- [x] Integration tests (API clients, full request flow)
+- [x] GitHub Actions CI (vet, test, build, Docker verify)
+- [x] Security hardening (non-root container, scheme allowlist, listen addr)
+- [x] Structured logging (slog) across all subsystems
+- [x] ACL matching: CIDRs, tags, host aliases, autogroups
 - [ ] Health check dashboard
 - [ ] Custom service metadata (icons, descriptions)
 - [ ] Caddy / Traefik adapter support
