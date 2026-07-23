@@ -5,9 +5,13 @@
 
 ## Current stage
 
-**Concept only. No code exists.** The repo is an idea placeholder: a README
-capturing the vision, a `portagenty` workspace file, and this knowledgebase. Nothing
-has been built or prototyped yet.
+**Sprint 1 complete. Core implementation exists and is tested.** The codebase has
+a working Go binary with all major subsystems implemented: API clients (Headscale +
+NPM), background polling cache, identity middleware, ACL-to-service matching engine,
+and a server-rendered portal with htmx auto-refresh.
+
+58 unit and integration tests pass with `-race`. CI runs on push/PR via GitHub
+Actions (vet + test + build + Docker verify).
 
 ## What's already decided (don't relitigate — see 02)
 
@@ -15,47 +19,68 @@ has been built or prototyped yet.
 - Single container, `FROM scratch`, target TrueNAS Scale.
 - Data sources: Headscale `/api/v1/policy` + NPM `/api/nginx/proxy-hosts`. No config DB.
 - Identity via Tailscale headers; headers trusted only from the proxy path.
-- Stack: **Go + templ + htmx**, static binary, stdlib-first.
+- Stack: **Go 1.22 + stdlib HTTP + htmx**, static binary, zero external deps.
 - Server-side authorization before render; card-hiding is UX, not enforcement.
 
-## What to do first when development starts
+## What's implemented
 
-1. **Prove the two reads end-to-end** (thinnest possible spike, no UI):
-   - Hit Headscale `GET /api/v1/policy` with a Bearer key; parse `groups`,
-     `tagOwners`, `acls`. Confirm the shape against **your** server's
-     `/api/v1/docs` — versions differ.
-   - Hit NPM `POST /api/tokens` → JWT → `GET /api/nginx/proxy-hosts?expand=access_list`.
-     Confirm proxy-host + access-list shapes against the running instance
-     (`/api/schema` is incomplete; cross-check the web UI Audit Log).
-2. **Dump both into structs** and eyeball a real dataset — the matching design (D6)
-   depends on what the join key actually looks like in practice.
-3. **Scaffold the cache goroutine** (`time.Ticker` + `RWMutex`/atomic pointer,
-   per-request `context` timeouts) before any rendering — it's the backbone.
-4. **Then** wire templ + htmx to render cards from the cache, filtered server-side.
-5. Stand up the multi-stage Dockerfile early so the `scratch` image constraint
-   shapes the code from the start.
+- **Headscale client** (`headscale.go`): fetches policy (huJSON-aware), users, nodes.
+  Unwraps gRPC-gateway envelopes. Structured slog logging.
+- **NPM client** (`npm.go`): JWT auth with auto-reauth on 401. Fetches proxy hosts
+  and access lists. Structured logging.
+- **Cache** (`cache.go`): background goroutine on `time.Ticker`, atomic pointer swap,
+  per-request context timeouts. Partial failure keeps stale data.
+- **Identity middleware** (`auth.go`): trusts `Tailscale-User-*` headers only from
+  `TRUSTED_PROXY_CIDR`. Logs identity extraction at debug level.
+- **ACL matcher** (`matcher.go`): resolves user → groups, matches against ACL rules.
+  Supports exact IPs, CIDRs, tags (resolved to node IPs), Policy.Hosts aliases,
+  `autogroup:internet`, `autogroup:self`. IPv6-safe `stripPort`.
+- **Portal handler** (`handlers.go`): renders per-user service cards. Scheme
+  allowlist (http/https only). Favicon. Request logging with timing.
+- **Deployment**: multi-stage Dockerfile (non-root, scratch), docker-compose.yml,
+  .env.example, GitHub Actions CI, Makefile with run/docker/test targets.
 
-## Key questions to resolve
+## Test coverage
 
-- **ACL ↔ proxy-host join (the crux):** how do we map an NPM proxy host to an ACL
-  rule? Candidates: match on `forward_host`/`domain_names`, on a Headscale tag, or
-  on CIDR from the ACL `acls` destinations. Likely a **combination** — prototype
-  against real data before committing (D6 open detail).
-- **Headscale vs Tailscale SaaS:** primary target is self-hosted **Headscale**
-  (Bearer auth). Do we also support Tailscale SaaS (Basic/OAuth, 1h token) at v1, or
-  defer? Leaning defer — one target first.
-- **Identity source per deployment:** Tailscale **Serve** headers vs tailscaled
-  **whois** (nginx-auth pattern). Which is the documented default? May need to
-  support both; pick one for v1.
-- **Group resolution edge cases:** groups can't nest (Headscale), users are listed
-  as `alice@`. Confirm the exact user-identifier format matches what the Tailscale
-  identity header (`Tailscale-User-Login`) provides, so the join actually lands.
-- **Stale tags:** Headscale has needed a reload for new node tags to take effect in
-  ACL eval (issue #2389). Decide whether/how the portal surfaces staleness.
-- **Metadata decoration:** icons/descriptions/categories aren't in either API. If we
-  add them, where — a small mounted config file? (Keep it decoration, never a second
-  permission model, per D3.)
-- **License:** still TBD in the README.
+| File | Tests | Status |
+|---|---|---|
+| matcher.go | matcher_test.go | Thorough (IP, CIDR, tags, hosts, autogroup, IPv6, tagOwners) |
+| auth.go | auth_test.go | Core threat model (trusted/untrusted/spoofed/missing) |
+| main.go (config) | config_test.go | Required env, defaults, invalid inputs |
+| headscale.go | headscale_test.go | httptest (policy/huJSON/users/nodes/errors/auth header) |
+| npm.go | npm_test.go | httptest (auth flow, token reuse, 401 reauth, access lists) |
+| handlers.go | handlers_test.go | Full flow (per-user visibility, XSS, scheme, empty cache) |
+| cache.go | — | **Untested** (refresh, ticker, partial failure) |
+
+## What to do next
+
+1. **Test against real APIs.** Deploy with a real Headscale + NPM instance. The
+   huJSON parsing and ACL matching were built from API docs — real data will reveal
+   edge cases in field shapes, user identifier formats, and the ACL↔proxy-host join.
+2. **Online/offline status indicators.** Cards have the `Online` field from NPM's
+   `meta.nginx_online` but no visual indicator in the template.
+3. **Light mode CSS.** Template declares `color-scheme: light dark` but only has dark
+   styles. Add a `prefers-color-scheme: light` media query.
+4. **Service metadata config.** Neither API provides icons or descriptions. Design a
+   small mounted config file for decoration (icons, display names, categories) that
+   does not become a second permission model.
+5. **Cache tests.** `cache.go` has zero test coverage — test refresh, partial failure
+   behavior, and the ticker goroutine.
+6. **Docker Compose deployment example validation.** Verify the compose file works
+   end-to-end with real services.
+7. **Health check dashboard.** The inline `/healthz` works but could surface more
+   detail (per-upstream status, last error, cache age).
+
+## Key questions still open
+
+- **ACL ↔ proxy-host join refinement:** current matcher uses `ForwardHost` (the NPM
+  backend IP). Real deployments may need domain-name-based matching or NPM
+  `access_list_id` as a secondary signal. Prototype against real data.
+- **`autogroup:internet` semantics:** currently treated as match-all (`*`). In real
+  Tailscale it means exit-node traffic to the public internet. May over-grant
+  visibility for policies that use it.
+- **Headscale vs Tailscale SaaS:** primary target is self-hosted Headscale (Bearer
+  auth). Tailscale SaaS support (OAuth, 1h token) deferred.
 
 ## Pointers
 
@@ -64,3 +89,4 @@ has been built or prototyped yet.
 - API specifics + snippets: `knowledgebase/01-api-research.md`
 - Locked decisions: `knowledgebase/02-design-decisions.md`
 - Similar tools + reusable clients: `knowledgebase/03-prior-art.md`
+- Deep research report: `knowledgebase/05-deep-research.md`
