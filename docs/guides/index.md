@@ -1,22 +1,75 @@
-```markdown
-# Reference Architectures
+# Choose an architecture
 
-Velociportal is a thin authorization layer that sits behind your reverse proxy and alongside your tailnet control plane. It does not care much which specific proxy or control plane you run — it works with several common combinations.
+Start with the only implemented adapter pair, then choose where to run it. Velociportal is a **visibility layer**: it reads policy and service metadata, renders a filtered dashboard, and stays out of backend service traffic.
 
-!!! note "Velociportal complements your IdP"
-    Velociportal does **not** replace your identity provider. Authentication still happens at your IdP (Authelia, Authentik, Pocket ID, etc.). Velociportal reads the identity your IdP asserts and decides what tailnet-fronted services that user may reach.
+!!! note "Current support boundary"
+    **Headscale + Nginx Proxy Manager (NPM)** is the implemented and fixture-tested adapter pair. Tailscale SaaS, Caddy, and Traefik pages are design notes, not deployable integrations.
 
-## Supported stacks
+## Architecture cards
 
-| Architecture | Notes |
-|---|---|
-| [Headscale + NPM](headscale-npm.md) | Primary, most tested. Self-hosted control plane + Nginx Proxy Manager. |
-| [Tailscale SaaS + NPM](tailscale-npm.md) | Managed control plane from Tailscale, same NPM front door. |
-| [Headscale + Caddy](headscale-caddy.md) | Alternative reverse proxy with automatic TLS. |
-| [Headscale + Traefik](headscale-traefik.md) | Alternative reverse proxy with label-driven routing. |
+<div class="grid cards" markdown>
 
-Each guide includes the full `docker-compose.yml` and shows exactly how Velociportal connects to that stack (e.g. `headscale.example.com`, `npm.example.com`).
+-   :material-check-decagram-outline: **Headscale + NPM**
 
-!!! tip "Start here"
-    New to Velociportal? Use **Headscale + NPM** — it is the reference implementation the other guides build on.
-```
+    <span class="vp-chip vp-chip--supported">Implemented</span>
+    <span class="vp-chip vp-chip--validation">Real join validation pending</span>
+
+    Reads Headscale policy and nodes, discovers services from NPM, and matches supported legacy ACL destinations against NPM `forward_host`.
+
+    [Use the supported architecture →](headscale-npm.md)
+
+-   :material-cloud-outline: **Tailscale SaaS + NPM**
+
+    <span class="vp-chip vp-chip--planned">Planned</span>
+
+    No SaaS API client, OAuth/API-key configuration, tailnet selector, or Grants implementation exists.
+
+    [Read the design boundary →](tailscale-saas-npm.md)
+
+-   :material-webhook: **Headscale + Caddy**
+
+    <span class="vp-chip vp-chip--planned">Planned</span>
+
+    No Caddy admin API client, Caddyfile parser, route model, or service-discovery adapter exists.
+
+    [Read the design boundary →](headscale-caddy.md)
+
+-   :material-router-network: **Headscale + Traefik**
+
+    <span class="vp-chip vp-chip--planned">Planned</span>
+
+    No Traefik router/service API client, Docker-label parser, or adapter configuration exists.
+
+    [Read the design boundary →](headscale-traefik.md)
+
+</div>
+
+## Pick your next page
+
+=== "I want to deploy now"
+
+    1. Follow the [guided setup](../getting-started/setup.md).
+    2. Use the [TrueNAS SCALE guide](truenas-scale.md) for the canonical NAS deployment.
+    3. Read [Known Limitations](../reference/known-limitations.md).
+    4. Validate at least two users, direct bypass rejection, every card URL, and the `forward_host` join.
+
+=== "I want Headscale off the NAS"
+
+    Read [VPS options for Headscale](vps-headscale.md), then return to the TrueNAS guide. A VPS can separate coordination from NAS reboots, but it adds cost, another security surface, and another backup domain.
+
+=== "I need another adapter"
+
+    Do not translate planned pages into configuration that the runtime does not support. The current binary reads Headscale and NPM only. New adapters require an explicit model, fixtures, safe failure behavior, and real API validation.
+
+## Responsibility map
+
+| Layer | Owns | Does not delegate to Velociportal |
+|---|---|---|
+| Headscale | Network policy and tailnet coordination | Actual authorization remains enforced here |
+| Identity proxy / Tailscale Serve path | Human identity assertion and header sanitization | Source trust cannot be inferred by a header name alone |
+| NPM | Public routing and service metadata | Access lists are not current visibility inputs |
+| Velociportal | Supported policy-to-card visibility prediction | No login, traffic proxying, or request enforcement |
+| Backend application | Application authorization and data access | A hidden card is not a backend security control |
+
+!!! tip "Recommended route"
+    Use **Headscale + NPM**, deploy through the guided path, and treat the first installation as a validation exercise rather than proof of full Tailscale policy parity.

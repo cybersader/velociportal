@@ -1,101 +1,77 @@
-# Tailscale Identity Headers
+# Tailscale identity headers
 
-Velociportal reads identity from **Tailscale Serve** headers to know *who* is behind a request. This page covers the headers, how they arrive, and why spoofing is the central thing to defend against.
+Velociportal uses a small, fixed header contract to identify a human viewer. A header is accepted only when the TCP source address is inside `TRUSTED_PROXY_CIDR`.
 
-!!! note "Velociportal complements your IdP — it does not replace it"
-    Tailscale (or Headscale) still handles the actual authentication. Users log in through your existing IdP — Google, GitHub, Okta, an OIDC provider, whatever Headscale is wired to. Velociportal only *consumes* the identity Tailscale has already established. It is an authorization/routing layer, not an identity provider.
+<div class="vp-chip-row" aria-label="Identity request outcomes">
+<span class="vp-chip vp-chip--supported">Trusted source + login: evaluated</span>
+<span class="vp-chip vp-chip--security">Untrusted source: 403</span>
+<span class="vp-chip vp-chip--validation">Trusted source without login: 401</span>
+</div>
 
-## The headers
+## Supported headers
 
-When `tailscale serve` proxies an HTTPS request from a human user on your tailnet, it injects these headers:
+| Header | Required | Purpose |
+|---|---:|---|
+| `Tailscale-User-Login` | Yes | Stable login used for policy and group matching |
+| `Tailscale-User-Name` | No | Display name |
+| `Tailscale-User-Profile-Pic` | No | Optional profile URL; accepted but not currently rendered |
 
-| Header | Example value | Description |
-| --- | --- | --- |
-| `Tailscale-User-Login` | `alice@example.com` | Canonical login / identity. Use this as the stable key. |
-| `Tailscale-User-Name` | `Alice Smith` | Display name. Cosmetic — do not authorize on it. |
-| `Tailscale-User-Profile-Pic` | `https://.../avatar.png` | Avatar URL. Optional, cosmetic. |
+The runtime does not accept `X-Webauth-*`, `Remote-User`, or IdP-specific identity headers.
 
-!!! warning "These headers appear only for human users"
-    - **Tagged devices** (nodes with `tag:` ACL tags, e.g. CI runners, servers) have **no user identity** and Serve sends **no** `Tailscale-User-*` headers. Do not assume every request carries identity.
-    - **Funnel traffic** (public internet via `tailscale funnel`) is **not** on your tailnet, so these headers are **never** set. Treat Funnel requests as anonymous.
+## Trusted route versus rejected bypass
 
-## How the headers arrive
+```mermaid
+flowchart LR
+    accTitle: Trusted identity route and rejected bypass routes
+    accDescr: A human request through the trusted identity proxy has client identity headers removed and a verified Tailscale user login injected. Velociportal accepts it only when the source is inside the configured trusted CIDR. A direct request with a forged header is rejected with 403. A request from the trusted source without a login is rejected with 401.
 
-Tailscale Serve terminates TLS on the node and adds the identity headers based on the tailnet identity of the source. Critically:
+    Human["Human tailnet user"] --> Proxy["Trusted identity proxy<br/>strip client headers<br/>inject verified login"]
+    Proxy --> Check{"Source inside<br/>TRUSTED_PROXY_CIDR?"}
+    Check -->|"yes + login present"| Evaluate["Evaluate supported ACL rules<br/>render matching cards"]
 
-!!! danger "Serve strips inbound spoofed headers"
-    `tailscale serve` **removes any client-supplied `Tailscale-User-*` headers** and re-sets them itself. A remote client cannot forge identity *through* Serve. The trust boundary is the Serve process — everything downstream must ensure requests can *only* reach it via Serve.
+    Direct["Direct or bypass request<br/>even with forged login"] --> Reject403["403 · untrusted source"]
+    Missing["Trusted source<br/>login header missing"] --> Reject401["401 · no identity"]
 
-## The nginx-auth pattern
-
-The common wiring puts an auth service behind `auth_request`. Serve proxies to nginx over a **unix socket**; nginx calls an internal auth endpoint that validates the `Tailscale-User-*` headers and **re-emits them as `X-Webauth-*`** for the upstream app. Re-emitting under a distinct prefix means the app trusts one namespace it controls, not the raw Tailscale headers.
-
-```nginx title="nginx.conf"
-server {
-    # Serve connects here over a unix socket, not a public TCP port.
-    listen unix:/run/velociportal/serve.sock;
-
-    location = /auth {
-        internal;
-        # Auth service reads Tailscale-User-* and returns X-Webauth-* on 200.
-        proxy_pass http://unix:/run/velociportal/auth.sock:/verify;
-        proxy_pass_request_body off;
-        proxy_set_header Content-Length "";
-        proxy_set_header X-Original-URI $request_uri;
-    }
-
-    location / {
-        auth_request /auth;
-
-        # Capture re-emitted identity from the auth subrequest...
-        auth_request_set $webauth_user  $upstream_http_x_webauth_user;
-        auth_request_set $webauth_name  $upstream_http_x_webauth_name;
-
-        # ...and pass ONLY the trusted X-Webauth-* prefix upstream.
-        proxy_set_header X-Webauth-User $webauth_user;
-        proxy_set_header X-Webauth-Name $webauth_name;
-
-        proxy_pass http://npm.example.com:81;
-    }
-}
+    class Human,Proxy identity
+    class Check core
+    class Evaluate accepted
+    class Direct,Missing output
+    class Reject403,Reject401 rejected
 ```
 
-!!! tip "Always clear the incoming X-Webauth-* namespace"
-    Explicitly blank any client-supplied `X-Webauth-*` headers at the edge so nothing bypasses the auth subrequest. The only place these get set is the `auth_request_set` block above.
+<p class="vp-diagram-note">Outcomes are written in each node and edge. Red or green styling is not the only way to distinguish accepted and rejected requests.</p>
 
-## How Velociportal reads them
+!!! danger "The proxy path is the security boundary"
+    If a client can bypass the trusted proxy and connect to Velociportal directly, it can attempt to forge `Tailscale-User-Login`. Keep the host publication loopback-only or behind an equivalent private network boundary, and use the narrowest trusted source CIDR.
 
-Velociportal trusts identity headers **only** when the request originates from a known proxy. Configure the CIDR(s) of your Serve/nginx layer:
+## What Tailscale Serve guarantees
 
-=== "docker-compose"
+Tailscale documents that Serve removes incoming client-supplied versions of the `Tailscale-User-*` headers before adding values derived from the tailnet identity. It does not populate them for tagged devices or Funnel traffic. Tailscale also recommends binding the backend to localhost to prevent bypass.
 
-    ```yaml
-    services:
-      velociportal:
-        image: velociportal:latest
-        environment:
-          # Only accept X-Webauth-* / Tailscale-User-* from these sources.
-          TRUSTED_PROXY_CIDR: "127.0.0.1/32,10.0.0.0/8"
-        # Prefer binding to the unix socket / internal network only.
-    ```
+Source: [Tailscale Serve documentation](https://tailscale.com/docs/features/tailscale-serve).
 
-=== "env"
+## What Velociportal additionally checks
 
-    ```bash
-    TRUSTED_PROXY_CIDR="127.0.0.1/32,10.0.0.0/8"
-    ```
+A correctly named header is still rejected unless the request source is inside `TRUSTED_PROXY_CIDR`.
 
-If a request comes from outside `TRUSTED_PROXY_CIDR`, Velociportal **ignores** any identity headers on it and treats the request as unauthenticated. Set this to the narrowest range that covers your proxy — ideally loopback or a unix socket only.
+Determine the source from the actual deployment path:
 
-## Security: header spoofing is the threat model
+- Host Serve to a host-native process commonly appears as `127.0.0.1`.
+- Host Serve reaching a loopback-published **bridged container** commonly appears inside that container as the Docker bridge gateway, not `127.0.0.1`.
+- A proxy container may appear as its container IP or bridge gateway.
+- Host networking and chained proxies can change the observed source.
 
-The entire scheme rests on one invariant: **the app must never be reachable except through the proxy that sets identity.** If an attacker can hit Velociportal (or the upstream app) directly, they can send `Tailscale-User-Login: admin@example.com` and impersonate anyone.
+Use the exact `/32` where practical. If a subnet is necessary, use the smallest subnet that contains only trusted proxy instances.
 
-!!! danger "Checklist"
-    - Bind the app and Velociportal to a **unix socket or internal-only interface** — never publish the app's port to the host or LAN.
-    - Set `TRUSTED_PROXY_CIDR` to the smallest possible range.
-    - Let **Serve** strip inbound `Tailscale-User-*`; let **nginx** own the `X-Webauth-*` namespace.
-    - Remember: no headers means no identity. Tagged devices and Funnel traffic must be handled as anonymous, not trusted.
+The [guided setup](../getting-started/setup.md) puts `make observe-proxy` before preflight and startup so the operator must make this trust decision explicitly.
 
-!!! note "Reminder"
-    None of this authenticates users — Tailscale/Headscale and your IdP already did. Velociportal just decides what an already-authenticated identity is allowed to reach.
+## Headscale HTTPS Serve limitation
+
+Tailscale's automatic HTTPS Serve uses its `*.ts.net` DNS and certificate-provisioning flow. Headscale tracks HTTPS Serve support as an open feature gap: [headscale#1921](https://github.com/juanfont/headscale/issues/1921). TLS on the Headscale control-server URL is a separate concern and does not provide per-node Serve certificates.
+
+Safe documented alternatives are:
+
+1. Tailnet-only HTTP Serve, with the browser origin remaining HTTP while the tailnet transport stays WireGuard-encrypted.
+2. An identity-aware HTTPS proxy you operate, which derives the caller from a trusted Tailscale identity source, strips client headers, and injects only the supported contract.
+
+See the [TrueNAS deployment guide](../guides/truenas-scale.md#identity-publication) for the operational commands and limitations.

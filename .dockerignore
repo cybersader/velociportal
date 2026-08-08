@@ -1,0 +1,9 @@
+# Deny by default: only inputs required to compile the static binary enter the
+# Docker build context. This keeps arbitrary operator configuration and secrets
+# out of local or remote builder caches regardless of their filename.
+**
+!go.mod
+!go.sum
+!*.go
+!assets/
+!assets/**

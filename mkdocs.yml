@@ -1,43 +1,65 @@
 site_name: Velociportal
-site_description: Identity-aware service dashboard — your Tailscale ACLs drive your dashboard
+site_description: Identity-aware service visibility derived from Headscale ACLs and Nginx Proxy Manager
 site_url: https://cybersader.github.io/velociportal
 repo_url: https://github.com/cybersader/velociportal
 repo_name: cybersader/velociportal
 
+copyright: Velociportal is a visibility layer, not an authentication or enforcement layer.
+
 theme:
   name: material
+  logo: assets/logo-card.svg
+  favicon: assets/logo-card.svg
+  font: false
   palette:
-    - scheme: default
-      primary: deep purple
-      accent: amber
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: custom
+      accent: custom
       toggle:
         icon: material/brightness-7
         name: Switch to dark mode
-    - scheme: slate
-      primary: deep purple
-      accent: amber
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: custom
+      accent: custom
       toggle:
         icon: material/brightness-4
         name: Switch to light mode
   features:
     - content.code.copy
     - content.tabs.link
+    - content.tooltips
+    - navigation.footer
+    - navigation.indexes
     - navigation.sections
-    - navigation.expand
+    - navigation.tabs
     - navigation.top
     - search.highlight
+    - search.share
+    - toc.follow
   icon:
     repo: fontawesome/brands/github
+
+extra_css:
+  - assets/stylesheets/extra.css
 
 markdown_extensions:
   - admonition
   - pymdownx.details
-  - pymdownx.superfences
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
   - pymdownx.tabbed:
       alternate_style: true
   - pymdownx.highlight:
       anchor_linenums: true
   - pymdownx.inlinehilite
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
   - attr_list
   - md_in_html
   - toc:
@@ -45,22 +67,30 @@ markdown_extensions:
 
 nav:
   - Home: index.md
-  - Concept:
-    - Overview: concept/overview.md
-    - How It Works: concept/how-it-works.md
-    - Alternatives: concept/alternatives.md
-  - Reference Architectures:
-    - guides/index.md
-    - Headscale + NPM: guides/headscale-npm.md
-    - Tailscale SaaS + NPM: guides/tailscale-saas-npm.md
-    - Headscale + Caddy: guides/headscale-caddy.md
-    - Headscale + Traefik: guides/headscale-traefik.md
-  - IdP Integrations:
-    - integrations/index.md
-    - Authentik: integrations/authentik.md
-    - Authelia: integrations/authelia.md
-    - No IdP (Tailscale Only): integrations/no-idp.md
+  - Start here:
+      - Guided setup: getting-started/setup.md
+      - Validate a real deployment: getting-started/validation.md
+  - Choose an architecture:
+      - Architecture overview: guides/index.md
+      - Headscale + NPM: guides/headscale-npm.md
+      - Tailscale SaaS + NPM (planned): guides/tailscale-saas-npm.md
+      - Headscale + Caddy (planned): guides/headscale-caddy.md
+      - Headscale + Traefik (planned): guides/headscale-traefik.md
+  - Deploy:
+      - TrueNAS SCALE: guides/truenas-scale.md
+      - VPS for Headscale: guides/vps-headscale.md
+  - Integrate identity:
+      - Integration overview: integrations/index.md
+      - No IdP / Tailscale identity: integrations/no-idp.md
+      - Authentik: integrations/authentik.md
+      - Authelia: integrations/authelia.md
+  - Understand:
+      - Concept overview: concept/overview.md
+      - How it works: concept/how-it-works.md
+      - Alternatives: concept/alternatives.md
   - Reference:
-    - Headscale API: reference/headscale-api.md
-    - NPM API: reference/npm-api.md
-    - Tailscale Identity Headers: reference/tailscale-headers.md
+      - CLI and Make targets: reference/cli.md
+      - Known limitations: reference/known-limitations.md
+      - Headscale API: reference/headscale-api.md
+      - NPM API: reference/npm-api.md
+      - Tailscale identity headers: reference/tailscale-headers.md

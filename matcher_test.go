@@ -1,6 +1,7 @@
 package main
 
 import (
+	"reflect"
 	"testing"
 )
 
@@ -9,11 +10,12 @@ func TestNormalizeLogin(t *testing.T) {
 		input string
 		want  string
 	}{
-		{"alice@example.com", "alice@"},
+		{"alice@example.com", "alice@example.com"},
 		{"alice@", "alice@"},
 		{"alice", "alice@"},
-		{"bob@corp.net", "bob@"},
-		{"", "@"},
+		{"bob@corp.net", "bob@corp.net"},
+		{"", ""},
+		{"   ", ""},
 	}
 	for _, tt := range tests {
 		if got := normalizeLogin(tt.input); got != tt.want {
@@ -56,80 +58,83 @@ func TestStripPort(t *testing.T) {
 func TestBuildIdentitySet(t *testing.T) {
 	policy := &Policy{
 		Groups: map[string][]string{
-			"group:admin": {"alice@example.com", "bob@"},
-			"group:dev":   {"charlie@example.com"},
+			"group:exact":        {"alice@example.com"},
+			"group:other-domain": {"alice@other.example"},
+			"group:short":        {"alice@"},
+			"group:legacy":       {"alice"},
+			"group:bob":          {"bob@"},
 		},
 		TagOwners: map[string][]string{
-			"tag:server": {"group:admin"},
-			"tag:ci":     {"charlie@example.com"},
+			"tag:server": {"group:exact"},
 		},
 	}
 
-	t.Run("member of group", func(t *testing.T) {
-		id := &Identity{Login: "alice@example.com"}
-		set := buildIdentitySet(id, policy)
+	t.Run("full login matches only its exact identity", func(t *testing.T) {
+		set := buildIdentitySet(&Identity{Login: "alice@example.com"}, policy)
 
-		for _, want := range []string{"alice@", "group:admin"} {
+		for _, want := range []string{"alice@example.com", "group:exact"} {
 			if !set[want] {
 				t.Errorf("expected %q in identity set", want)
 			}
 		}
-		if set["group:dev"] {
-			t.Error("alice should not be in group:dev")
-		}
-		// Bug 3 fix: tagOwners only controls who may ASSIGN a tag; being an owner
-		// must NOT put the tag in the identity set.
-		if set["tag:server"] {
-			t.Error("owning tag:server via tagOwners must not add it to the identity set")
-		}
-	})
-
-	t.Run("member of group via short login", func(t *testing.T) {
-		id := &Identity{Login: "bob@"}
-		set := buildIdentitySet(id, policy)
-
-		if !set["group:admin"] {
-			t.Error("bob@ should be in group:admin")
-		}
-		if set["tag:server"] {
-			t.Error("tag:server must not be granted via tagOwners")
+		for _, unwanted := range []string{
+			"alice@", "alice", "group:short", "group:legacy",
+			"alice@other.example", "group:other-domain", "tag:server",
+		} {
+			if set[unwanted] {
+				t.Errorf("did not expect %q in identity set", unwanted)
+			}
 		}
 	})
 
-	t.Run("tag owner by direct login does not get the tag", func(t *testing.T) {
-		id := &Identity{Login: "charlie@example.com"}
-		set := buildIdentitySet(id, policy)
+	t.Run("short login matches short and legacy policy members only", func(t *testing.T) {
+		set := buildIdentitySet(&Identity{Login: "alice@"}, policy)
 
-		if !set["group:dev"] {
-			t.Error("charlie should be in group:dev")
+		for _, want := range []string{"alice@", "alice", "group:short", "group:legacy"} {
+			if !set[want] {
+				t.Errorf("expected %q in identity set", want)
+			}
 		}
-		if set["tag:ci"] {
-			t.Error("owning tag:ci via tagOwners must not add it to the identity set")
+		if set["group:exact"] || set["group:other-domain"] {
+			t.Error("a short login must not satisfy a fully qualified policy member")
 		}
 	})
 
-	t.Run("unknown user gets only login", func(t *testing.T) {
-		id := &Identity{Login: "nobody@example.com"}
-		set := buildIdentitySet(id, policy)
+	t.Run("legacy bare login matches explicit short policy member", func(t *testing.T) {
+		set := buildIdentitySet(&Identity{Login: "alice"}, policy)
 
-		if !set["nobody@"] {
-			t.Error("should have normalized login")
+		if !set["alice@"] || !set["alice"] || !set["group:short"] || !set["group:legacy"] {
+			t.Errorf("legacy bare login did not get expected short identities: %v", set)
 		}
-		if len(set) != 1 {
-			t.Errorf("unknown user should have 1 entry, got %d", len(set))
+		if set["group:exact"] {
+			t.Error("a legacy bare login must not satisfy a fully qualified policy member")
+		}
+	})
+
+	t.Run("blank login yields no identities", func(t *testing.T) {
+		if set := buildIdentitySet(&Identity{Login: "   "}, policy); len(set) != 0 {
+			t.Errorf("blank login should have no identities, got %v", set)
 		}
 	})
 }
 
 func TestSrcGranted(t *testing.T) {
-	ids := map[string]bool{"alice@": true, "group:admin": true}
+	ids := map[string]bool{
+		"alice@example.com": true,
+		"alice@":            true,
+		"alice":             true,
+		"group:admin":       true,
+	}
 
 	tests := []struct {
 		src  []string
 		want bool
 	}{
 		{[]string{"*"}, true},
+		{[]string{"alice@example.com"}, true},
 		{[]string{"alice@"}, true},
+		{[]string{"alice"}, true},
+		{[]string{"alice@other.example"}, false},
 		{[]string{"group:admin"}, true},
 		{[]string{"bob@"}, false},
 		{[]string{"group:dev"}, false},
@@ -187,7 +192,7 @@ func TestDstMatchesAdvanced(t *testing.T) {
 		{"unknown tag never matches", []string{"tag:unknown:*"}, "10.0.0.1", false},
 		{"host alias to ip", []string{"webserver:443"}, "10.0.0.5", true},
 		{"host alias to cidr", []string{"lan:*"}, "10.0.0.42", true},
-		{"autogroup:internet matches all", []string{"autogroup:internet"}, "10.0.0.99", true},
+		{"autogroup:internet fails closed", []string{"autogroup:internet"}, "10.0.0.99", false},
 		{"autogroup:self matches own node", []string{"autogroup:self:*"}, "100.64.0.9", true},
 		{"autogroup:self excludes others", []string{"autogroup:self:*"}, "100.64.0.1", false},
 		{"unsupported autogroup skipped", []string{"autogroup:member:*"}, "10.0.0.1", false},
@@ -250,6 +255,46 @@ func TestMatchServices(t *testing.T) {
 		}
 	})
 
+	t.Run("fully qualified source identities do not collide across domains", func(t *testing.T) {
+		iso := &CacheData{
+			Policy: &Policy{ACLs: []ACLRule{
+				{Action: "accept", Src: []string{"alice@example.com"}, Dst: []string{"10.0.0.10:*"}},
+				{Action: "accept", Src: []string{"alice@other.example"}, Dst: []string{"10.0.0.11:*"}},
+			}},
+			ProxyHosts: []ProxyHost{
+				{ID: 10, DomainNames: []string{"example-service.test"}, ForwardHost: "10.0.0.10", Enabled: true},
+				{ID: 11, DomainNames: []string{"other-service.test"}, ForwardHost: "10.0.0.11", Enabled: true},
+			},
+		}
+
+		names := cardNames(MatchServices(&Identity{Login: "alice@example.com"}, iso))
+		assertContains(t, names, "example-service.test")
+		assertNotContains(t, names, "other-service.test")
+	})
+
+	t.Run("full login does not inherit an ambiguous short policy identity", func(t *testing.T) {
+		iso := &CacheData{
+			Policy: &Policy{
+				Groups: map[string][]string{"group:short": {"alice@"}},
+				ACLs:   []ACLRule{{Action: "accept", Src: []string{"group:short"}, Dst: []string{"10.0.0.12:*"}}},
+			},
+			ProxyHosts: []ProxyHost{{ID: 12, DomainNames: []string{"short-policy.test"}, ForwardHost: "10.0.0.12", Enabled: true}},
+		}
+
+		for _, login := range []string{"alice@example.com", "alice@other.example"} {
+			if cards := MatchServices(&Identity{Login: login}, iso); len(cards) != 0 {
+				t.Errorf("%s inherited ambiguous short identity: %v", login, cardNames(cards))
+			}
+		}
+		assertContains(t, cardNames(MatchServices(&Identity{Login: "alice@"}, iso)), "short-policy.test")
+	})
+
+	t.Run("blank login receives no services including wildcard grants", func(t *testing.T) {
+		if cards := MatchServices(&Identity{Login: "   "}, data); len(cards) != 0 {
+			t.Errorf("blank login should receive no services, got %v", cardNames(cards))
+		}
+	})
+
 	t.Run("nil inputs return empty", func(t *testing.T) {
 		if cards := MatchServices(nil, data); len(cards) != 0 {
 			t.Error("nil identity should return empty")
@@ -297,65 +342,88 @@ func TestMatchServices(t *testing.T) {
 func TestMatchServicesTagsAndCIDR(t *testing.T) {
 	policy := &Policy{
 		Groups: map[string][]string{
-			"group:admin": {"alice@"},
+			"group:admin": {"alice@example.com"},
 		},
 		TagOwners: map[string][]string{
-			// carol owns tag:server (may assign it) but owning it must not grant access.
-			"tag:server": {"carol@"},
+			// carol may assign tag:current, but that must never make her that tag.
+			"tag:current": {"carol@"},
 		},
 		Hosts: map[string]string{
-			"webserver": "10.0.0.5",
+			"webserver": "10.2.0.5",
 		},
 		ACLs: []ACLRule{
-			// src is a tag: only users whose own nodes wear tag:server are granted.
-			{Action: "accept", Src: []string{"tag:server"}, Dst: []string{"tag:server:*"}},
-			// CIDR destination.
-			{Action: "accept", Src: []string{"group:admin"}, Dst: []string{"10.0.0.0/24:443"}},
-			// host alias destination.
+			// Human identities must not inherit a tag from a node they own.
+			{Action: "accept", Src: []string{"tag:current"}, Dst: []string{"10.3.0.9:*"}},
+			// Tags from the current and legacy node fields still resolve as destinations.
+			{Action: "accept", Src: []string{"group:admin"}, Dst: []string{"tag:current:*"}},
+			{Action: "accept", Src: []string{"group:admin"}, Dst: []string{"tag:forced:*"}},
+			{Action: "accept", Src: []string{"group:admin"}, Dst: []string{"tag:valid:*"}},
+			// Supported non-tag selectors retain their existing behavior.
+			{Action: "accept", Src: []string{"group:admin"}, Dst: []string{"10.1.0.0/24:443"}},
 			{Action: "accept", Src: []string{"group:admin"}, Dst: []string{"webserver:*"}},
-			// a genuinely public service everyone may see.
+			{Action: "accept", Src: []string{"group:admin"}, Dst: []string{"autogroup:self:*"}},
 			{Action: "accept", Src: []string{"*"}, Dst: []string{"203.0.113.4:*"}},
 		},
 	}
 
 	nodes := []Node{
-		// alice owns a node wearing tag:server at 10.0.0.1.
-		{ID: "1", Name: "alice-node", User: User{Name: "alice@"}, ForcedTags: []string{"tag:server"}, IPAddresses: []string{"10.0.0.1"}},
-		// carol owns a node but it does NOT wear tag:server.
-		{ID: "2", Name: "carol-node", User: User{Name: "carol@"}, IPAddresses: []string{"10.0.0.7"}},
+		// The current API tag field is on a node owned by alice; it is destination data,
+		// not an additional human source identity.
+		{ID: "1", Name: "alice-tagged", User: User{Name: "alice@"}, Tags: []string{"tag:current"}, IPAddresses: []string{"10.0.0.1"}},
+		// Legacy Headscale tag fields remain usable for destination resolution.
+		{ID: "2", Name: "forced-tagged", User: User{Name: "service@"}, ForcedTags: []string{"tag:forced"}, IPAddresses: []string{"10.0.0.2"}},
+		{ID: "3", Name: "valid-tagged", User: User{Name: "service@"}, ValidTags: []string{"tag:valid"}, IPAddresses: []string{"10.0.0.3"}},
+		// autogroup:self uses exact ownership for a fully qualified human identity.
+		{ID: "4", Name: "alice-self", User: User{Name: "alice@example.com"}, IPAddresses: []string{"100.64.0.9"}},
+		// Neither another full domain nor an ambiguous short owner becomes alice's self IP.
+		{ID: "5", Name: "other-alice", User: User{Name: "alice@other.example"}, IPAddresses: []string{"100.64.0.10"}},
+		{ID: "6", Name: "short-alice", User: User{Name: "alice@"}, IPAddresses: []string{"100.64.0.11"}},
 	}
 
 	data := &CacheData{
 		Policy: policy,
 		Nodes:  nodes,
 		ProxyHosts: []ProxyHost{
-			{ID: 1, DomainNames: []string{"tagged.example.com"}, ForwardHost: "10.0.0.1", Enabled: true},
-			{ID: 2, DomainNames: []string{"cidr.example.com"}, ForwardHost: "10.0.0.200", Enabled: true},
-			{ID: 3, DomainNames: []string{"alias.example.com"}, ForwardHost: "10.0.0.5", Enabled: true},
-			{ID: 4, DomainNames: []string{"public.example.com"}, ForwardHost: "203.0.113.4", Enabled: true},
+			{ID: 1, DomainNames: []string{"current-tag.example.com"}, ForwardHost: "10.0.0.1", Enabled: true},
+			{ID: 2, DomainNames: []string{"forced-tag.example.com"}, ForwardHost: "10.0.0.2", Enabled: true},
+			{ID: 3, DomainNames: []string{"valid-tag.example.com"}, ForwardHost: "10.0.0.3", Enabled: true},
+			{ID: 4, DomainNames: []string{"source-tag.example.com"}, ForwardHost: "10.3.0.9", Enabled: true},
+			{ID: 5, DomainNames: []string{"cidr.example.com"}, ForwardHost: "10.1.0.200", Enabled: true},
+			{ID: 6, DomainNames: []string{"alias.example.com"}, ForwardHost: "10.2.0.5", Enabled: true},
+			{ID: 7, DomainNames: []string{"self.example.com"}, ForwardHost: "100.64.0.9", Enabled: true},
+			{ID: 8, DomainNames: []string{"other-self.example.com"}, ForwardHost: "100.64.0.10", Enabled: true},
+			{ID: 9, DomainNames: []string{"short-self.example.com"}, ForwardHost: "100.64.0.11", Enabled: true},
+			{ID: 10, DomainNames: []string{"public.example.com"}, ForwardHost: "203.0.113.4", Enabled: true},
 		},
 	}
 
-	t.Run("tag src matches when user's own node wears the tag", func(t *testing.T) {
-		// alice's node wears tag:server, so the tag-src/tag-dst rule grants tagged service.
-		names := cardNames(MatchServices(&Identity{Login: "alice@"}, data))
-		assertContains(t, names, "tagged.example.com")
+	t.Run("node tags resolve destinations from current and legacy fields", func(t *testing.T) {
+		names := cardNames(MatchServices(&Identity{Login: "alice@example.com"}, data))
+		assertContains(t, names, "current-tag.example.com")
+		assertContains(t, names, "forced-tag.example.com")
+		assertContains(t, names, "valid-tag.example.com")
 	})
 
-	t.Run("cidr and host alias destinations resolve", func(t *testing.T) {
-		names := cardNames(MatchServices(&Identity{Login: "alice@"}, data))
-		assertContains(t, names, "cidr.example.com")  // 10.0.0.200 in 10.0.0.0/24
-		assertContains(t, names, "alias.example.com") // webserver -> 10.0.0.5
+	t.Run("human identity does not inherit a source tag from an owned node", func(t *testing.T) {
+		names := cardNames(MatchServices(&Identity{Login: "alice@example.com"}, data))
+		assertNotContains(t, names, "source-tag.example.com")
 	})
 
-	t.Run("public service (src *) reaches everyone", func(t *testing.T) {
-		names := cardNames(MatchServices(&Identity{Login: "nobody@"}, data))
+	t.Run("cidr host alias and self destinations resolve", func(t *testing.T) {
+		names := cardNames(MatchServices(&Identity{Login: "alice@example.com"}, data))
+		assertContains(t, names, "cidr.example.com")
+		assertContains(t, names, "alias.example.com")
+		assertContains(t, names, "self.example.com")
+		assertNotContains(t, names, "other-self.example.com")
+		assertNotContains(t, names, "short-self.example.com")
+	})
+
+	t.Run("public service reaches an identified user", func(t *testing.T) {
+		names := cardNames(MatchServices(&Identity{Login: "nobody@example.com"}, data))
 		assertContains(t, names, "public.example.com")
 	})
 
-	t.Run("autogroup:internet dst matches (equivalent to *)", func(t *testing.T) {
-		// Isolated policy: autogroup:internet behaves as match-all, so any granted src
-		// sees the service regardless of the proxy host's forward IP.
+	t.Run("autogroup:internet destination fails closed", func(t *testing.T) {
 		iso := &CacheData{
 			Policy: &Policy{
 				ACLs: []ACLRule{
@@ -363,24 +431,99 @@ func TestMatchServicesTagsAndCIDR(t *testing.T) {
 				},
 			},
 			ProxyHosts: []ProxyHost{
-				{ID: 9, DomainNames: []string{"any.example.com"}, ForwardHost: "192.168.1.50", Enabled: true},
+				{ID: 10, DomainNames: []string{"internet.example.com"}, ForwardHost: "192.168.1.50", Enabled: true},
 			},
 		}
-		names := cardNames(MatchServices(&Identity{Login: "whoever@"}, iso))
-		assertContains(t, names, "any.example.com")
+		names := cardNames(MatchServices(&Identity{Login: "whoever@example.com"}, iso))
+		assertNotContains(t, names, "internet.example.com")
 	})
 
-	t.Run("tagOwners fix: owning a tag does not grant tag-targeted service", func(t *testing.T) {
-		// carol OWNS tag:server via tagOwners but no node she owns wears it, so the
-		// tag-src rule must not grant her the tagged service.
-		names := cardNames(MatchServices(&Identity{Login: "carol@"}, data))
-		assertNotContains(t, names, "tagged.example.com")
-		// The CIDR/alias rules are group:admin-only; carol is not in that group.
+	t.Run("tag owner does not gain source or destination access", func(t *testing.T) {
+		names := cardNames(MatchServices(&Identity{Login: "carol@example.com"}, data))
+		assertNotContains(t, names, "current-tag.example.com")
+		assertNotContains(t, names, "source-tag.example.com")
 		assertNotContains(t, names, "cidr.example.com")
 		assertNotContains(t, names, "alias.example.com")
-		// But autogroup:internet (src "*") still reaches her.
 		assertContains(t, names, "public.example.com")
 	})
+}
+
+func TestDestinationMatchEvidenceKinds(t *testing.T) {
+	mc := &matchContext{
+		hosts: map[string]string{
+			"webserver": "10.0.0.5",
+			"lan":       "10.0.0.0/24",
+		},
+		tagIPs: map[string][]string{
+			"tag:server": {"10.0.0.1"},
+		},
+		selfIPs: []string{"100.64.0.9"},
+	}
+	tests := []struct {
+		name     string
+		selector string
+		host     string
+		kind     destinationMatchKind
+		resolved string
+	}{
+		{name: "exact", selector: "10.0.0.1:443", host: "10.0.0.1", kind: destinationMatchExact, resolved: "10.0.0.1"},
+		{name: "wildcard", selector: "*", host: "10.0.0.9", kind: destinationMatchWildcard, resolved: "10.0.0.9"},
+		{name: "cidr", selector: "10.0.0.0/24:*", host: "10.0.0.8", kind: destinationMatchCIDR, resolved: "10.0.0.0/24"},
+		{name: "host alias", selector: "webserver:443", host: "10.0.0.5", kind: destinationMatchHostAlias, resolved: "10.0.0.5"},
+		{name: "host alias cidr", selector: "lan:*", host: "10.0.0.20", kind: destinationMatchHostAlias, resolved: "10.0.0.0/24"},
+		{name: "tag", selector: "tag:server:*", host: "10.0.0.1", kind: destinationMatchTag, resolved: "10.0.0.1"},
+		{name: "self", selector: "autogroup:self:*", host: "100.64.0.9", kind: destinationMatchSelf, resolved: "100.64.0.9"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			evidence, matched := matchDestination(test.selector, test.host, mc)
+			if !matched {
+				t.Fatal("matchDestination() matched = false")
+			}
+			if evidence.Kind != test.kind || evidence.ResolvedValue != test.resolved {
+				t.Fatalf("evidence = %#v, want kind=%q resolved=%q", evidence, test.kind, test.resolved)
+			}
+			if evidence.Selector != test.selector || evidence.NormalizedSelector != stripPort(test.selector) {
+				t.Fatalf("selector evidence = %#v", evidence)
+			}
+		})
+	}
+}
+
+func TestEvaluateServicesExplainsMatchServices(t *testing.T) {
+	data := &CacheData{
+		Policy: &Policy{
+			Groups: map[string][]string{"group:admin": {"alice@example.com"}},
+			ACLs: []ACLRule{
+				{Action: "accept", Src: []string{"group:admin"}, Dst: []string{"tag:app:*"}},
+				{Action: "accept", Src: []string{"*"}, Dst: []string{"10.0.0.0/24:*"}},
+			},
+		},
+		Nodes: []Node{{User: User{Name: "service@example.com"}, Tags: []string{"tag:app"}, IPAddresses: []string{"10.0.0.10"}}},
+		ProxyHosts: []ProxyHost{
+			{ID: 2, DomainNames: []string{"wiki.example.com"}, ForwardHost: "10.0.0.20", Enabled: true},
+			{ID: 1, DomainNames: []string{"app.example.com"}, ForwardHost: "10.0.0.10", Enabled: true},
+		},
+	}
+	identity := &Identity{Login: "alice@example.com"}
+	matches := evaluateServices(identity, data)
+	cards := MatchServices(identity, data)
+	projected := make([]ServiceCard, len(matches))
+	for index, match := range matches {
+		projected[index] = match.Card
+	}
+	if !reflect.DeepEqual(projected, cards) {
+		t.Fatalf("evaluateServices cards = %#v, MatchServices = %#v", projected, cards)
+	}
+	if len(matches) != 2 {
+		t.Fatalf("evaluateServices() returned %d matches", len(matches))
+	}
+	if matches[0].SourceToken != "group:admin" || matches[0].Destination.Kind != destinationMatchTag || matches[0].ACLIndex != 0 {
+		t.Fatalf("first evidence = %#v", matches[0])
+	}
+	if matches[1].SourceToken != "*" || matches[1].Destination.Kind != destinationMatchCIDR || matches[1].ACLIndex != 1 {
+		t.Fatalf("second evidence = %#v", matches[1])
+	}
 }
 
 func cardNames(cards []ServiceCard) []string {

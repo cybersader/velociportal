@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -24,14 +25,17 @@ type testUpstreams struct {
 	hs  *HeadscaleClient
 	npm *NPMClient
 
-	// policyFail, when set, makes the Headscale policy endpoint return 500.
-	policyFail atomic.Bool
-	// userCount controls how many users the Headscale user endpoint returns.
-	userCount atomic.Int32
+	// proxyHostsFail, when set, makes the NPM proxy-host endpoint return 500.
+	proxyHostsFail atomic.Bool
+	// nodeCount controls how many nodes the Headscale node endpoint returns.
+	nodeCount atomic.Int32
 	// policyHits counts requests to the Headscale policy endpoint. Because the
 	// policy endpoint is the first call in refresh(), it doubles as a
 	// "refresh cycles started" counter.
 	policyHits atomic.Int32
+	// userHits and accessListHits prove refresh does not call unused endpoints.
+	userHits       atomic.Int32
+	accessListHits atomic.Int32
 	// sleepMS, when >0, makes every Headscale endpoint sleep that many
 	// milliseconds before responding, to exercise the context-timeout path.
 	sleepMS atomic.Int64
@@ -40,7 +44,7 @@ type testUpstreams struct {
 func newTestUpstreams(t *testing.T) *testUpstreams {
 	t.Helper()
 	u := &testUpstreams{}
-	u.userCount.Store(1)
+	u.nodeCount.Store(1)
 
 	hsMux := http.NewServeMux()
 	hsMux.HandleFunc("/api/v1/policy", func(w http.ResponseWriter, r *http.Request) {
@@ -48,35 +52,27 @@ func newTestUpstreams(t *testing.T) *testUpstreams {
 		if d := u.sleepMS.Load(); d > 0 {
 			time.Sleep(time.Duration(d) * time.Millisecond)
 		}
-		if u.policyFail.Load() {
-			w.WriteHeader(http.StatusInternalServerError)
-			_, _ = w.Write([]byte("policy boom"))
-			return
-		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"policy": "{\"groups\":{\"group:admin\":[\"alice@\"]},\"acls\":[],\"tagOwners\":{},\"hosts\":{}}", "updatedAt": "2024-01-01T00:00:00Z"}`))
 	})
 	hsMux.HandleFunc("/api/v1/user", func(w http.ResponseWriter, r *http.Request) {
-		if d := u.sleepMS.Load(); d > 0 {
-			time.Sleep(time.Duration(d) * time.Millisecond)
-		}
-		n := int(u.userCount.Load())
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"users": [`))
-		for i := 0; i < n; i++ {
-			if i > 0 {
-				_, _ = w.Write([]byte(","))
-			}
-			_, _ = w.Write([]byte(`{"id": "1", "name": "alice"}`))
-		}
-		_, _ = w.Write([]byte(`]}`))
+		u.userHits.Add(1)
+		http.Error(w, "unused endpoint called", http.StatusInternalServerError)
 	})
 	hsMux.HandleFunc("/api/v1/node", func(w http.ResponseWriter, r *http.Request) {
 		if d := u.sleepMS.Load(); d > 0 {
 			time.Sleep(time.Duration(d) * time.Millisecond)
 		}
+		n := int(u.nodeCount.Load())
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"nodes": [{"id": "1", "name": "node1", "user": {"id": "1", "name": "alice"}}]}`))
+		_, _ = w.Write([]byte(`{"nodes": [`))
+		for i := 0; i < n; i++ {
+			if i > 0 {
+				_, _ = w.Write([]byte(","))
+			}
+			_, _ = w.Write([]byte(`{"id": "1", "name": "node1", "user": {"id": "1", "name": "alice"}}`))
+		}
+		_, _ = w.Write([]byte(`]}`))
 	})
 	hsSrv := httptest.NewServer(hsMux)
 	t.Cleanup(hsSrv.Close)
@@ -87,12 +83,16 @@ func newTestUpstreams(t *testing.T) *testUpstreams {
 		_, _ = w.Write([]byte(`{"token": "jwt-abc", "expires": "` + futureExpiry() + `"}`))
 	})
 	npmMux.HandleFunc("/api/nginx/proxy-hosts", func(w http.ResponseWriter, r *http.Request) {
+		if u.proxyHostsFail.Load() {
+			http.Error(w, "proxy hosts boom", http.StatusInternalServerError)
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`[{"id": 1, "domain_names": ["app.example.com"], "access_list_id": 2, "enabled": true}]`))
 	})
 	npmMux.HandleFunc("/api/nginx/access-lists", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`[{"id": 2, "name": "team"}]`))
+		u.accessListHits.Add(1)
+		http.Error(w, "unused endpoint called", http.StatusInternalServerError)
 	})
 	npmSrv := httptest.NewServer(npmMux)
 	t.Cleanup(npmSrv.Close)
@@ -117,21 +117,58 @@ func TestCache_InitialRefresh(t *testing.T) {
 	if data.Policy == nil {
 		t.Error("Policy is nil")
 	}
-	if len(data.Users) != 1 {
-		t.Errorf("len(Users) = %d, want 1", len(data.Users))
-	}
 	if len(data.Nodes) != 1 {
 		t.Errorf("len(Nodes) = %d, want 1", len(data.Nodes))
 	}
 	if len(data.ProxyHosts) != 1 {
 		t.Errorf("len(ProxyHosts) = %d, want 1", len(data.ProxyHosts))
 	}
-	if len(data.AccessLists) != 1 {
-		t.Errorf("len(AccessLists) = %d, want 1", len(data.AccessLists))
-	}
 
 	if since := time.Since(c.LastUpdated()); since > 5*time.Second || since < 0 {
 		t.Errorf("LastUpdated() = %v ago, want within 5s", since)
+	}
+}
+
+func TestCache_RefreshSkipsUnusedEndpoints(t *testing.T) {
+	u := newTestUpstreams(t)
+	c := NewCache(u.hs, u.npm, time.Hour, discardLogger())
+
+	if err := c.refresh(context.Background()); err != nil {
+		t.Fatalf("refresh returned error: %v", err)
+	}
+	if got := u.userHits.Load(); got != 0 {
+		t.Errorf("Headscale user endpoint hits = %d, want 0", got)
+	}
+	if got := u.accessListHits.Load(); got != 0 {
+		t.Errorf("NPM access-list endpoint hits = %d, want 0", got)
+	}
+}
+
+func TestLoadSnapshot_AllOrNothing(t *testing.T) {
+	u := newTestUpstreams(t)
+
+	snapshot, err := loadSnapshot(context.Background(), u.hs, u.npm)
+	if err != nil {
+		t.Fatalf("loadSnapshot returned error: %v", err)
+	}
+	if snapshot == nil || snapshot.Policy == nil {
+		t.Fatalf("loadSnapshot returned incomplete snapshot: %+v", snapshot)
+	}
+	if len(snapshot.Nodes) != 1 || len(snapshot.ProxyHosts) != 1 || snapshot.UpdatedAt.IsZero() {
+		t.Fatalf("loadSnapshot returned unexpected data: %+v", snapshot)
+	}
+
+	u.proxyHostsFail.Store(true)
+	failed, err := loadSnapshot(context.Background(), u.hs, u.npm)
+	if err == nil {
+		t.Fatal("loadSnapshot returned nil error after proxy-host failure")
+	}
+	if failed != nil {
+		t.Fatalf("loadSnapshot returned partial data after failure: %+v", failed)
+	}
+	var loadErr *snapshotLoadError
+	if !errors.As(err, &loadErr) || loadErr.Stage != snapshotStageNPMProxyHosts {
+		t.Fatalf("loadSnapshot error = %v, want NPM proxy-host stage", err)
 	}
 }
 
@@ -143,20 +180,20 @@ func TestCache_RefreshUpdatesData(t *testing.T) {
 	c := NewCache(u.hs, u.npm, 50*time.Millisecond, discardLogger())
 	c.Start(ctx)
 
-	if got := len(c.Get().Users); got != 1 {
-		t.Fatalf("initial len(Users) = %d, want 1", got)
+	if got := len(c.Get().Nodes); got != 1 {
+		t.Fatalf("initial len(Nodes) = %d, want 1", got)
 	}
 
 	// Change what the upstream returns; the next ticker refresh should pick it up.
-	u.userCount.Store(3)
+	u.nodeCount.Store(3)
 
 	deadline := time.Now().Add(3 * time.Second)
 	for {
-		if len(c.Get().Users) == 3 {
+		if len(c.Get().Nodes) == 3 {
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("cache never reflected updated user count; len(Users) = %d, want 3", len(c.Get().Users))
+			t.Fatalf("cache never reflected updated node count; len(Nodes) = %d, want 3", len(c.Get().Nodes))
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
@@ -177,8 +214,10 @@ func TestCache_PartialFailure(t *testing.T) {
 		t.Fatal("cache empty after successful refresh")
 	}
 
-	// Now break the policy endpoint (the first upstream call in refresh).
-	u.policyFail.Store(true)
+	// Change an earlier required input, then fail the final required input. None
+	// of the newly fetched data should be published.
+	u.nodeCount.Store(3)
+	u.proxyHostsFail.Store(true)
 	err := c.refresh(ctx)
 	if err == nil {
 		t.Fatal("refresh returned nil error despite failing upstream")
@@ -191,6 +230,9 @@ func TestCache_PartialFailure(t *testing.T) {
 	}
 	if !after.UpdatedAt.Equal(good.UpdatedAt) {
 		t.Errorf("UpdatedAt changed after failed refresh: %v != %v", after.UpdatedAt, good.UpdatedAt)
+	}
+	if len(after.Nodes) != 1 {
+		t.Errorf("len(Nodes) after failed refresh = %d, want stale value 1", len(after.Nodes))
 	}
 }
 

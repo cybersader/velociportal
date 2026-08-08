@@ -1,0 +1,371 @@
+package main
+
+import (
+	"bytes"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync/atomic"
+	"testing"
+)
+
+const (
+	doctorTestAPIKey   = "fixture-api-secret"
+	doctorTestPassword = "fixture-npm-password"
+	doctorTestToken    = "fixture-jwt-secret"
+)
+
+type doctorHTTPFixture struct {
+	headscale *httptest.Server
+	npm       *httptest.Server
+
+	policyStatus int
+	nodesStatus  int
+	authStatus   int
+	proxyStatus  int
+	policyBody   string
+	nodesBody    string
+	authBody     string
+	proxyBody    string
+
+	policyHits atomic.Int32
+	nodesHits  atomic.Int32
+	authHits   atomic.Int32
+	proxyHits  atomic.Int32
+}
+
+func newDoctorHTTPFixture(t *testing.T) *doctorHTTPFixture {
+	t.Helper()
+	fixture := &doctorHTTPFixture{
+		policyStatus: http.StatusOK,
+		nodesStatus:  http.StatusOK,
+		authStatus:   http.StatusOK,
+		proxyStatus:  http.StatusOK,
+		policyBody:   `{"policy":"{\"groups\":{\"group:admin\":[\"alice@example.com\"],\"group:dev\":[\"bob@example.com\"]},\"tagOwners\":{},\"hosts\":{},\"acls\":[{\"action\":\"accept\",\"src\":[\"group:admin\"],\"dst\":[\"10.0.0.1:*\"]},{\"action\":\"accept\",\"src\":[\"group:dev\"],\"dst\":[\"10.0.0.2:*\"]}]}","updatedAt":"2026-01-01T00:00:00Z"}`,
+		nodesBody:    `{"nodes":[]}`,
+		authBody:     `{"token":"` + doctorTestToken + `","expires":"` + futureExpiry() + `"}`,
+		proxyBody: `[
+			{"id":1,"domain_names":["admin.example.com"],"forward_scheme":"https","forward_host":"10.0.0.1","forward_port":443,"enabled":true,"meta":{"nginx_online":true}},
+			{"id":2,"domain_names":["dev.example.com"],"forward_scheme":"http","forward_host":"10.0.0.2","forward_port":8080,"enabled":true,"meta":{"nginx_online":false}},
+			{"id":3,"domain_names":["orphan.example.com"],"forward_scheme":"http","forward_host":"docker-orphan","forward_port":9000,"enabled":true,"meta":{"nginx_online":true}}
+		]`,
+	}
+
+	headscaleMux := http.NewServeMux()
+	headscaleMux.HandleFunc("/api/v1/policy", func(w http.ResponseWriter, r *http.Request) {
+		fixture.policyHits.Add(1)
+		if got := r.Header.Get("Authorization"); got != "Bearer "+doctorTestAPIKey {
+			t.Errorf("Headscale Authorization = %q", got)
+		}
+		writeDoctorFixtureResponse(w, fixture.policyStatus, fixture.policyBody)
+	})
+	headscaleMux.HandleFunc("/api/v1/node", func(w http.ResponseWriter, r *http.Request) {
+		fixture.nodesHits.Add(1)
+		writeDoctorFixtureResponse(w, fixture.nodesStatus, fixture.nodesBody)
+	})
+	fixture.headscale = httptest.NewServer(headscaleMux)
+	t.Cleanup(fixture.headscale.Close)
+
+	npmMux := http.NewServeMux()
+	npmMux.HandleFunc("/api/tokens", func(w http.ResponseWriter, r *http.Request) {
+		fixture.authHits.Add(1)
+		writeDoctorFixtureResponse(w, fixture.authStatus, fixture.authBody)
+	})
+	npmMux.HandleFunc("/api/nginx/proxy-hosts", func(w http.ResponseWriter, r *http.Request) {
+		fixture.proxyHits.Add(1)
+		if got := r.Header.Get("Authorization"); got != "Bearer "+doctorTestToken {
+			t.Errorf("NPM Authorization = %q", got)
+		}
+		writeDoctorFixtureResponse(w, fixture.proxyStatus, fixture.proxyBody)
+	})
+	fixture.npm = httptest.NewServer(npmMux)
+	t.Cleanup(fixture.npm.Close)
+	return fixture
+}
+
+func writeDoctorFixtureResponse(w http.ResponseWriter, status int, body string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_, _ = io.WriteString(w, body)
+}
+
+func doctorFixtureConfig(fixture *doctorHTTPFixture) map[string]string {
+	return map[string]string{
+		"HEADSCALE_URL":      fixture.headscale.URL,
+		"HEADSCALE_API_KEY":  doctorTestAPIKey,
+		"NPM_URL":            fixture.npm.URL,
+		"NPM_EMAIL":          "doctor@example.com",
+		"NPM_PASSWORD":       doctorTestPassword,
+		"LISTEN_ADDR":        "127.0.0.1:8080",
+		"POLL_INTERVAL":      "30s",
+		"TRUSTED_PROXY_CIDR": "127.0.0.1/32",
+	}
+}
+
+func setDoctorProcessConfig(t *testing.T, values map[string]string) {
+	t.Helper()
+	t.Setenv(processEnvEncodingKey, "")
+	for _, key := range append(append([]string(nil), requiredConfigKeys...), "LISTEN_ADDR", "POLL_INTERVAL") {
+		t.Setenv(key, values[key])
+	}
+}
+
+func runDoctorForTest(args []string) (int, string, string) {
+	var stdout, stderr bytes.Buffer
+	code := runDoctorCommand(args, &stdout, &stderr)
+	return code, stdout.String(), stderr.String()
+}
+
+func TestRunDoctorCommandWarningsAndIdentityPreviews(t *testing.T) {
+	fixture := newDoctorHTTPFixture(t)
+	values := doctorFixtureConfig(fixture)
+	values["TRUSTED_PROXY_CIDR"] = "10.0.0.0/8"
+	setDoctorProcessConfig(t, values)
+
+	code, stdout, stderr := runDoctorForTest([]string{
+		"--identity", "alice@example.com",
+		"--identity", "bob@example.com",
+	})
+	if code != 0 {
+		t.Fatalf("exit code = %d, stdout=%q stderr=%q", code, stdout, stderr)
+	}
+	if stderr != "" {
+		t.Fatalf("stderr = %q", stderr)
+	}
+
+	for _, want := range []string{
+		"PASS config source: process environment",
+		"PASS env file mode: not applicable",
+		"PASS config: required values validated",
+		"WARN trusted proxy CIDR: 10.0.0.0/8",
+		"PASS Headscale policy: loaded 2 ACL rules",
+		"PASS Headscale nodes: loaded 0 nodes",
+		"PASS NPM authentication: credentials accepted",
+		"PASS NPM proxy hosts: loaded 3 proxy hosts",
+		"PASS snapshot: complete (2 ACL rules, 0 nodes, 3 proxy hosts)",
+		"WARN supported join coverage: 2/3 enabled proxy hosts",
+		`WARN unmatched join: "orphan.example.com" -> "docker-orphan"`,
+		`PASS identity preview "alice@example.com": 1 card`,
+		`CARD "admin.example.com" -> "https://admin.example.com"`,
+		`PASS identity preview "bob@example.com": 1 card`,
+		`CARD "dev.example.com" -> "http://dev.example.com"`,
+		"not proof of network authorization or reachability",
+		"PASS doctor: required diagnostics completed",
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("stdout missing %q:\n%s", want, stdout)
+		}
+	}
+	for _, secret := range []string{doctorTestAPIKey, doctorTestPassword, doctorTestToken} {
+		if strings.Contains(stdout, secret) || strings.Contains(stderr, secret) {
+			t.Errorf("doctor output exposed secret %q", secret)
+		}
+	}
+}
+
+func TestRunDoctorCommandRejectsMalformedRawComposeSecret(t *testing.T) {
+	fixture := newDoctorHTTPFixture(t)
+	setDoctorProcessConfig(t, doctorFixtureConfig(fixture))
+	secret := `"private-doctor-value\q"`
+	t.Setenv("NPM_PASSWORD", secret)
+	t.Setenv(processEnvEncodingKey, goQuotedEnvEncoding)
+
+	code, stdout, stderr := runDoctorForTest(nil)
+	if code != 1 || !strings.Contains(stdout, "FAIL config: loadConfig: invalid encoded environment value for NPM_PASSWORD") {
+		t.Fatalf("exit code=%d stdout=%q stderr=%q", code, stdout, stderr)
+	}
+	if strings.Contains(stdout, "private-doctor-value") || strings.Contains(stderr, "private-doctor-value") {
+		t.Fatalf("doctor exposed malformed secret: stdout=%q stderr=%q", stdout, stderr)
+	}
+	if fixture.policyHits.Load() != 0 || fixture.nodesHits.Load() != 0 || fixture.authHits.Load() != 0 || fixture.proxyHits.Load() != 0 {
+		t.Fatal("doctor contacted upstreams after configuration decoding failed")
+	}
+}
+
+func TestRunDoctorCommandEnvironmentFileMode(t *testing.T) {
+	fixture := newDoctorHTTPFixture(t)
+	values := doctorFixtureConfig(fixture)
+	path := filepath.Join(t.TempDir(), "doctor.env")
+	if err := writeEnvFile(path, values); err != nil {
+		t.Fatalf("writeEnvFile() error = %v", err)
+	}
+
+	ambient := cloneStrings(values)
+	ambient["HEADSCALE_URL"] = "http://127.0.0.1:1"
+	ambient["NPM_URL"] = "http://127.0.0.1:1"
+	setDoctorProcessConfig(t, ambient)
+
+	code, stdout, stderr := runDoctorForTest([]string{"--env-file", path})
+	if code != 0 {
+		t.Fatalf("exit code = %d, stdout=%q stderr=%q", code, stdout, stderr)
+	}
+	for _, want := range []string{
+		"PASS config source: environment file",
+		"PASS env file mode: owner-only permissions (0600)",
+		"PASS doctor: required diagnostics completed",
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("stdout missing %q:\n%s", want, stdout)
+		}
+	}
+
+	before := fixture.policyHits.Load()
+	if err := os.Chmod(path, 0o644); err != nil {
+		t.Fatalf("Chmod() error = %v", err)
+	}
+	code, stdout, stderr = runDoctorForTest([]string{"--env-file", path})
+	if code != 1 {
+		t.Fatalf("unsafe mode exit code = %d, stdout=%q stderr=%q", code, stdout, stderr)
+	}
+	if !strings.Contains(stdout, "FAIL env file mode: permissions 0644") {
+		t.Fatalf("stdout = %q", stdout)
+	}
+	if after := fixture.policyHits.Load(); after != before {
+		t.Fatalf("policy endpoint called after unsafe file mode: before=%d after=%d", before, after)
+	}
+}
+
+func TestRunDoctorCommandRequiredStageFailures(t *testing.T) {
+	t.Run("config source", func(t *testing.T) {
+		code, stdout, _ := runDoctorForTest([]string{"--env-file", filepath.Join(t.TempDir(), "missing.env")})
+		if code != 1 || !strings.Contains(stdout, "FAIL config source:") {
+			t.Fatalf("exit code=%d stdout=%q", code, stdout)
+		}
+	})
+
+	t.Run("config", func(t *testing.T) {
+		setDoctorProcessConfig(t, map[string]string{})
+		code, stdout, _ := runDoctorForTest(nil)
+		if code != 1 || !strings.Contains(stdout, "FAIL config:") {
+			t.Fatalf("exit code=%d stdout=%q", code, stdout)
+		}
+	})
+
+	tests := []struct {
+		name      string
+		configure func(*doctorHTTPFixture)
+		want      string
+	}{
+		{
+			name: "Headscale policy",
+			configure: func(fixture *doctorHTTPFixture) {
+				fixture.policyStatus = http.StatusInternalServerError
+				fixture.policyBody = `{"error":"policy unavailable"}`
+			},
+			want: "FAIL Headscale policy:",
+		},
+		{
+			name: "Headscale nodes",
+			configure: func(fixture *doctorHTTPFixture) {
+				fixture.nodesStatus = http.StatusInternalServerError
+				fixture.nodesBody = `{"error":"nodes unavailable"}`
+			},
+			want: "FAIL Headscale nodes:",
+		},
+		{
+			name: "NPM authentication",
+			configure: func(fixture *doctorHTTPFixture) {
+				fixture.authStatus = http.StatusForbidden
+				fixture.authBody = `{"error":"credentials rejected"}`
+			},
+			want: "FAIL NPM authentication:",
+		},
+		{
+			name: "NPM proxy hosts",
+			configure: func(fixture *doctorHTTPFixture) {
+				fixture.proxyStatus = http.StatusInternalServerError
+				fixture.proxyBody = `{"error":"proxy hosts unavailable"}`
+			},
+			want: "FAIL NPM proxy hosts:",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newDoctorHTTPFixture(t)
+			test.configure(fixture)
+			setDoctorProcessConfig(t, doctorFixtureConfig(fixture))
+
+			code, stdout, stderr := runDoctorForTest(nil)
+			if code != 1 {
+				t.Fatalf("exit code = %d, stdout=%q stderr=%q", code, stdout, stderr)
+			}
+			if !strings.Contains(stdout, test.want) {
+				t.Fatalf("stdout missing %q:\n%s", test.want, stdout)
+			}
+			if !strings.Contains(stdout, "FAIL snapshot: not created because") {
+				t.Fatalf("snapshot failure was not reported:\n%s", stdout)
+			}
+			if strings.Contains(stdout, "PASS snapshot:") {
+				t.Fatalf("snapshot passed after required stage failure:\n%s", stdout)
+			}
+		})
+	}
+}
+
+func TestRunDoctorCommandRedactsAndBoundsErrors(t *testing.T) {
+	t.Run("Headscale API key", func(t *testing.T) {
+		fixture := newDoctorHTTPFixture(t)
+		fixture.policyStatus = http.StatusInternalServerError
+		fixture.policyBody = `{"error":"Bearer ` + doctorTestAPIKey + ` ` + strings.Repeat("x", 1000) + `"}`
+		setDoctorProcessConfig(t, doctorFixtureConfig(fixture))
+
+		code, stdout, _ := runDoctorForTest(nil)
+		if code != 1 {
+			t.Fatalf("exit code = %d, stdout=%q", code, stdout)
+		}
+		if strings.Contains(stdout, doctorTestAPIKey) {
+			t.Fatalf("stdout exposed API key: %q", stdout)
+		}
+		if !strings.Contains(stdout, "[REDACTED]") {
+			t.Fatalf("stdout did not mark redaction: %q", stdout)
+		}
+		for _, line := range strings.Split(stdout, "\n") {
+			if strings.HasPrefix(line, "FAIL Headscale policy:") && len([]rune(line)) > maxDoctorErrorLength+40 {
+				t.Fatalf("failure line was not bounded: %d runes", len([]rune(line)))
+			}
+		}
+	})
+
+	t.Run("NPM token and password", func(t *testing.T) {
+		fixture := newDoctorHTTPFixture(t)
+		fixture.proxyStatus = http.StatusInternalServerError
+		fixture.proxyBody = "{\"echo\":\"" + doctorTestToken + "\",\n\"password\":\"" + doctorTestPassword + "\"}"
+		setDoctorProcessConfig(t, doctorFixtureConfig(fixture))
+
+		code, stdout, _ := runDoctorForTest(nil)
+		if code != 1 {
+			t.Fatalf("exit code = %d, stdout=%q", code, stdout)
+		}
+		for _, secret := range []string{doctorTestToken, doctorTestPassword} {
+			if strings.Contains(stdout, secret) {
+				t.Fatalf("stdout exposed secret %q: %q", secret, stdout)
+			}
+		}
+		if !strings.Contains(stdout, "[REDACTED]") {
+			t.Fatalf("stdout did not mark redaction: %q", stdout)
+		}
+	})
+}
+
+func TestRunDoctorCommandUsage(t *testing.T) {
+	code, stdout, stderr := runDoctorForTest([]string{"--help"})
+	if code != 0 || !strings.Contains(stdout, "--identity LOGIN") || stderr != "" {
+		t.Fatalf("help exit=%d stdout=%q stderr=%q", code, stdout, stderr)
+	}
+
+	for _, args := range [][]string{
+		{"--identity", ""},
+		{"--env-file"},
+		{"positional"},
+		{"--help", "--identity", "alice@example.com"},
+	} {
+		code, _, stderr = runDoctorForTest(args)
+		if code != 2 || stderr == "" {
+			t.Fatalf("args=%v exit=%d stderr=%q", args, code, stderr)
+		}
+	}
+}

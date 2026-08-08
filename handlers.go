@@ -33,13 +33,13 @@ func (h *PortalHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	start := time.Now()
 	cards := MatchServices(identity, data)
-	slog.Info("portal request", "login", identity.Login, "cards", len(cards))
+	slog.Info("portal request", "cards", len(cards))
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := renderPortal(w, identity, cards); err != nil {
-		slog.Error("render portal", "login", identity.Login, "err", err)
+		slog.Error("render portal", "err", err)
 	}
-	slog.Debug("portal rendered", "login", identity.Login, "duration", time.Since(start))
+	slog.Debug("portal rendered", "duration", time.Since(start))
 }
 
 func renderPortal(w io.Writer, id *Identity, cards []ServiceCard) error {

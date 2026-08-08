@@ -1,189 +1,72 @@
 # Headscale + NPM Reference Architecture
 
-The primary Velociportal deployment. Headscale runs your tailnet, Nginx Proxy Manager (NPM) reverse-proxies your services, and Velociportal reads both APIs to render a per-user dashboard of the services each person can actually reach.
+This is the only currently implemented adapter pair. Velociportal reads Headscale policy and nodes, reads Nginx Proxy Manager (NPM) proxy hosts, and renders a visibility-only portal.
 
-!!! note "Velociportal complements your IdP, it does not replace it"
-    Velociportal is a **visibility layer**. It shows users what exists and who can reach it. Authentication and authorization still belong to Headscale ACLs, NPM, and your identity provider. Nothing here is an auth boundary.
+!!! warning "Validation status"
+    The clients, matcher, and request flow are covered by unit and `httptest` fixtures. The ACL-to-NPM `forward_host` join has not yet been validated against a real deployment.
 
 ## Architecture
 
-```text
-                        +---------------------+
-                        |     Headscale       |
-                        |  (coordination)     |
-                        |  /api/v1  (Bearer)  |
-                        +----------+----------+
-                                   ^
-              ACL policy + nodes   |  reads
-                                   |
-   Tailnet nodes                   |
-   +---------+   +---------+   +----+----------------+
-   | laptop  |   | phone   |   |   Velociportal      |
-   | (user)  |   | (user)  |   |  Go + templ + htmx  |
-   +----+----+   +----+----+   |  reads both APIs    |
-        |             |        +----+----------------+
-        |  Tailscale  |             ^  reads proxy hosts
-        |  Serve      |             |  (JWT via login)
-        v             v             |
-   +----------------------+    +----+----------------+
-   |  NPM (reverse proxy) +--->|      NPM API        |
-   |  injects headers     |    |  /api/tokens (JWT)  |
-   +----------+-----------+    +---------------------+
-              |
-              v
-   backend services (Grafana, etc.)
+```mermaid
+flowchart LR
+    HS["Headscale<br/>policy + nodes"] --> VP["Velociportal<br/>cache + matcher"]
+    NPM["NPM<br/>proxy hosts"] --> VP
+    Serve["Trusted proxy<br/>Tailscale-User-* identity"] --> VP
+    VP --> Browser["Filtered portal"]
+    Browser -. "service traffic does not pass through Velociportal" .-> NPM
 ```
 
-Two data sources, one view:
+## Required configuration
 
-- **Headscale** tells Velociportal *who* the users and nodes are, and what the ACL policy grants.
-- **NPM** tells Velociportal *what* services exist (proxy hosts) and where they route.
+| Variable | Example | Notes |
+|---|---|---|
+| `HEADSCALE_URL` | `https://headscale.example.com` | Base URL; no `/api/v1` suffix |
+| `HEADSCALE_API_KEY` | `...` | Bearer key |
+| `NPM_URL` | `http://npm:81` | Plain HTTP only on an isolated local/container network; use HTTPS when crossing a broader network |
+| `NPM_EMAIL` | `velociportal@example.com` | Account that can list proxy hosts |
+| `NPM_PASSWORD` | `...` | Stored as a secret |
+| `LISTEN_ADDR` | `0.0.0.0:8080` | Required inside the container; publish the host port on loopback only |
+| `POLL_INTERVAL` | `30s` | Go duration from `5s` through `24h` |
+| `TRUSTED_PROXY_CIDR` | `<observed-proxy-source-ip>/32` | Required; a host proxy reaching a bridged container commonly appears as the Docker bridge gateway, not loopback |
 
-Velociportal joins them and renders only the tiles a given user should see.
-
-## Identity flow
-
-The request path injects the caller's identity as trusted headers:
-
-```text
-user browser
-  -> Tailscale Serve (on the NPM/Velociportal host)
-       injects: Tailscale-User-Login
-                Tailscale-User-Name
-                Tailscale-User-Profile-Pic
-  -> NPM (passes headers through to the upstream)
-  -> Velociportal (trusts Tailscale-User-Login from a known proxy IP)
-```
-
-Velociportal reads `Tailscale-User-Login`, matches it against Headscale users/groups, and filters the service list to what that user can reach.
-
-!!! warning "Header injection only works for humans over tailnet Serve"
-    Tailscale Serve injects `Tailscale-User-*` headers **only** for authenticated human users on the tailnet. It does **not** work for:
-
-    - Tagged devices (`tag:server`) — no user identity
-    - Traffic over **Funnel** (public internet) — headers are stripped
-
-    Do not expose Velociportal via Funnel. Treat any request lacking a valid header from a trusted proxy as anonymous.
-
-## Docker Compose
-
-All three services on one host. Placeholder values throughout — replace before deploying.
+The repository's Compose file already uses:
 
 ```yaml
-services:
-  headscale:
-    image: headscale/headscale:latest
-    container_name: headscale
-    command: serve
-    restart: unless-stopped
-    ports:
-      - "8080:8080"          # headscale.example.com
-    volumes:
-      - ./headscale/config:/etc/headscale
-      - ./headscale/data:/var/lib/headscale
-
-  npm:
-    image: jc21/nginx-proxy-manager:latest
-    container_name: npm
-    restart: unless-stopped
-    ports:
-      - "80:80"
-      - "443:443"
-      - "81:81"              # npm.example.com admin UI
-    volumes:
-      - ./npm/data:/data
-      - ./npm/letsencrypt:/etc/letsencrypt
-
-  velociportal:
-    image: velociportal:latest
-    container_name: velociportal
-    restart: unless-stopped
-    # Bind to loopback only; expose via Tailscale Serve, not a public port.
-    ports:
-      - "127.0.0.1:3000:3000"
-    environment:
-      HEADSCALE_URL: "http://headscale:8080"
-      HEADSCALE_API_KEY: "${HEADSCALE_API_KEY}"
-      NPM_URL: "http://npm:81"
-      NPM_EMAIL: "${NPM_EMAIL}"
-      NPM_PASSWORD: "${NPM_PASSWORD}"
-      TRUSTED_PROXY_CIDR: "172.16.0.0/12"   # docker network / NPM source range
-    depends_on:
-      - headscale
-      - npm
+ports:
+  - "127.0.0.1:8080:8080"
+environment:
+  LISTEN_ADDR: 0.0.0.0:8080
 ```
 
-## Velociportal configuration
+This distinction matters: `0.0.0.0` is inside the container, while the host publication remains loopback-only.
 
-Configuration is entirely environment variables.
+## Upstream URLs
 
-=== "Variables"
+- Containers on the **same Docker network** can use DNS names such as `http://headscale:8080` and `http://npm:81`.
+- A sibling container is **not** `localhost`. Inside Velociportal, `127.0.0.1` means the Velociportal container itself.
+- Do not send NPM credentials over plain HTTP across a LAN, tailnet, or public network. Keep HTTP on an isolated local/container network, or terminate HTTPS with a valid certificate.
 
-    | Variable | Example | Purpose |
-    |---|---|---|
-    | `HEADSCALE_URL` | `http://headscale:8080` | Headscale API base |
-    | `HEADSCALE_API_KEY` | `hskey-...` | Bearer key for `/api/v1` |
-    | `NPM_URL` | `http://npm:81` | NPM admin API base |
-    | `NPM_EMAIL` | `admin@example.com` | NPM login (JWT) |
-    | `NPM_PASSWORD` | `changeme` | NPM login (JWT) |
-    | `TRUSTED_PROXY_CIDR` | `172.16.0.0/12` | Only accept identity headers from here |
+## Identity path
 
-=== ".env file"
+The runtime accepts only:
 
-    ```bash
-    HEADSCALE_URL=http://headscale:8080
-    HEADSCALE_API_KEY=hskey-abcdef0123456789
-    NPM_URL=http://npm:81
-    NPM_EMAIL=admin@example.com
-    NPM_PASSWORD=super-secret-admin-password
-    TRUSTED_PROXY_CIDR=172.16.0.0/12
-    ```
+- `Tailscale-User-Login` (required)
+- `Tailscale-User-Name` (optional display value)
+- `Tailscale-User-Profile-Pic` (optional)
 
-### Generating the Headscale API key
+The proxy must strip client-supplied versions and inject its own values. Set `TRUSTED_PROXY_CIDR` to the narrowest address or subnet that covers the path actually seen by the application.
 
-```bash
-docker exec headscale headscale apikeys create --expiration 90d
-```
+!!! danger "Do not guess the trusted CIDR"
+    Docker, host networking, and proxy chaining can change the source address. Observe it in Velociportal/proxy logs, `docker inspect`, or a packet capture, then configure that exact `/32` or the smallest necessary subnet. A broad `172.16.0.0/12` or `100.64.0.0/10` copied from an example weakens the anti-spoofing boundary.
 
-Copy the printed key into `HEADSCALE_API_KEY`. Rotate on the expiration you set.
+## Policy and service join
 
-### NPM authentication
+Velociportal evaluates legacy ACL `accept` rules and compares supported destinations with each NPM record's `forward_host`. Ports and protocols are ignored for visibility. Grants and NPM access lists are not evaluated.
 
-!!! danger "NPM has no read-only API token"
-    NPM authenticates via `POST /api/tokens` with an email and password, returning a short-lived JWT. There is **no scoped, read-only token**. The credentials you give Velociportal are **admin-equivalent** — they can change proxy hosts, certs, and access lists.
+Before rollout, test at least two users with different groups and compare:
 
-Velociportal exchanges the credentials for a JWT and refreshes it as needed:
+1. Cards rendered by Velociportal.
+2. Actual connectivity allowed by Headscale.
+3. NPM's stored `forward_host` values.
 
-```bash
-curl -X POST http://npm:81/api/tokens \
-  -H "Content-Type: application/json" \
-  -d '{"identity":"admin@example.com","secret":"changeme"}'
-# -> { "token": "eyJhbGci...", "expires": "..." }
-```
-
-## Security notes
-
-!!! warning "Bind Velociportal to the tailnet only"
-    Velociportal shows the full service map. Never expose it publicly.
-
-    - Bind the container to `127.0.0.1` (as above) and publish it with `tailscale serve`, or bind it directly to the tailnet interface.
-    - Do **not** create a public NPM proxy host or Funnel for it.
-
-=== "Expose via Tailscale Serve"
-
-    ```bash
-    tailscale serve --bg --https=443 127.0.0.1:3000
-    ```
-
-    This is also what injects the `Tailscale-User-*` headers.
-
-=== "Trusted proxy check"
-
-    Velociportal only trusts `Tailscale-User-Login` when the request source IP falls inside `TRUSTED_PROXY_CIDR`. Requests from anywhere else are treated as anonymous. Set this CIDR to the smallest range that covers NPM / your Serve proxy.
-
-Additional hardening:
-
-- **Treat NPM credentials as admin secrets.** Store them in a secrets manager or restricted `.env` (`chmod 600`), never in the image or git. Rotate if leaked.
-- **Scope the Headscale key.** Use short expirations and rotate. The key can read your full ACL policy and node list.
-- **Velociportal is read-only by design** — it never writes to Headscale or NPM. If a build offers write features, do not enable them here.
-- **Identity is advisory, not enforced.** A user who reaches a backend directly is still gated by Headscale ACLs and NPM. Velociportal hiding a tile is not access control.
+Read [Known Limitations](../reference/known-limitations.md) and the [TrueNAS deployment guide](truenas-scale.md) for the complete operational guidance.

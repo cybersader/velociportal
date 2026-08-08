@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"strings"
 )
 
 type Identity struct {
@@ -31,8 +32,11 @@ func IdentityMiddleware(trustedCIDR *net.IPNet, next http.Handler) http.Handler 
 		if err != nil {
 			host = r.RemoteAddr
 		}
+		if percent := strings.LastIndexByte(host, '%'); percent >= 0 {
+			host = host[:percent]
+		}
 		ip := net.ParseIP(host)
-		if ip == nil || !trustedCIDR.Contains(ip) {
+		if ip == nil || trustedCIDR == nil || !trustedCIDR.Contains(ip) {
 			slog.Debug("identity: rejected untrusted source", "remote", host)
 			http.Error(w, "untrusted source", http.StatusForbidden)
 			return
@@ -43,7 +47,7 @@ func IdentityMiddleware(trustedCIDR *net.IPNet, next http.Handler) http.Handler 
 			http.Error(w, "no identity", http.StatusUnauthorized)
 			return
 		}
-		slog.Debug("identity: request from trusted proxy", "login", login, "remote", host)
+		slog.Debug("identity: request from trusted proxy", "remote", host)
 
 		id := &Identity{
 			Login:      login,

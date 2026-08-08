@@ -1,3 +1,7 @@
 site/
 velociportal
 .env
+.env.*
+!.env.example
+validation-*.json
+validation-*.txt

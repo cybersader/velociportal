@@ -101,3 +101,38 @@ func TestIdentityMiddleware(t *testing.T) {
 		}
 	})
 }
+
+func TestIdentityMiddlewareAcceptsObservedZonedIPv6Source(t *testing.T) {
+	_, trusted, err := net.ParseCIDR("fe80::1234/128")
+	if err != nil {
+		t.Fatalf("ParseCIDR() error = %v", err)
+	}
+
+	handler := IdentityMiddleware(trusted, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.RemoteAddr = "[fe80::1234%eth0]:8080"
+	req.Header.Set("Tailscale-User-Login", "alice@example.com")
+
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+}
+
+func TestIdentityMiddlewareFailsClosedWithNilTrustedCIDR(t *testing.T) {
+	handler := IdentityMiddleware(nil, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Fatal("next handler called with nil trusted CIDR")
+	}))
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.RemoteAddr = "127.0.0.1:8080"
+	req.Header.Set("Tailscale-User-Login", "alice@example.com")
+
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403", rec.Code)
+	}
+}

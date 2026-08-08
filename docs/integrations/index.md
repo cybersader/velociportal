@@ -1,44 +1,83 @@
-# IdP Integrations
+# Integrate identity safely
 
-Velociportal is a **visibility layer** for your self-hosted stack — it surfaces which services exist, who can reach them, and how they connect. It does **not** issue identities or terminate auth.
+Velociportal complements identity providers, but the current runtime has one fixed identity contract: a trusted source supplies `Tailscale-User-Login`, with optional name and profile-picture headers.
 
-!!! important "Velociportal complements your IdP — it does not replace it"
-    Run Velociportal with or without an identity provider. On its own it gives you visibility. Paired with an IdP, it inherits **SSO, MFA, and access enforcement** so what you *see* matches what you're *allowed* to reach.
+<div class="vp-chip-row" aria-label="Identity integration status">
+<span class="vp-chip vp-chip--supported">Supported: Tailscale-User-* contract</span>
+<span class="vp-chip vp-chip--security">Required: source CIDR validation</span>
+<span class="vp-chip vp-chip--planned">Direct IdP adapters: planned</span>
+</div>
 
-## Integration modes
+## Choose your identity arrangement
 
-=== "Authentik"
+<div class="grid cards" markdown>
 
-    Full IdP. Velociportal reads groups and sits behind Authentik forward-auth.
+-   :material-tailwind: **Tailscale identity only**
 
-    ```yaml
-    # forward-auth to authentik.example.com
-    proxy_provider: headscale.example.com
-    groups_sync: true
-    ```
+    <span class="vp-chip vp-chip--supported">Current runtime path</span>
 
-    Best when you already run Authentik for SSO + MFA.
+    A trusted Tailscale Serve-style or equivalent identity-aware path strips client headers and injects the supported `Tailscale-User-*` values.
 
-=== "Authelia"
+    [Use the current identity contract →](no-idp.md)
 
-    Lightweight auth middleware — MFA and access rules without a full IdP.
+-   :material-shield-account-outline: **Authentik alongside Velociportal**
 
-    ```yaml
-    # Authelia guards npm.example.com
-    auth_backend: authelia.example.com
-    access_control: bypass|one_factor|two_factor
-    ```
+    <span class="vp-chip vp-chip--planned">No direct header adapter</span>
 
-=== "No IdP"
+    Authentik can provide SSO, MFA, and forward-auth for linked services. Velociportal still needs its supported identity path and does not read `X-authentik-*` headers.
 
-    Simplest path: trust **Tailscale identity headers** only.
+    [Understand the supported arrangement →](authentik.md)
 
-    ```
-    Tailscale-User-Login: alice@example.com
-    Tailscale-User-Name: Alice
-    ```
+-   :material-lock-check-outline: **Authelia alongside Velociportal**
 
-    No SSO or MFA — least features, zero extra services.
+    <span class="vp-chip vp-chip--planned">No direct header adapter</span>
 
-!!! tip
-    Start with **No IdP** to explore, then add Authelia or Authentik when you need enforcement.
+    Authelia can enforce login and per-domain policy. Velociportal does not read `Remote-User`, `Remote-Groups`, or a trust-forward-headers switch.
+
+    [Understand the supported arrangement →](authelia.md)
+
+</div>
+
+## What can be combined today
+
+=== "Use an IdP for applications"
+
+    This is supported as a layered architecture:
+
+    1. The IdP handles login, MFA, sessions, and application access policy.
+    2. Headscale enforces network access.
+    3. NPM routes service traffic.
+    4. Velociportal renders the filtered index from the supported Headscale policy subset.
+
+    Similar group names across systems do not create synchronization. Each system remains responsible for its own policy.
+
+=== "Protect the portal with an IdP"
+
+    An IdP may protect the portal URL at an outer layer, but the final request into Velociportal must still satisfy the current contract:
+
+    - Source address is inside `TRUSTED_PROXY_CIDR`.
+    - `Tailscale-User-Login` is present.
+    - Client-supplied identity headers were removed before trusted values were injected.
+
+    A translator from another identity system is outside the current project and must be reviewed as part of the trust boundary.
+
+=== "Send IdP headers directly"
+
+    This is **not implemented**. The runtime does not currently read:
+
+    - Authentik `X-authentik-*`
+    - Authelia `Remote-User` or `Remote-Groups`
+    - `X-Webauth-*`
+    - Configurable identity or group header names
+
+    Do not use older examples containing `VP_IDENTITY_HEADER`, `VP_GROUPS_HEADER`, or `TRUST_FORWARD_HEADERS`; those variables do not exist.
+
+## Fixed header contract
+
+| Header | Required | Current use |
+|---|---:|---|
+| `Tailscale-User-Login` | Yes | Identity used for supported policy and group matching |
+| `Tailscale-User-Name` | No | Display name |
+| `Tailscale-User-Profile-Pic` | No | Accepted but not currently rendered |
+
+The correct next step is [Tailscale Identity Headers](../reference/tailscale-headers.md), which diagrams the trusted route and rejected bypass route.

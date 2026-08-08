@@ -1,101 +1,33 @@
-# No IdP / Tailscale Only
+# No IdP / Tailscale Identity Only
 
-The simplest Velociportal deployment: no identity provider, no OAuth, no extra login. Velociportal reads the identity headers that Tailscale Serve already injects and renders a per-user portal from them.
+This is the identity mode the current runtime supports: a human tailnet identity arrives through trusted `Tailscale-User-*` headers.
 
-!!! note "Velociportal complements IdPs, it does not replace them"
-    This mode uses Tailscale's identity as the only signal. It gives you a visibility layer, not authentication for your backend services. When you outgrow it, add an IdP (see [When to add an IdP](#when-to-add-an-idp)) — Velociportal keeps working alongside it.
+## Headers
 
-## How it works
+| Header | Use |
+|---|---|
+| `Tailscale-User-Login` | Required matching identity |
+| `Tailscale-User-Name` | Optional display name |
+| `Tailscale-User-Profile-Pic` | Optional; currently not rendered |
 
-When a human on your tailnet reaches a service through `tailscale serve`, Tailscale terminates the connection and injects identity headers on the proxied request:
+Tagged-device and Funnel requests do not receive human identity headers.
 
-| Header | Example value |
-| --- | --- |
-| `Tailscale-User-Login` | `alice@example.com` |
-| `Tailscale-User-Name` | `Alice Example` |
-| `Tailscale-User-Profile-Pic` | `https://.../alice.jpg` |
+## Safe publication
 
-Velociportal reads these headers, cross-references the user against your Headscale/Tailscale ACLs, and renders only the services that user is allowed to see.
+The repository's Compose example publishes the container only on host loopback:
 
-```mermaid
-flowchart LR
-    U[Alice on tailnet] -->|HTTPS| TS[Tailscale Serve]
-    TS -->|injects Tailscale-User-* headers| VP[Velociportal]
-    VP -->|reads ACLs| HS[Headscale API]
-    VP -->|per-user portal| U
+```yaml
+ports:
+  - "127.0.0.1:8080:8080"
 ```
 
-## Limitations
+Inside the container, the process listens on `0.0.0.0:8080`; that does not expose it on the LAN because the host publication remains loopback-only.
 
-!!! warning "Know what you are giving up"
-    - **No SSO.** Velociportal does not authenticate you to the services it links to. Each backend still enforces its own auth.
-    - **No MFA beyond Tailscale.** Your only second factor is whatever protects the tailnet itself (device auth, Tailscale SSO).
-    - **Humans only.** Identity headers are injected for human users over tailnet Serve. They are **not** present for tagged devices, and **not** present over Funnel.
-    - **Tailnet-bound.** If a request does not arrive through Tailscale Serve, there is no trustworthy identity.
+A host-network Tailscale daemon or another trusted local identity proxy can reach `127.0.0.1:8080`. A sibling bridged container cannot use its own `localhost` to reach that host socket.
 
-## When this is enough
+## Headscale caveat
 
-- Small homelab or team where **everyone is already on Tailscale**.
-- You want a clean, per-user index of your services, not a security gateway.
-- Your backend services either enforce their own auth or are low-sensitivity.
+Tailscale's automatic HTTPS Serve flow is not currently implemented by Headscale. See [TrueNAS SCALE: Headscale and Tailscale Serve HTTPS](../guides/truenas-scale.md#headscale-and-tailscale-serve-https) for tailnet-only HTTP and identity-proxy options.
 
-## When to add an IdP
-
-Add an identity provider (Authelia, Authentik, Keycloak, etc.) when you need:
-
-- Real SSO across services, not just a dashboard.
-- MFA policies, session management, or per-app authorization.
-- Access for users or devices that are **not** on the tailnet.
-
-Velociportal continues to read Tailscale identity in front of the IdP — it does not conflict with one.
-
-## Minimal Docker Compose
-
-=== "docker-compose.yml"
-
-    ```yaml
-    services:
-      velociportal:
-        image: velociportal:latest
-        container_name: velociportal
-        restart: unless-stopped
-        environment:
-          # Trust identity headers ONLY because we sit behind Tailscale Serve
-          VP_IDENTITY_MODE: "tailscale-headers"
-          VP_HEADSCALE_URL: "https://headscale.example.com"
-          VP_HEADSCALE_API_KEY: "${HEADSCALE_API_KEY}"
-        ports:
-          - "127.0.0.1:8080:8080"   # bind to loopback; Serve fronts it
-    ```
-
-=== ".env"
-
-    ```bash
-    HEADSCALE_API_KEY=hskey-api-xxxxxxxxxxxxxxxxxxxx
-    ```
-
-Then point Tailscale Serve at the container:
-
-```bash
-tailscale serve --bg --https=443 http://127.0.0.1:8080
-```
-
-Now `https://<machine>.<tailnet>.ts.net` serves Velociportal with identity headers attached.
-
-## Security
-
-!!! danger "Identity headers are trustworthy ONLY through Tailscale Serve"
-    `Tailscale-User-*` headers are just HTTP headers. Anything that can reach Velociportal directly can forge them.
-
-    - **Bind Velociportal to loopback** (`127.0.0.1:8080`), never `0.0.0.0`, so only Tailscale Serve on the same host can reach it.
-    - **Do not expose the container port** on your LAN or the internet.
-    - **Never use Funnel** for this mode — Funnel does not inject identity headers, so any public visitor would arrive header-less (or with forged ones).
-    - Treat a request that arrives **without** these headers as anonymous, not as an error to work around.
-
-!!! tip "Verify the wiring"
-    Confirm the port is loopback-only:
-
-    ```bash
-    ss -tlnp | grep 8080
-    # expect 127.0.0.1:8080, not 0.0.0.0:8080
-    ```
+!!! danger "Header trust is the security boundary"
+    Determine the source address Velociportal actually sees and set `TRUSTED_PROXY_CIDR` narrowly. Do not expose the raw port to the LAN or internet, and do not treat a copied broad CIDR as proof that the proxy path is safe.

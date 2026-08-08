@@ -1,10 +1,18 @@
-FROM golang:1.22-alpine AS builder
+FROM golang:1.22-alpine@sha256:1699c10032ca2582ec89a24a1312d986a3f094aed3d5c1147b19880afe40e052 AS builder
+ARG BUILD_VERSION=dev
+ARG GIT_REVISION=unknown
+ARG GIT_SOURCE_STATE=unknown
 RUN apk add --no-cache ca-certificates
 WORKDIR /build
 COPY go.mod go.sum* ./
 RUN go mod download
-COPY . .
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o velociportal .
+# Allowlist build inputs so arbitrary local configuration files never enter the
+# Docker context layer or builder cache.
+COPY *.go ./
+COPY assets ./assets
+RUN CGO_ENABLED=0 GOOS=linux go build \
+    -ldflags="-s -w -X main.buildVersion=${BUILD_VERSION} -X main.buildRevision=${GIT_REVISION} -X main.buildSourceState=${GIT_SOURCE_STATE}" \
+    -o velociportal .
 
 FROM scratch
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
@@ -16,9 +24,7 @@ USER 65534:65534
 
 EXPOSE 8080
 
-# No HEALTHCHECK here: the `FROM scratch` image contains only the static binary
-# and CA certs — there is no shell, wget, or curl to run a probe. Health is
-# exposed at the HTTP /healthz endpoint (503 while the cache is empty/stale);
-# probe it from your reverse proxy or an external monitor. See docker-compose.yml.
+HEALTHCHECK --interval=30s --timeout=3s --start-period=40s --retries=3 \
+    CMD ["/velociportal", "healthcheck"]
 
 ENTRYPOINT ["/velociportal"]

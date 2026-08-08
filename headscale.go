@@ -52,6 +52,7 @@ type Node struct {
 	ID          string   `json:"id"`
 	Name        string   `json:"name"`
 	User        User     `json:"user"`
+	Tags        []string `json:"tags"`
 	ForcedTags  []string `json:"forcedTags"`
 	ValidTags   []string `json:"validTags"`
 	IPAddresses []string `json:"ipAddresses"`

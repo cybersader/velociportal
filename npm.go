@@ -13,6 +13,8 @@ import (
 	"time"
 )
 
+const maxNPMErrorBody = 4096
+
 type NPMClient struct {
 	baseURL     string
 	email       string
@@ -72,6 +74,23 @@ type TokenResponse struct {
 	Expires string `json:"expires"`
 }
 
+func npmErrorExcerpt(body io.Reader, secrets []string) string {
+	if body == nil {
+		return "response body unavailable"
+	}
+	contents, err := io.ReadAll(io.LimitReader(body, maxNPMErrorBody+1))
+	if err != nil {
+		return "response body unreadable"
+	}
+	if len(contents) > maxNPMErrorBody {
+		contents = contents[:maxNPMErrorBody]
+	}
+	if len(contents) == 0 {
+		return "response body empty"
+	}
+	return sanitizeDoctorError(fmt.Errorf("%s", contents), secrets)
+}
+
 func (c *NPMClient) authenticate(ctx context.Context) error {
 	start := time.Now()
 	body, err := json.Marshal(map[string]string{
@@ -95,8 +114,8 @@ func (c *NPMClient) authenticate(ctx context.Context) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		b, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("authenticate: unexpected status %d: %s", resp.StatusCode, string(b))
+		excerpt := npmErrorExcerpt(resp.Body, []string{c.password})
+		return fmt.Errorf("authenticate: unexpected status %d: %s", resp.StatusCode, excerpt)
 	}
 
 	var tr TokenResponse
@@ -166,9 +185,12 @@ func (c *NPMClient) doRequest(ctx context.Context, method, path string) (*http.R
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		b, _ := io.ReadAll(resp.Body)
+		c.mu.Lock()
+		secrets := []string{c.password, c.token}
+		c.mu.Unlock()
+		excerpt := npmErrorExcerpt(resp.Body, secrets)
 		resp.Body.Close()
-		return nil, fmt.Errorf("doRequest: unexpected status %d: %s", resp.StatusCode, string(b))
+		return nil, fmt.Errorf("doRequest: unexpected status %d: %s", resp.StatusCode, excerpt)
 	}
 
 	return resp, nil

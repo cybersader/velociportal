@@ -2,49 +2,57 @@
 
 ## What this project is
 
-Velociportal is a self-hosted, identity-aware service dashboard that bridges **Headscale/Tailscale** and **Nginx Proxy Manager (NPM)**. It reads your Tailscale ACL policy (groups, users, access rules) and NPM's proxy-host list, correlates the two, and renders a per-user portal where each user sees only the services their ACL group grants access to. It is a **visibility layer, not an auth layer**: it complements identity providers (Authentik, Keycloak, Authelia) rather than replacing them. The IdP still handles authentication, SSO, and access enforcement — Velociportal just makes the dashboard reflect what the network already permits, using your ACLs as the single source of truth so there is no separate visibility config to maintain.
+Velociportal is a self-hosted, identity-aware **visibility layer** for Headscale and Nginx Proxy Manager (NPM). The current implementation reads Headscale legacy ACL rules plus node data, correlates supported destinations with NPM proxy hosts, and renders a per-user portal. It does not authenticate users, proxy service traffic, or enforce access; the IdP, Headscale ACLs, reverse proxy, and backend applications remain the security boundaries.
 
 ## Read before acting
 
-1. `README.md` — the vision/concept doc and current source of truth for scope, the "how it works" data flow, and the alternatives comparison (why this complements an IdP, not replaces it).
-2. `knowledgebase/04-handoff-context.md` — hot context: current state, next steps, open questions. Read this first when picking up work.
-3. `knowledgebase/` — numbered design docs. Key files:
-   - `00-concept-source.md` — the "why" and problem statement
-   - `01-api-research.md` — Headscale + NPM API details, endpoints, auth
-   - `02-design-decisions.md` — locked decisions (don't reopen without user OK)
+1. `knowledgebase/04-handoff-context.md` — current implementation state, limitations, and next work.
+2. `README.md` — concise public scope and roadmap.
+3. `docs/reference/known-limitations.md` — exact current policy, matcher, identity, and validation boundary.
+4. `docs/guides/truenas-scale.md` — canonical deployment guidance.
+5. `knowledgebase/` — stable reasoning:
+   - `00-concept-source.md` — problem statement
+   - `01-api-research.md` — Headscale + NPM API research
+   - `02-design-decisions.md` — locked decisions
    - `03-prior-art.md` — similar tools and lessons
-   - `05-deep-research.md` — adversarially verified research report (103-agent deep research)
-4. `velociportal.portagenty.toml` — workspace/session config (portagenty). Do not hand-edit unless changing the workspace layout.
+   - `05-deep-research.md` — adversarial research report
+   - `06-truenas-deployment.md` and `07-vps-options.md` — pointers to canonical public guides
+6. `velociportal.portagenty.toml` — workspace/session config. Do not hand-edit unless changing the workspace layout.
 
 ## Current stage
 
-**Sprint 1 complete — core implementation exists and is tested.** The codebase has a working Go binary with API clients, ACL matching, identity middleware, and a server-rendered portal. 58 tests pass with `-race`. CI runs on push/PR. See `knowledgebase/04-handoff-context.md` for detailed state. Confirm changes against the hard constraints below and record non-trivial decisions in `knowledgebase/`.
+**Sprint 5 explainable validation tooling is complete in the working tree.** The Go binary includes interactive local setup, exact trusted-proxy observation, doctor diagnostics, privacy-controlled multi-identity validation reports with build provenance, and a credential-free health client. The repository provides the Docker/TrueNAS journey, health-gated Compose startup, race-enabled tests, branded MkDocs pages, and CI/release verification without publishing. The next milestone is completing the real Headscale + NPM + identity-proxy worksheet and deciding whether the `ForwardHost` join works in production; report generation and fixture coverage are not end-to-end proof.
 
 ## Hard constraints (locked)
 
-- **Complements IdPs, does not replace them.** Velociportal is a visibility layer, never an auth layer. It does no login, SSO, OIDC/SAML, or request enforcement — those stay with the IdP and forward-auth middleware.
-- **Single Docker container.** One static binary in a minimal image (`FROM scratch`/distroless), deployable on TrueNAS Scale. No multi-service compose stack for the app itself.
-- **Reads from Headscale API + NPM API only.** No database for service config. Headscale `GET /api/v1/policy` (Bearer API key) supplies groups/tagOwners/acls/users; NPM `GET /api/nginx/proxy-hosts` (JWT from `POST /api/tokens`) supplies services. State is an in-memory cache refreshed on a ticker, not persisted config.
-- **Tailscale identity headers for user identification.** Trust `Tailscale-User-Login` (and siblings) ONLY when the request arrives from the trusted Serve/forward-auth proxy; reject/ignore those headers on any other path. Bind to the internal network, never `0.0.0.0` on the LAN. Spoofed identity headers are the core threat model. Do authorization server-side before rendering — never rely on hiding cards in client HTML.
-- **Simple over clever — minimal dependencies.** Prefer Go standard library + templ + htmx (server-rendered, no SPA). Two upstream API clients (`net/http` + `encoding/json`) and a background poll goroutine. Add a dependency only when the stdlib genuinely falls short.
-- **No AI attribution in commits.** Never add Claude/Anthropic/any AI as co-author or contributor.
+- **Visibility only.** No login, SSO, OIDC/SAML, session issuance, request proxying, or enforcement.
+- **Single Docker container.** One static non-root binary in a minimal image, deployable on TrueNAS SCALE.
+- **Current upstreams are Headscale + NPM only.** Runtime refreshes Headscale policy, Headscale nodes, and NPM proxy hosts. There is no application database or persisted cache.
+- **Legacy ACL subset only.** The matcher evaluates `acls` `accept` rules. Grants, protocols, and ports are not modeled for visibility. `autogroup:internet` fails closed.
+- **No source-tag inference for humans.** `tagOwners` and tags on a user's nodes do not make the user a `tag:*` source. Tags resolve destinations only.
+- **NPM access lists are not visibility inputs.** Do not describe `access_list_id` or access-list API data as part of card authorization.
+- **Tailscale identity headers only.** Trust `Tailscale-User-Login` and siblings only from `TRUSTED_PROXY_CIDR`. No direct Authentik, Authelia, `Remote-User`, or `X-Webauth-*` adapter exists.
+- **Bind safely.** The process may listen on `0.0.0.0` inside a bridged container, but the host publication must remain loopback-only or equivalently private. Never expose the raw app port on the LAN.
+- **Simple over clever.** Go standard library, embedded server-rendered HTML, embedded htmx, two upstream clients, and a polling goroutine. Add dependencies only when necessary.
+- **No AI attribution in commits.** Never add Claude, Anthropic, or another AI system as co-author or contributor.
 
 ## Architecture sketch
 
-```
-Headscale API ─ GET /api/v1/policy ─┐
-   (groups, users, acls, tagOwners) │
-                                     ├─▶ Velociportal
-NPM API ─ GET /api/nginx/proxy-hosts┘   • background goroutine polls both on a
-   (services, domains, access_list_id)    time.Ticker → in-memory cache (RWMutex)
-                                          • per-request: read identity header from
-                                            trusted proxy → resolve user's ACL group
-                                            → filter cached services to authorized set
-                                            → templ renders that subset only
-                                                        │
-                                                        ▼
-                                        Per-user portal (each user sees only
-                                        the services their ACL group can reach)
+```mermaid
+flowchart TD
+    HS["Headscale API\npolicy + nodes"] -->|"startup + ticker"| Cache["Complete in-memory snapshot\natomic pointer swap"]
+    NPM["NPM API\nproxy hosts"] -->|"startup + ticker"| Cache
+    Req["Request\nTailscale-User-Login"] --> Auth["Identity middleware\nTRUSTED_PROXY_CIDR"]
+    Auth --> Match["Legacy ACL matcher\nuser/groups → ForwardHost"]
+    Cache --> Match
+    Match --> Portal["Server-rendered portal\nembedded htmx"]
 ```
 
-Requests are always served from the cache, so a slow or unreachable upstream never blocks the page; upstream calls carry per-request context timeouts. Language default is Go (single static binary); FastAPI + Jinja2 + htmx is the only sanctioned fallback, and only if the maintainer is decisively more comfortable in Python. Rust and Node are out for the primary service.
+A refresh is all-or-nothing: policy, nodes, and proxy hosts must all succeed before replacing the snapshot. A failed refresh keeps the previous in-process snapshot; a restart starts cold. `/healthz` is healthy only when a recent complete snapshot exists.
+
+## Required verification discipline
+
+- Run `go test -race -count=1 ./...` for Go changes.
+- Run `ENV_FILE=.env.example docker compose --profile tools config --quiet` for Compose changes.
+- Run a strict MkDocs build for documentation changes.
+- Do not claim real integration validation until a real deployment has been exercised with multiple identities and its card set compared with actual Headscale reachability.

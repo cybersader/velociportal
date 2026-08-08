@@ -1,142 +1,110 @@
-# How It Works
+# How it works
 
-Velociportal is a read-only visibility layer. It watches your Headscale ACLs and Nginx Proxy Manager (NPM) proxy hosts, then renders a per-user dashboard showing only the services that user is allowed to reach.
+Velociportal separates **control-plane refreshes**, **identity-aware portal requests**, and **service traffic**. Portal rendering reads one immutable in-memory snapshot and never waits on Headscale or NPM.
 
-!!! important "Velociportal complements your IdP, it does not replace it"
-    Velociportal never issues tokens, never authenticates users, and never gates traffic. Access enforcement stays with your identity provider, Tailscale ACLs, and reverse proxy. Velociportal only *reflects* what those systems already decided. If a user sees a service in their portal, it is because your ACLs already grant it, not the other way around.
+## Control plane: complete snapshot refresh
 
-## Data flow
+```mermaid
+flowchart TD
+    accTitle: Complete snapshot refresh
+    accDescr: Startup or a poll tick triggers Headscale policy, Headscale node, and NPM proxy-host fetches. If all three succeed, Velociportal atomically replaces the snapshot. If any fetch fails, it keeps the previous complete snapshot.
 
-```text
-                       ┌───────────────────────────────────────────┐
-                       │            Velociportal (Go)              │
-                       │                                           │
-  Headscale API  ──1──▶│  poll ACL policy (groups, users, grants)  │
-  (Bearer key)         │                                           │
-                       │            ┌──────────────┐               │
-  NPM API        ──2──▶│  poll  ──▶ │ in-memory    │ ◀── match  3  │
-  (JWT)                │  hosts     │ cache        │               │
-                       │            └──────────────┘               │
-                       └───────────────▲───────────────┬───────────┘
-                                       │               │
-   Browser ─── request ──▶ Tailscale Serve ──4── header │
-   (human on tailnet)      injects identity            │
-                              Tailscale-User-Login       │
-                                                        ▼
-                                              5  filter + render
-                                                 authorized services only
+    Tick["Startup or poll tick"] --> Policy["Fetch Headscale policy"]
+    Policy --> Nodes["Fetch Headscale nodes"]
+    Nodes --> Hosts["Authenticate to NPM<br/>fetch proxy hosts"]
+    Hosts -->|"all three succeeded"| Swap["Atomically replace<br/>complete snapshot"]
+    Policy -->|failure| Keep["Keep previous<br/>complete snapshot"]
+    Nodes -->|failure| Keep
+    Hosts -->|failure| Keep
+
+    class Tick core
+    class Policy,Nodes control
+    class Hosts service
+    class Swap accepted
+    class Keep output
 ```
 
-### 1. Poll Headscale for ACL policy
+<p class="vp-diagram-note">Success and failure are written on the paths; green or neutral styling is only supplemental.</p>
 
-Velociportal calls the Headscale REST API at `/api/v1` with a Bearer API key and reads the ACL policy (Tailscale huJSON: `groups`, `tagOwners`, `acls`, `grants`). This tells it which users belong to which groups and which groups may reach which destinations.
+- The default poll interval is `30s`.
+- Each upstream call has a `10s` context timeout.
+- A refresh is **all-or-nothing**: policy, nodes, and proxy hosts must all succeed before publication.
+- Startup performs an immediate refresh. If it fails and there is no earlier in-process snapshot, portal requests and `/healthz` remain unavailable until a later refresh succeeds.
+- The cache is not persisted. A process restart always starts cold.
 
-=== "Config"
+## Identity, control, and service sequence
 
-    ```yaml
-    headscale:
-      url: https://headscale.example.com
-      api_key: ${HEADSCALE_API_KEY}   # Bearer token
-      poll_interval: 60s
-    ```
+```mermaid
+sequenceDiagram
+    accTitle: Identity, control-plane, and service request sequence
+    accDescr: A background poll builds the complete snapshot from Headscale and NPM. A human requests the portal through a trusted identity proxy, which sanitizes and injects Tailscale user headers. Velociportal checks the proxy source, reads the snapshot, matches supported ACL rules, and returns filtered cards. When the human selects a card, service traffic goes through NPM to the backend without passing through Velociportal.
 
-=== "What it reads"
+    participant HS as Headscale (control plane)
+    participant Catalog as NPM API (service catalog)
+    participant VP as Velociportal
+    participant Proxy as Trusted identity proxy
+    participant User as Human user
+    participant Route as NPM route
+    participant App as Backend service
 
-    ```jsonc
-    {
-      "groups": {
-        "group:eng": ["alice@example.com", "bob@example.com"],
-        "group:ops": ["carol@example.com"]
-      },
-      "acls": [
-        { "action": "accept", "src": ["group:eng"], "dst": ["npm.example.com:443"] }
-      ]
-    }
-    ```
+    loop Startup and every poll interval
+        VP->>HS: GET policy and nodes
+        HS-->>VP: Legacy ACL data + node metadata
+        VP->>Catalog: Authenticate and GET proxy hosts
+        Catalog-->>VP: Enabled service metadata
+        Note over VP: Publish only after all inputs succeed
+    end
 
-### 2. Poll NPM for proxy hosts
+    User->>Proxy: Request portal
+    Note over Proxy: Remove client identity headers<br/>Inject trusted Tailscale-User-Login
+    Proxy->>VP: Portal request + trusted identity
+    VP->>VP: Validate source CIDR and required login
+    VP->>VP: Read snapshot and match supported ACL rules
+    VP-->>Proxy: Server-rendered filtered cards
+    Proxy-->>User: Portal HTML
 
-NPM has no scoped read-only API token. Velociportal authenticates with credentials (`POST /api/tokens` with email + password) to obtain a JWT, then lists proxy hosts to learn the service catalog: domains, forward hosts, and ports.
-
-!!! warning "NPM credentials are admin-level"
-    Because NPM only issues credential-based JWTs, the account you give Velociportal has full NPM access. Use a dedicated NPM user, store the password as a secret, and keep Velociportal bound to localhost (see [Security model](#security-model)).
-
-```yaml
-npm:
-  url: https://npm.example.com
-  identity: velociportal@example.com
-  secret: ${NPM_PASSWORD}
-  poll_interval: 60s
+    User->>Route: Open selected service URL
+    Route->>App: Proxy service request
+    App-->>User: Service response
+    Note over User,App: Service traffic does not pass through Velociportal
 ```
 
-### 3. Match ACL rules to proxy hosts
+<p class="vp-diagram-note">Every participant includes its role in text. Velociportal predicts visibility; Headscale, NPM, the IdP, and the backend continue to enforce access.</p>
 
-Velociportal correlates each NPM proxy host (e.g. `grafana.example.com`) with the ACL rules whose destinations resolve to it. The result is a table of `service -> allowed groups`, held in memory.
+## Request decision path
 
-| Service | Domain | Allowed groups |
-|---|---|---|
-| Grafana | grafana.example.com | group:eng, group:ops |
-| Registry | registry.example.com | group:ops |
+1. Parse the TCP source address.
+2. Reject the request with `403` unless it is inside `TRUSTED_PROXY_CIDR`.
+3. Require `Tailscale-User-Login`; a missing identity from a trusted source returns `401`.
+4. Preserve a fully qualified login exactly. Short or bare legacy forms are accepted only when the trusted header itself uses that form.
+5. Resolve supported policy groups for that identity.
+6. Evaluate enabled NPM proxy hosts against supported legacy ACL `accept` rules.
+7. Sort matching cards and render HTML server-side.
+8. Let embedded htmx refresh the card grid every 60 seconds without turning the app into an SPA.
 
-### 4. Read identity on request
+[See the accepted and rejected routes →](../reference/tailscale-headers.md)
 
-When a user opens the portal over Tailscale Serve, Serve injects identity headers. Velociportal reads `Tailscale-User-Login`, looks up that user's groups from the cached ACL policy, and prepares to filter.
+## Matching boundary
 
-```text
-GET / HTTP/1.1
-Tailscale-User-Login: alice@example.com
-Tailscale-User-Name: Alice
-Tailscale-User-Profile-Pic: https://...
-```
+The current join compares NPM `forward_host` with supported ACL destinations. It can resolve:
 
-!!! danger "Identity headers are only trustworthy behind Tailscale Serve"
-    These headers are injected by Serve for **human users over the tailnet**. They are **not** present for tagged devices and **not** injected over Funnel (public internet). Anything can forge an HTTP header, so Velociportal must only ever receive traffic from Serve on localhost. Never expose the raw port.
+- Exact hostnames and IP addresses
+- CIDRs
+- Policy host aliases
+- Destination tags resolved to node IPs
+- `*`
+- `autogroup:self`
 
-### 5. Render authorized services
+It does **not** evaluate Grants, NPM access lists, protocols, or destination ports. `autogroup:internet` and unsupported autogroups fail closed. Human identities do not inherit `tag:*` source membership from `tagOwners` or from tags on nodes they own.
 
-Velociportal intersects the user's groups with the `service -> allowed groups` table and renders only the matching services (Go + templ + htmx). Alice in `group:eng` sees Grafana; she never sees the Registry.
+!!! warning "Validate the join on real data"
+    NPM may store a Docker DNS name such as `grafana`, while Headscale destinations resolve to an IP address or tag. The current join is covered by fixtures but has not been proven end-to-end. See [Known Limitations](../reference/known-limitations.md).
 
-## Caching
+## Health endpoint
 
-Velociportal keeps everything in memory. There is no database.
+`GET /healthz` returns:
 
-- Headscale ACLs and NPM hosts are refreshed on independent timers (default 60s).
-- Requests are served entirely from the last good cached snapshot, so a slow or down upstream never blocks the portal.
-- On startup it does one synchronous poll of each source before serving.
-- Restart the container to force a cold reload; there is no persisted state to migrate.
+- **`200`** when a complete snapshot exists and is no older than three poll intervals.
+- **`503`** when the cache is empty or stale.
 
-!!! note "Eventual consistency"
-    A new proxy host or ACL change appears in the portal within one poll interval, not instantly. Tighten `poll_interval` if you need faster propagation, but mind the load on Headscale and NPM.
-
-## Security model
-
-<a name="security-model"></a>
-
-1. **Trust identity headers only from Tailscale Serve.** Velociportal treats `Tailscale-User-Login` as authoritative *only* because Serve terminates the connection and sets it. Reachable any other way, that header is attacker-controlled.
-2. **Bind to localhost.** Run Velociportal on `127.0.0.1:<port>` and put `tailscale serve` in front of it. Do not publish the port with Docker (`-p`) to `0.0.0.0`, and do not use Funnel.
-3. **Read-only by design.** Velociportal issues no writes to Headscale or NPM and enforces no access itself. Compromising it leaks *visibility* into your service map, not control of your network.
-4. **Secrets as env vars.** Keep the Headscale API key and NPM password out of the image and compose file; inject them at runtime.
-
-=== "docker-compose.yml"
-
-    ```yaml
-    services:
-      velociportal:
-        image: velociportal:latest
-        # localhost only — Serve reaches it via the host
-        ports:
-          - "127.0.0.1:8080:8080"
-        environment:
-          HEADSCALE_API_KEY: ${HEADSCALE_API_KEY}
-          NPM_PASSWORD: ${NPM_PASSWORD}
-    ```
-
-=== "Tailscale Serve"
-
-    ```bash
-    # Terminate on the tailnet and inject identity headers
-    tailscale serve --bg 8080
-    ```
-
-!!! important "Enforcement lives upstream"
-    Even if a user somehow saw a service they should not, the ACLs and reverse proxy still block the actual connection. Velociportal is a map of the doors you can open, not the lock on any of them.
+A successful health response means Velociportal has a recent complete snapshot. It does not prove that every rendered card is reachable, that each generated URL uses the correct public scheme, or that the matcher reflects unsupported policy features.

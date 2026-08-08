@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -158,6 +159,60 @@ func TestNPMClient_FetchAccessLists(t *testing.T) {
 	if len(l.Clients) != 1 || l.Clients[0].Address != "10.0.0.0/24" || l.Clients[0].Directive != "allow" {
 		t.Errorf("Clients = %+v, unexpected", l.Clients)
 	}
+}
+
+func TestNPMClientBoundsAndRedactsErrorBodies(t *testing.T) {
+	t.Run("authentication password", func(t *testing.T) {
+		const password = "npm-password-canary"
+		mux := http.NewServeMux()
+		mux.HandleFunc("/api/tokens", func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte(`{"password":"` + password + `","padding":"` + strings.Repeat("x", maxNPMErrorBody*2) + `"}`))
+		})
+		server := httptest.NewServer(mux)
+		t.Cleanup(server.Close)
+
+		client := NewNPMClient(server.URL, "admin@example.com", password, server.Client())
+		_, err := client.FetchProxyHosts(context.Background())
+		if err == nil {
+			t.Fatal("FetchProxyHosts() error = nil")
+		}
+		if strings.Contains(err.Error(), password) {
+			t.Fatalf("error exposed password: %v", err)
+		}
+		if !strings.Contains(err.Error(), "[REDACTED]") {
+			t.Fatalf("error did not mark redaction: %v", err)
+		}
+		if len(err.Error()) > maxDoctorErrorLength+160 {
+			t.Fatalf("error was not bounded: %d bytes", len(err.Error()))
+		}
+	})
+
+	t.Run("request token", func(t *testing.T) {
+		const token = "token-canary-value"
+		mux := http.NewServeMux()
+		mux.HandleFunc("/api/tokens", func(w http.ResponseWriter, r *http.Request) {
+			_, _ = w.Write([]byte(`{"token":"` + token + `","expires":"` + futureExpiry() + `"}`))
+		})
+		mux.HandleFunc("/api/nginx/proxy-hosts", func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte(`{"token":"` + token + `","padding":"` + strings.Repeat("y", maxNPMErrorBody*2) + `"}`))
+		})
+		server := httptest.NewServer(mux)
+		t.Cleanup(server.Close)
+
+		client := NewNPMClient(server.URL, "admin@example.com", "password", server.Client())
+		_, err := client.FetchProxyHosts(context.Background())
+		if err == nil {
+			t.Fatal("FetchProxyHosts() error = nil")
+		}
+		if strings.Contains(err.Error(), token) {
+			t.Fatalf("error exposed token: %v", err)
+		}
+		if !strings.Contains(err.Error(), "[REDACTED]") {
+			t.Fatalf("error did not mark redaction: %v", err)
+		}
+	})
 }
 
 func TestNPMClient_AuthFailure(t *testing.T) {

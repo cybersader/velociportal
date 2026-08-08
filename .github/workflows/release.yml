@@ -1,0 +1,229 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version/tag to verify and optionally publish (for example, v1.2.3)
+        required: true
+        type: string
+      publish:
+        description: Publish the multi-architecture image to GHCR
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+# Serialize verification and publication so concurrent manual dispatches cannot
+# both pass registry preflight checks before either immutable tag is created.
+concurrency:
+  group: release-publication
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Validate version tag
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          if [[ "$GITHUB_REF_TYPE" != "tag" || "$VERSION" != "$GITHUB_REF_NAME" ]]; then
+            echo "Dispatch this workflow from the immutable Git tag named by the version input." >&2
+            exit 1
+          fi
+          if [[ "${VERSION,,}" == "latest" ]]; then
+            echo "The latest tag is intentionally not supported." >&2
+            exit 1
+          fi
+          if [[ ! "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][A-Za-z0-9_.-]+)?$ ]]; then
+            echo "Version must be a v-prefixed semantic version and match the checked-out Git tag." >&2
+            exit 1
+          fi
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: '1.22.12'
+
+      - name: Verify Go source
+        run: |
+          go vet ./...
+          go test -v -race -count=1 ./...
+          CGO_ENABLED=0 go build \
+            -ldflags="-s -w -X main.buildVersion=${{ inputs.version }} -X main.buildRevision=${GITHUB_SHA} -X main.buildSourceState=clean" \
+            -o velociportal .
+
+      - name: CLI smoke check
+        run: |
+          ./velociportal healthcheck --help >/dev/null
+          ./velociportal validate --help >/dev/null
+
+      - name: Validate Compose configuration
+        run: ENV_FILE=.env.example docker compose --profile tools config --quiet
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Build verified multi-architecture OCI archive
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: false
+          build-args: |
+            BUILD_VERSION=${{ inputs.version }}
+            GIT_REVISION=${{ github.sha }}
+            GIT_SOURCE_STATE=clean
+          outputs: type=oci,dest=/tmp/velociportal.oci.tar
+          provenance: false
+          labels: |
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ inputs.version }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ inputs.version }}
+
+      - name: Preserve the verified image artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: velociportal-oci-${{ github.sha }}
+          path: /tmp/velociportal.oci.tar
+          retention-days: 1
+          if-no-files-found: error
+
+  publish:
+    if: ${{ inputs.publish == true }}
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Download the verified image artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: velociportal-oci-${{ github.sha }}
+          path: /tmp
+
+      - name: Install registry copy tool
+        run: sudo apt-get update && sudo apt-get install --yes skopeo
+
+      - name: Log in to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish the exact verified image archive
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          version_ref="${REGISTRY}/${IMAGE_NAME}:${VERSION}"
+          sha_ref="${REGISTRY}/${IMAGE_NAME}:sha-${GITHUB_SHA}"
+          workdir="$(mktemp -d)"
+          trap 'rm -rf "$workdir"' EXIT
+
+          source_metadata="$(skopeo inspect --format '{{ index .Labels "org.opencontainers.image.revision" }}|{{ index .Labels "org.opencontainers.image.version" }}' oci-archive:/tmp/velociportal.oci.tar)"
+          if [[ "$source_metadata" != "${GITHUB_SHA}|${VERSION}" ]]; then
+            echo "Verified archive release labels do not match this dispatch; refusing publication." >&2
+            exit 1
+          fi
+          skopeo inspect --raw oci-archive:/tmp/velociportal.oci.tar >"${workdir}/source.raw"
+          source_digest="$(sha256sum "${workdir}/source.raw" | cut -d ' ' -f 1)"
+
+          probe_ref() {
+            local ref="$1"
+            local label="$2"
+            local raw_file="${workdir}/${label}.raw"
+            local error_file="${workdir}/${label}.err"
+            local digest
+            local metadata
+
+            if skopeo inspect --raw "docker://${ref}" >"${raw_file}" 2>"${error_file}"; then
+              digest="$(sha256sum "${raw_file}" | cut -d ' ' -f 1)"
+              if ! metadata="$(skopeo inspect --format '{{ index .Labels "org.opencontainers.image.revision" }}|{{ index .Labels "org.opencontainers.image.version" }}' "docker://${ref}")"; then
+                echo "Could not verify release labels on ${ref}; failing closed." >&2
+                exit 1
+              fi
+              printf 'present|%s|%s\n' "$digest" "$metadata"
+              return
+            fi
+
+            if grep -Eqi 'manifest unknown|name unknown' "${error_file}"; then
+              printf 'absent|||\n'
+              return
+            fi
+
+            echo "Could not confirm whether ${ref} exists; failing closed." >&2
+            cat "${error_file}" >&2
+            exit 1
+          }
+
+          copy_and_verify() {
+            local source="$1"
+            local destination_ref="$2"
+            local expected_digest="$3"
+            local label="$4"
+            local raw_file="${workdir}/${label}-published.raw"
+            local digest
+            local metadata
+
+            skopeo copy --all --preserve-digests "$source" "docker://${destination_ref}"
+            if ! skopeo inspect --raw "docker://${destination_ref}" >"${raw_file}"; then
+              echo "Published ${destination_ref}, but could not verify it." >&2
+              exit 1
+            fi
+            digest="$(sha256sum "${raw_file}" | cut -d ' ' -f 1)"
+            if [[ "$digest" != "$expected_digest" ]]; then
+              echo "Published ${destination_ref}, but its manifest digest changed." >&2
+              exit 1
+            fi
+            metadata="$(skopeo inspect --format '{{ index .Labels "org.opencontainers.image.revision" }}|{{ index .Labels "org.opencontainers.image.version" }}' "docker://${destination_ref}")"
+            if [[ "$metadata" != "${GITHUB_SHA}|${VERSION}" ]]; then
+              echo "Published ${destination_ref}, but its release labels are incorrect." >&2
+              exit 1
+            fi
+          }
+
+          version_state="$(probe_ref "$version_ref" version)"
+          sha_state="$(probe_ref "$sha_ref" sha)"
+          IFS='|' read -r version_status version_digest version_revision version_label <<<"$version_state"
+          IFS='|' read -r sha_status sha_digest sha_revision sha_label <<<"$sha_state"
+
+          if [[ "$version_status" == present && ( "$version_revision" != "$GITHUB_SHA" || "$version_label" != "$VERSION" ) ]]; then
+            echo "Refusing existing ${version_ref}; its release labels do not match this dispatch." >&2
+            exit 1
+          fi
+          if [[ "$sha_status" == present && ( "$sha_revision" != "$GITHUB_SHA" || "$sha_label" != "$VERSION" ) ]]; then
+            echo "Refusing existing ${sha_ref}; its release labels do not match this dispatch." >&2
+            exit 1
+          fi
+          if [[ "$version_status" == present && "$version_digest" != "$source_digest" ]]; then
+            echo "Refusing existing ${version_ref}; it does not match the verified archive digest." >&2
+            exit 1
+          fi
+          if [[ "$sha_status" == present && "$sha_digest" != "$source_digest" ]]; then
+            echo "Refusing existing ${sha_ref}; it does not match the verified archive digest." >&2
+            exit 1
+          fi
+          if [[ "$version_status" == present && "$sha_status" == present ]]; then
+            echo "Both immutable tags already point to the verified release image."
+            exit 0
+          fi
+          if [[ "$version_status" == absent ]]; then
+            copy_and_verify oci-archive:/tmp/velociportal.oci.tar "$version_ref" "$source_digest" version
+          fi
+          if [[ "$sha_status" == absent ]]; then
+            copy_and_verify oci-archive:/tmp/velociportal.oci.tar "$sha_ref" "$source_digest" sha
+          fi

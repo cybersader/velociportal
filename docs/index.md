@@ -1,81 +1,118 @@
-# Velociportal
+<div class="vp-hero" markdown>
 
-**See what you can reach. Nothing you can't.**
+<div class="vp-hero__content" markdown>
 
-Velociportal is an identity-aware service dashboard for tailnets. It reads your Headscale/Tailscale ACLs and your Nginx Proxy Manager (NPM) proxy hosts, matches them together, and renders a per-user portal that shows each person only the services their ACLs actually grant. No separate permission list to maintain, no drift between "who can reach it" and "who can see it."
+<span class="vp-kicker">Self-hosted · identity-aware · visibility only</span>
 
-!!! info "Velociportal complements your IdP — it does not replace it"
-    Velociportal is a **visibility layer**. It does not authenticate users, issue tokens, or enforce access. Your IdP (and your ACLs, and your reverse proxy) remain the source of truth for *auth*. Velociportal just reads the access rules you already defined and renders them as a usable dashboard. If a user can see a tile, it is because their ACL grants it — the actual gate is still your proxy and IdP.
+# Your network policy is your dashboard policy.
 
-## Why?
+<p class="vp-hero__lede">Velociportal reads Headscale legacy ACL rules and Nginx Proxy Manager proxy hosts, then renders a server-authorized portal for the human identity supplied by your trusted proxy.</p>
 
-You already define access twice, and you feel it every time someone joins or leaves:
+<div class="vp-actions" markdown>
+[Start the guided setup](getting-started/setup.md){ .md-button .md-button--primary }
+[See how trust works](reference/tailscale-headers.md){ .md-button }
+</div>
 
-- Your **ACLs** (Headscale/Tailscale huJSON) define who can reach which host and port.
-- Your **dashboard** (Homepage, Heimdall, a wiki page) defines who *sees* which link.
+<div class="vp-chip-row" aria-label="Project status">
+<span class="vp-chip vp-chip--supported">Supported: Headscale + NPM</span>
+<span class="vp-chip vp-chip--validation">Validation pending: real deployment</span>
+<span class="vp-chip vp-chip--security">Security boundary: trusted proxy</span>
+</div>
 
-These two lists drift. You add a service to the tailnet, forget to add the tile. You revoke a group in ACLs, but the old bookmark still sits on the shared dashboard. Users click links they can't reach and file tickets; new hires can't find services they *can* reach.
+</div>
 
-Velociportal removes the second list. Access is defined once — in your ACLs — and the portal is derived from it.
+<div class="vp-hero__art">
+<img src="assets/logo-card.svg" alt="Velociportal raptor logo" width="256" height="256">
+</div>
 
-## How?
+</div>
+
+!!! info "Visibility, not enforcement"
+    Velociportal does not authenticate users, issue tokens, proxy service traffic, or enforce access. Headscale ACLs, your reverse proxy, your IdP, and each backend remain the security boundaries. A hidden card is not authorization.
+
+## Follow the operator journey
+
+<div class="grid cards" markdown>
+
+-   :material-rocket-launch-outline: **Set up the supported stack**
+
+    Run the guided sequence from local configuration through health verification.
+
+    [Open guided setup →](getting-started/setup.md)
+
+-   :material-shield-account-outline: **Establish the identity boundary**
+
+    See why trusted proxy traffic is accepted while direct header spoofing is rejected.
+
+    [Review identity headers →](reference/tailscale-headers.md)
+
+-   :material-server-network: **Deploy on TrueNAS SCALE**
+
+    Use the guided Make path first, with manual Compose and Custom App instructions as advanced fallbacks.
+
+    [Deploy on TrueNAS →](guides/truenas-scale.md)
+
+-   :material-alert-circle-outline: **Validate known limitations**
+
+    Compare rendered cards with real Headscale connectivity before relying on the current `forward_host` join.
+
+    [Read the support boundary →](reference/known-limitations.md)
+
+</div>
+
+## One snapshot, one request decision
 
 ```mermaid
 flowchart LR
-    A[Headscale API<br/>ACL policy] --> C{Velociportal}
-    B[NPM API<br/>proxy hosts] --> C
-    D[Tailscale Serve<br/>identity headers] --> C
-    C --> E[Per-user portal]
+    accTitle: Velociportal data and request flow
+    accDescr: Headscale policy and nodes plus NPM proxy hosts build a complete in-memory snapshot. A trusted identity proxy supplies the user login. Velociportal matches the user to visible services and returns a filtered portal. Service traffic then goes to NPM, not through Velociportal.
+
+    HS["Headscale<br/>policy + nodes"] -->|poll| VP["Velociportal<br/>complete snapshot + matcher"]
+    NPM["NPM<br/>proxy hosts"] -->|poll| VP
+    Proxy["Trusted identity proxy<br/>Tailscale-User-Login"] -->|request| VP
+    VP --> Portal["Filtered portal<br/>authorized cards only"]
+    Portal -. "service request bypasses Velociportal" .-> NPM
+
+    class HS control
+    class NPM service
+    class Proxy identity
+    class VP core
+    class Portal output
 ```
 
-1. **Read the ACLs.** Velociportal pulls the policy from the Headscale REST API (`/api/v1`, Bearer key) — `groups`, `tagOwners`, `acls`, and `grants`.
-2. **Read the proxy hosts.** It pulls your published services from NPM (e.g. `headscale.example.com`, `npm.example.com`, `grafana.example.com`).
-3. **Match them.** Each proxy host maps to a destination the ACLs describe. Velociportal computes which groups/users are granted that destination.
-4. **Identify the viewer.** Behind Tailscale Serve, requests arrive with `Tailscale-User-Login` / `Tailscale-User-Name` / `Tailscale-User-Profile-Pic` headers.
-5. **Render.** The user sees a portal containing only the tiles their identity is granted.
+<p class="vp-diagram-note">Labels name every role; color is only a secondary visual cue. Requests are served from the last complete in-memory snapshot, so page rendering never waits on an upstream API.</p>
 
-=== "What a user sees"
+<div class="vp-fact-grid">
+<div class="vp-fact"><strong>Complete refreshes</strong><span>Policy, nodes, and proxy hosts must all succeed before the snapshot is replaced.</span></div>
+<div class="vp-fact"><strong>Server-side filtering</strong><span>Unauthorized cards are omitted before HTML is rendered; the browser does not make the decision.</span></div>
+<div class="vp-fact"><strong>No app database</strong><span>State is an atomic in-process snapshot. Restarting starts cold and requires a successful refresh.</span></div>
+</div>
 
-    ```text
-    alice@example.com
+## Current support boundary
 
-    ┌────────────┐  ┌────────────┐  ┌────────────┐
-    │  Grafana   │  │    NPM     │  │  Headscale │
-    │ grafana... │  │ npm.exa... │  │ headsca... │
-    └────────────┘  └────────────┘  └────────────┘
+=== "Implemented"
 
-    (services alice's ACLs do NOT grant are not shown)
-    ```
+    - Headscale `GET /api/v1/policy` and `GET /api/v1/node`
+    - NPM credential login and proxy-host discovery
+    - Legacy ACL `accept` matching for supported identity and destination forms
+    - Trusted `Tailscale-User-*` identity headers
+    - Responsive server-rendered portal with embedded htmx
+    - Single non-root `FROM scratch` container
 
-=== "Deploy (planned)"
+=== "Not implemented"
 
-    ```yaml
-    services:
-      velociportal:
-        image: velociportal:latest   # single container
-        environment:
-          HEADSCALE_URL: https://headscale.example.com
-          HEADSCALE_API_KEY: ${HEADSCALE_API_KEY}
-          NPM_URL: https://npm.example.com
-          NPM_EMAIL: ${NPM_EMAIL}
-          NPM_PASSWORD: ${NPM_PASSWORD}
-        # Publish via Tailscale Serve so identity headers are injected
-    ```
+    - Tailscale SaaS API support
+    - Grants, SSH, posture, capabilities, or protocol evaluation
+    - Caddy or Traefik service discovery
+    - Direct Authentik, Authelia, `Remote-User`, or `X-Webauth-*` adapters
+    - NPM access-list-driven visibility
 
-!!! warning "Identity only flows over Tailscale Serve"
-    The `Tailscale-User-*` headers exist only for **human users** reaching Velociportal over **tailnet Serve**. They are **not** present for tagged devices and **not** present over **Funnel** (public internet). Velociportal is meant to be served inside the tailnet.
+=== "Must be validated"
 
-!!! note "NPM uses credential auth"
-    NPM has no scoped read-only API token. Velociportal authenticates with `POST /api/tokens` using an email/password (ideally a dedicated read-only NPM user) to obtain a JWT. Treat those credentials accordingly.
+    - The NPM `forward_host` join against real Headscale destinations
+    - The complete identity-proxy path and observed trusted source address
+    - Card visibility for at least two human identities with different groups
+    - Every generated card URL, including its browser-facing scheme
 
-!!! danger "Status: concept-stage"
-    Velociportal is a **concept and design placeholder**. There is **no code yet** — no releases, no container image. This documentation describes intended behavior. Design targets: single Docker container, Go + templ + htmx, minimal dependencies.
-
-## Quick links
-
-- [Concept & Architecture](concept/overview.md) — how the matching works
-- [How It Works](concept/how-it-works.md) — step-by-step data flow
-- [Alternatives](concept/alternatives.md) — how Velociportal compares to existing tools
-- [Reference Architectures](guides/index.md) — Headscale+NPM, Tailscale SaaS, Caddy, Traefik
-- [IdP Integrations](integrations/index.md) — Authentik, Authelia, or no IdP
-- [API Reference](reference/headscale-api.md) — Headscale, NPM, and Tailscale headers
+!!! warning "Sprint 3 limitation remains"
+    The clients, matcher, and request flow are covered by fixtures and `httptest`, but the project has not yet been validated end-to-end against a real Headscale + NPM + identity-proxy deployment. Start with the [guided setup](getting-started/setup.md), then complete its validation matrix.

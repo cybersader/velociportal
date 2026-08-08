@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -74,6 +76,30 @@ func standardTestData() *CacheData {
 	}
 }
 
+func TestPortalRequestLogsDoNotExposeIdentityOrTopology(t *testing.T) {
+	original := slog.Default()
+	var output bytes.Buffer
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&output, nil)))
+	t.Cleanup(func() { slog.SetDefault(original) })
+
+	const login = "identity-log-canary@example.com"
+	data := standardTestData()
+	handler := newTestHandler(data)
+	response := doPortalRequest(handler, "127.0.0.1:12345", login)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d", response.Code)
+	}
+	logs := output.String()
+	for _, sensitive := range []string{login, "grafana.example.com", "10.0.0.1"} {
+		if strings.Contains(logs, sensitive) {
+			t.Fatalf("logs exposed %q: %s", sensitive, logs)
+		}
+	}
+	if !strings.Contains(logs, `"msg":"portal request"`) || !strings.Contains(logs, `"cards":`) {
+		t.Fatalf("logs omitted useful request metadata: %s", logs)
+	}
+}
+
 func TestPortalHandler_AdminUser(t *testing.T) {
 	h := newTestHandler(standardTestData())
 	rec := doPortalRequest(h, "127.0.0.1:12345", "alice@example.com")
@@ -120,6 +146,51 @@ func TestPortalHandler_DevUser(t *testing.T) {
 	}
 }
 
+func TestPortalHandler_FullDomainIdentitiesDoNotCollide(t *testing.T) {
+	data := &CacheData{
+		Policy: &Policy{
+			Groups: map[string][]string{
+				"group:example": {"alice@example.com"},
+				"group:other":   {"alice@other.example"},
+			},
+			ACLs: []ACLRule{
+				{Action: "accept", Src: []string{"group:example"}, Dst: []string{"10.0.0.10:*"}},
+				{Action: "accept", Src: []string{"group:other"}, Dst: []string{"10.0.0.11:*"}},
+			},
+		},
+		ProxyHosts: []ProxyHost{
+			{ID: 10, DomainNames: []string{"example-service.test"}, ForwardHost: "10.0.0.10", Enabled: true},
+			{ID: 11, DomainNames: []string{"other-service.test"}, ForwardHost: "10.0.0.11", Enabled: true},
+		},
+		UpdatedAt: time.Now(),
+	}
+	h := newTestHandler(data)
+
+	tests := []struct {
+		login      string
+		visible    string
+		notVisible string
+	}{
+		{login: "alice@example.com", visible: "example-service.test", notVisible: "other-service.test"},
+		{login: "alice@other.example", visible: "other-service.test", notVisible: "example-service.test"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.login, func(t *testing.T) {
+			rec := doPortalRequest(h, "127.0.0.1:12345", tt.login)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("expected 200, got %d", rec.Code)
+			}
+			body := rec.Body.String()
+			if !strings.Contains(body, tt.visible) {
+				t.Errorf("%s should see %s", tt.login, tt.visible)
+			}
+			if strings.Contains(body, tt.notVisible) {
+				t.Errorf("%s must not see %s", tt.login, tt.notVisible)
+			}
+		})
+	}
+}
+
 func TestPortalHandler_UnknownUser(t *testing.T) {
 	h := newTestHandler(standardTestData())
 	rec := doPortalRequest(h, "127.0.0.1:12345", "nobody@example.com")
@@ -146,6 +217,23 @@ func TestPortalHandler_NoIdentityHeader(t *testing.T) {
 
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("expected 401 when no identity header from trusted IP, got %d", rec.Code)
+	}
+}
+
+func TestPortalHandler_BlankLoginRendersNoServices(t *testing.T) {
+	h := newTestHandler(standardTestData())
+	// Whitespace reaches the matcher because middleware only checks an empty header;
+	// matcher identity handling must still fail closed and render no wildcard cards.
+	rec := doPortalRequest(h, "127.0.0.1:12345", "   ")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 for a present header, got %d", rec.Code)
+	}
+	body := rec.Body.String()
+	for _, service := range []string{"grafana.example.com", "jenkins.example.com", "wiki.example.com"} {
+		if strings.Contains(body, service) {
+			t.Errorf("blank login must not render %s", service)
+		}
 	}
 }
 
