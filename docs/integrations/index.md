@@ -16,7 +16,7 @@ Velociportal complements identity providers, but the current runtime has one fix
 
     <span class="vp-chip vp-chip--supported">Current runtime path</span>
 
-    A trusted Tailscale Serve-style or equivalent identity-aware path strips client headers and injects the supported `Tailscale-User-*` values.
+    The canonical Headscale path is the existing Tailscale app with declarative tailnet HTTP Serve. It strips client headers and injects the supported `Tailscale-User-*` values.
 
     [Use the current identity contract →](no-idp.md)
 

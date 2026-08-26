@@ -38,6 +38,10 @@ type doctorHTTPFixture struct {
 }
 
 func newDoctorHTTPFixture(t *testing.T) *doctorHTTPFixture {
+	return newDoctorHTTPFixtureWithHeadscaleTLS(t, true)
+}
+
+func newDoctorHTTPFixtureWithHeadscaleTLS(t *testing.T, useTLS bool) *doctorHTTPFixture {
 	t.Helper()
 	fixture := &doctorHTTPFixture{
 		policyStatus: http.StatusOK,
@@ -66,7 +70,11 @@ func newDoctorHTTPFixture(t *testing.T) *doctorHTTPFixture {
 		fixture.nodesHits.Add(1)
 		writeDoctorFixtureResponse(w, fixture.nodesStatus, fixture.nodesBody)
 	})
-	fixture.headscale = httptest.NewServer(headscaleMux)
+	if useTLS {
+		fixture.headscale = httptest.NewTLSServer(headscaleMux)
+	} else {
+		fixture.headscale = httptest.NewServer(headscaleMux)
+	}
 	t.Cleanup(fixture.headscale.Close)
 
 	npmMux := http.NewServeMux()
@@ -113,9 +121,20 @@ func setDoctorProcessConfig(t *testing.T, values map[string]string) {
 	}
 }
 
-func runDoctorForTest(args []string) (int, string, string) {
+func doctorFixtureDependencies(fixture *doctorHTTPFixture) doctorDependencies {
+	return doctorDependencies{newClients: func(cfg *Config) (*HeadscaleClient, *NPMClient) {
+		return NewHeadscaleClient(cfg.HeadscaleURL, cfg.HeadscaleAPIKey, fixture.headscale.Client()),
+			NewNPMClient(cfg.NPMURL, cfg.NPMEmail, cfg.NPMPassword, fixture.npm.Client())
+	}}
+}
+
+func runDoctorForTest(args []string, fixtures ...*doctorHTTPFixture) (int, string, string) {
+	dependencies := defaultDoctorDependencies()
+	if len(fixtures) > 0 {
+		dependencies = doctorFixtureDependencies(fixtures[0])
+	}
 	var stdout, stderr bytes.Buffer
-	code := runDoctorCommand(args, &stdout, &stderr)
+	code := runDoctorCommandWithDependencies(args, &stdout, &stderr, dependencies)
 	return code, stdout.String(), stderr.String()
 }
 
@@ -128,12 +147,15 @@ func TestRunDoctorCommandWarningsAndIdentityPreviews(t *testing.T) {
 	code, stdout, stderr := runDoctorForTest([]string{
 		"--identity", "alice@example.com",
 		"--identity", "bob@example.com",
-	})
+	}, fixture)
 	if code != 0 {
 		t.Fatalf("exit code = %d, stdout=%q stderr=%q", code, stdout, stderr)
 	}
 	if stderr != "" {
 		t.Fatalf("stderr = %q", stderr)
+	}
+	if strings.Contains(stdout, headscaleHTTPDoctorWarning) {
+		t.Fatalf("HTTPS doctor emitted the Headscale HTTP warning:\n%s", stdout)
 	}
 
 	for _, want := range []string{
@@ -162,6 +184,45 @@ func TestRunDoctorCommandWarningsAndIdentityPreviews(t *testing.T) {
 	for _, secret := range []string{doctorTestAPIKey, doctorTestPassword, doctorTestToken} {
 		if strings.Contains(stdout, secret) || strings.Contains(stderr, secret) {
 			t.Errorf("doctor output exposed secret %q", secret)
+		}
+	}
+}
+
+func TestRunDoctorCommandWarnsBeforeCallingHeadscaleOverHTTP(t *testing.T) {
+	fixture := newDoctorHTTPFixtureWithHeadscaleTLS(t, false)
+	setDoctorProcessConfig(t, doctorFixtureConfig(fixture))
+	baseDependencies := doctorFixtureDependencies(fixture)
+	var stdout, stderr bytes.Buffer
+	dependencies := doctorDependencies{newClients: func(cfg *Config) (*HeadscaleClient, *NPMClient) {
+		if !strings.Contains(stdout.String(), headscaleHTTPDoctorWarning) {
+			t.Error("Headscale HTTP warning was not written before upstream clients were created")
+		}
+		return baseDependencies.newClients(cfg)
+	}}
+
+	code := runDoctorCommandWithDependencies(nil, &stdout, &stderr, dependencies)
+	if code != 0 {
+		t.Fatalf("exit code = %d, stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("stderr = %q", stderr.String())
+	}
+	if count := strings.Count(stdout.String(), headscaleHTTPDoctorWarning); count != 1 {
+		t.Fatalf("Headscale HTTP warning count = %d, stdout=%q", count, stdout.String())
+	}
+	if warningIndex, policyIndex := strings.Index(stdout.String(), headscaleHTTPDoctorWarning), strings.Index(stdout.String(), "PASS Headscale policy:"); warningIndex < 0 || policyIndex < 0 || warningIndex > policyIndex {
+		t.Fatalf("Headscale HTTP warning did not precede upstream results:\n%s", stdout.String())
+	}
+	warningLine := ""
+	for _, line := range strings.Split(stdout.String(), "\n") {
+		if strings.HasPrefix(line, "WARN Headscale HTTP route:") {
+			warningLine = line
+			break
+		}
+	}
+	for _, forbidden := range []string{fixture.headscale.URL, "127.0.0.1", fixture.headscale.Listener.Addr().String()} {
+		if strings.Contains(warningLine, forbidden) {
+			t.Fatalf("Headscale HTTP warning leaked route detail %q: %q", forbidden, warningLine)
 		}
 	}
 }
@@ -198,7 +259,7 @@ func TestRunDoctorCommandEnvironmentFileMode(t *testing.T) {
 	ambient["NPM_URL"] = "http://127.0.0.1:1"
 	setDoctorProcessConfig(t, ambient)
 
-	code, stdout, stderr := runDoctorForTest([]string{"--env-file", path})
+	code, stdout, stderr := runDoctorForTest([]string{"--env-file", path}, fixture)
 	if code != 0 {
 		t.Fatalf("exit code = %d, stdout=%q stderr=%q", code, stdout, stderr)
 	}
@@ -216,7 +277,7 @@ func TestRunDoctorCommandEnvironmentFileMode(t *testing.T) {
 	if err := os.Chmod(path, 0o644); err != nil {
 		t.Fatalf("Chmod() error = %v", err)
 	}
-	code, stdout, stderr = runDoctorForTest([]string{"--env-file", path})
+	code, stdout, stderr = runDoctorForTest([]string{"--env-file", path}, fixture)
 	if code != 1 {
 		t.Fatalf("unsafe mode exit code = %d, stdout=%q stderr=%q", code, stdout, stderr)
 	}
@@ -289,7 +350,7 @@ func TestRunDoctorCommandRequiredStageFailures(t *testing.T) {
 			test.configure(fixture)
 			setDoctorProcessConfig(t, doctorFixtureConfig(fixture))
 
-			code, stdout, stderr := runDoctorForTest(nil)
+			code, stdout, stderr := runDoctorForTest(nil, fixture)
 			if code != 1 {
 				t.Fatalf("exit code = %d, stdout=%q stderr=%q", code, stdout, stderr)
 			}
@@ -313,7 +374,7 @@ func TestRunDoctorCommandRedactsAndBoundsErrors(t *testing.T) {
 		fixture.policyBody = `{"error":"Bearer ` + doctorTestAPIKey + ` ` + strings.Repeat("x", 1000) + `"}`
 		setDoctorProcessConfig(t, doctorFixtureConfig(fixture))
 
-		code, stdout, _ := runDoctorForTest(nil)
+		code, stdout, _ := runDoctorForTest(nil, fixture)
 		if code != 1 {
 			t.Fatalf("exit code = %d, stdout=%q", code, stdout)
 		}
@@ -336,7 +397,7 @@ func TestRunDoctorCommandRedactsAndBoundsErrors(t *testing.T) {
 		fixture.proxyBody = "{\"echo\":\"" + doctorTestToken + "\",\n\"password\":\"" + doctorTestPassword + "\"}"
 		setDoctorProcessConfig(t, doctorFixtureConfig(fixture))
 
-		code, stdout, _ := runDoctorForTest(nil)
+		code, stdout, _ := runDoctorForTest(nil, fixture)
 		if code != 1 {
 			t.Fatalf("exit code = %d, stdout=%q", code, stdout)
 		}

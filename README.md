@@ -13,7 +13,7 @@ A self-hosted service portal that reads **Headscale legacy ACL rules** and **Ngi
 [![CI](https://github.com/cybersader/velociportal/actions/workflows/ci.yml/badge.svg)](https://github.com/cybersader/velociportal/actions/workflows/ci.yml)
 [![Docs](https://github.com/cybersader/velociportal/actions/workflows/docs.yml/badge.svg)](https://github.com/cybersader/velociportal/actions/workflows/docs.yml)
 
-[Start with the docs](https://cybersader.github.io/velociportal/) · [Guided setup](https://cybersader.github.io/velociportal/getting-started/setup/) · [Known limitations](https://cybersader.github.io/velociportal/reference/known-limitations/) · [Roadmap](#roadmap)
+[TrueNAS Quickstart](https://cybersader.github.io/velociportal/guides/truenas-scale/) · [Documentation](https://cybersader.github.io/velociportal/) · [Optional private TLS](https://cybersader.github.io/velociportal/guides/private-tls/) · [Known limitations](https://cybersader.github.io/velociportal/reference/known-limitations/) · [Roadmap](#roadmap)
 
 </div>
 
@@ -21,45 +21,52 @@ A self-hosted service portal that reads **Headscale legacy ACL rules** and **Ngi
 
 ## Start here
 
-The canonical operator journey makes the trusted proxy decision explicit before startup. It requires a Git checkout, GNU Make, Docker Engine, and Docker Compose 2.30 or newer:
+Follow the [TrueNAS Quickstart](https://cybersader.github.io/velociportal/guides/truenas-scale/). It is the single UI-managed path for:
 
-```bash
-make setup
-make observe-proxy
-make doctor
-make up
-make health
-```
+1. Importing the one-container Compose bundle so the named internal upstream network exists.
+2. Attaching Headscale and NPM with exact private Docker aliases and no LAN-published Headscale API port.
+3. Using the operator's existing trusted NPM HTTPS certificate lifecycle for pre-tailnet Headscale control and workstation administration.
+4. Bootstrapping one short-lived API key, then separating operator and Velociportal runtime keys.
+5. Configuring a real legacy ACL exercise and declarative Tailscale HTTP Serve.
+6. Deploying Velociportal without a source build or recurring NAS shell.
+7. Running two-identity, header-replacement, restart, join, reachability, and LAN-negative acceptance.
 
-| Step | Purpose |
-|---|---|
-| `make setup` | Prepare local configuration |
-| `make observe-proxy` | Identify the source address allowed to assert identity |
-| `make doctor` | Run deployment preflight checks |
-| `make up` | Build and start the loopback-published Compose deployment |
-| `make health` | Verify that a recent complete snapshot exists |
+The production bundle lives under [`deploy/`](./deploy/). It requires Docker Compose 2.30+ and Docker Engine 28+, pulls one immutable published image, creates `velociportal-upstreams`, runs exactly one Velociportal container, and never builds source on the deployment host. The base stack mounts no CA certificate; the private-CA overlay is optional.
 
-Follow the full [guided setup](https://cybersader.github.io/velociportal/getting-started/setup/). Before relying on the portal, generate an explainable report with `make validate VALIDATE_ARGS='--identity user-a=alice@example.com --identity user-b=bob@example.com'` and complete the [real-deployment worksheet](https://cybersader.github.io/velociportal/getting-started/validation/).
-
-> [!NOTE]
-> The guided targets run the production container image. Setup accepts secrets through hidden terminal input, proxy observation proposes only the exact source it sees, and `make up` waits for the real container healthcheck.
+> [!IMPORTANT]
+> No usable public image, `headscale-ops` release, or support claim is implied until tagged artifacts are actually published, anonymously verified, and the real TrueNAS acceptance matrix passes.
 
 > [!WARNING]
-> Fixture and `httptest` coverage is not production proof. The NPM `forward_host` join and complete identity-proxy path have not yet been validated against a real deployment.
+> The canonical browser route is tailnet-only HTTP Serve over WireGuard: `:8081 -> http://127.0.0.1:18080`. NPM is not portal identity. Official Tailscale can automate `*.ts.net` certificates, but Headscale automatic HTTPS Serve remains future upstream work tracked by [issue #2527](https://github.com/juanfont/headscale/issues/2527) and [PR #3300](https://github.com/juanfont/headscale/pull/3300). Tailnet HTTP Serve is not a release blocker.
 
-## How it works
+## Approved deployment architecture
 
 ```mermaid
 flowchart LR
-    accTitle: Velociportal architecture
-    accDescr: Headscale policy and nodes plus NPM proxy hosts form a complete in-memory snapshot. A trusted identity proxy supplies the user login. Velociportal renders matching cards, while service traffic goes directly through NPM rather than Velociportal.
-
-    HS["Headscale<br/>policy + nodes"] -->|poll| VP["Velociportal<br/>snapshot + matcher"]
-    NPM["NPM<br/>proxy hosts"] -->|poll| VP
-    Proxy["Trusted identity proxy<br/>Tailscale-User-Login"] -->|request| VP
-    VP --> Portal["Per-user portal<br/>matching cards only"]
+    Client["New or existing client"] -->|"trusted HTTPS"| NPMControl["Existing NPM<br/>Headscale control proxy"]
+    NPMControl -->|"internal HTTP<br/>WebSocket/upgrade preserved"| HS["Headscale"]
+    HS -->|"runtime API<br/>internal HTTP"| VP["Velociportal<br/>snapshot + matcher"]
+    NPM["NPM proxy-host API"] -->|"internal HTTP"| VP
+    Human["Human tailnet user"] -->|"WireGuard"| Serve["Tailscale HTTP Serve<br/>human identity headers"]
+    Serve -->|"host loopback"| VP
+    VP --> Portal["Per-user portal"]
     Portal -. "service traffic" .-> NPM
 ```
+
+The named internal Docker network is `velociportal-upstreams`:
+
+```text
+HEADSCALE_URL=http://headscale.velociportal.internal:8080
+NPM_URL=http://npm.velociportal.internal:81
+```
+
+Headscale and NPM HTTP are accepted only for their exact canonical internal aliases or same-host/loopback compatibility routes. Every other location requires verified HTTPS. Credentialed clients refuse redirects, ignore environment proxy variables, and bound response sizes. There is no insecure TLS mode.
+
+Existing NPM provides the trusted HTTPS endpoint that brand-new clients need before they can join the tailnet. The canonical privacy-preserving form uses split-horizon/private DNS and an existing publicly trusted wildcard certificate obtained with DNS-01, without a public Headscale hostname/address record or exact-host certificate-transparency disclosure. This project does not prescribe manual CA creation as the canonical path. If that endpoint is not already trusted by a client, stop rather than disabling verification.
+
+NPM is therefore an explicit trust and availability boundary. It can observe Headscale control traffic and workstation operator Bearer API keys. Preserve WebSocket/upgrade behavior, avoid authorization-header logging, back up NPM state, and use separate Headscale operator and Velociportal runtime keys. Runtime Velociportal bypasses NPM and uses the internal network directly. `headscale-ops` remains workstation-only and HTTPS-only.
+
+## How the portal works
 
 Velociportal polls three current inputs on one ticker:
 
@@ -69,7 +76,7 @@ Velociportal polls three current inputs on one ticker:
 
 A refresh replaces the cache only after all three calls succeed. Requests use the last complete in-process snapshot and never wait on an upstream API.
 
-On each request, Velociportal accepts `Tailscale-User-Login` only from `TRUSTED_PROXY_CIDR`, resolves supported identity and group forms, evaluates supported legacy ACL `accept` rules against enabled NPM proxy hosts, and renders matching cards server-side. Headscale ACLs, the reverse proxy, the IdP, and the backend still enforce access.
+On each request, Velociportal accepts `Tailscale-User-Login` only from `TRUSTED_PROXY_CIDR`, resolves supported identity and group forms, evaluates supported legacy ACL `accept` rules against enabled NPM proxy hosts, and renders matching cards server-side. Headscale ACLs, Tailscale Serve, NPM, and backends still enforce access.
 
 ## What it is — and is not
 
@@ -84,33 +91,45 @@ On each request, Velociportal accepts `Tailscale-User-Login` only from `TRUSTED_
 
 **Implemented**
 
-- Headscale policy and node API clients
+- Exact allowlisted local Headscale HTTP plus verified HTTPS elsewhere
+- Separate hardened Headscale and NPM transports with no redirects or environment proxies and bounded responses
+- Named internal production network and exact Headscale/NPM aliases
+- Optional private-CA public-root overlay with no CA mount in the base stack
 - NPM credential JWT and proxy-host client
 - All-or-nothing background snapshot refresh with atomic swap
 - Trusted-source `Tailscale-User-*` identity middleware
 - Legacy ACL-to-service matching for supported identity and destination forms
 - Server-rendered responsive portal, embedded htmx refresh, and NPM status indicators
-- Non-root `FROM scratch` image and loopback-only Compose example
-- Race-enabled unit and fixture-based request/API tests
+- Non-root `FROM scratch` image and Engine-28+-gated loopback-only publication
+- Portable one-service production bundle and declarative Tailscale HTTP Serve template
 - Explainable, privacy-controlled multi-identity validation reports with build provenance
 
 **Not implemented**
 
 - Tailscale SaaS API support
-- Grants, SSH, posture, capabilities, or protocol evaluation
+- Grants, SSH, posture, capabilities, port, or protocol evaluation
 - Caddy or Traefik service discovery
 - Direct Authentik, Authelia, `Remote-User`, or `X-Webauth-*` adapters
 - NPM access-list-driven visibility
+- Headscale automatic HTTPS Serve certificate automation
 
 **Still requires real deployment validation**
 
-- NPM `forward_host` may contain a Docker DNS name while Headscale destinations resolve to IPs or tags.
-- Ports and protocols are ignored for visibility; the real ACL remains the enforcement boundary.
-- Card URLs currently reuse NPM's backend `forward_scheme` and must be checked individually.
-- Headscale does not currently provide Tailscale's native automatic HTTPS Serve flow.
-- The full Headscale + NPM + identity-proxy path has not been proven end-to-end.
+- The NPM HTTPS-to-Headscale control path, including WebSocket/upgrade behavior and trusted certificate use by brand-new clients
+- The private Docker network and proof that Headscale port `8080` is not reachable from the LAN
+- Separate operator/runtime key handling and NPM header-logging posture
+- Declarative Serve identity injection, header replacement, and restart persistence
+- The NPM `forward_host` join against real tailnet-routable destinations
+- At least two human identities with intentionally different card sets
+- Every generated link compared with actual Headscale and NPM reachability
+
+Tailnet HTTP over WireGuard prevents ordinary on-path LAN/router/ISP interception. It does not protect against compromised clients, TrueNAS, NPM, Tailscale/Headscale control components, or trusted host workloads.
 
 Read the complete [Known Limitations](https://cybersader.github.io/velociportal/reference/known-limitations/) before deployment.
+
+## Router and backup boundary
+
+No CA state lives on pfSense/the router. Router replacement restores ordinary DNS and routing only. Durable Headscale data and policy, NPM database/configuration/certificates, TrueNAS app settings, Docker network configuration, Serve configuration, and Velociportal environment files stay on TrueNAS and in tested backups.
 
 ## Tech stack
 
@@ -119,22 +138,21 @@ Read the complete [Known Limitations](https://cybersader.github.io/velociportal/
 | Language | Go 1.22, standard library HTTP/JSON/logging |
 | Rendering | Embedded server-rendered HTML |
 | Interactivity | Embedded htmx; no CDN and no SPA |
-| Identity | `Tailscale-User-*` headers from a trusted proxy CIDR |
+| Identity | `Tailscale-User-*` headers from trusted Tailscale Serve |
 | State | Atomic in-memory snapshot; no application database |
 | Container | Multi-stage build to a non-root `FROM scratch` image |
-| Target | TrueNAS SCALE or another Docker host |
+| Target | TrueNAS SCALE or another Docker host with Compose 2.30+ and Engine 28+ |
 
 ## Documentation paths
 
 | Goal | Page | Status |
 |---|---|---|
-| Configure and launch | [Guided setup](https://cybersader.github.io/velociportal/getting-started/setup/) | Supported workflow |
+| Install the full private stack | [TrueNAS Quickstart](https://cybersader.github.io/velociportal/guides/truenas-scale/) | Canonical release-candidate journey |
+| Understand control and runtime paths | [Headscale + NPM](https://cybersader.github.io/velociportal/guides/headscale-npm/) | Implemented architecture; live acceptance pending |
 | Compare identities and joins | [Real deployment validation](https://cybersader.github.io/velociportal/getting-started/validation/) | Tooling implemented; live worksheet pending |
-| Deploy on a NAS | [TrueNAS SCALE](https://cybersader.github.io/velociportal/guides/truenas-scale/) | Canonical deployment guide |
-| Understand the current adapter | [Headscale + NPM](https://cybersader.github.io/velociportal/guides/headscale-npm/) | Implemented; real validation pending |
-| Separate the control plane | [VPS options](https://cybersader.github.io/velociportal/guides/vps-headscale/) | Optional |
+| Use native private Headscale TLS | [Optional private TLS](https://cybersader.github.io/velociportal/guides/private-tls/) | Alternative only |
+| Build and diagnose from source | [Local-source workflow](https://cybersader.github.io/velociportal/getting-started/setup/) | Contributor/advanced diagnostics only |
 | Review trust and spoofing controls | [Tailscale identity headers](https://cybersader.github.io/velociportal/reference/tailscale-headers/) | Required reading |
-| Use other discovery adapters | [Architecture overview](https://cybersader.github.io/velociportal/guides/) | Planned only |
 
 ## Roadmap
 
@@ -142,13 +160,17 @@ Read the complete [Known Limitations](https://cybersader.github.io/velociportal/
 - [x] NPM JWT auth and proxy-host client
 - [x] Complete-snapshot cache with failure retention
 - [x] Trusted-proxy identity middleware
-- [x] Legacy ACL matcher and server-authorized card rendering
-- [x] Responsive light/dark portal with embedded htmx
-- [x] Minimal non-root container and loopback-only Compose example
-- [x] Race-enabled tests and strict documentation build
-- [x] Branded, user-journey documentation with guided setup and CLI reference
-- [x] Explainable multi-identity validation reports with summary/private output
-- [ ] Complete the worksheet against real Headscale + NPM + identity-proxy data
+- [x] Legacy ACL matcher and server-side visibility filtering
+- [x] Responsive portal with embedded htmx
+- [x] Minimal non-root container and loopback-only Compose examples
+- [x] Explainable multi-identity validation reports
+- [x] Hardened isolated upstream transports and exact Headscale HTTP allowlist
+- [x] Named internal upstream network with direct runtime aliases
+- [x] Optional private-CA Compose overlay without a base-stack CA mount
+- [x] Canonical NPM Headscale control-proxy and Tailscale Serve architecture documented
+- [ ] Publish and anonymously verify immutable Velociportal and `headscale-ops` release artifacts
+- [ ] Complete real NPM control-proxy, bootstrap, key-separation, and backup acceptance
+- [ ] Complete two-identity, LAN-negative, restart, join, link, and reachability acceptance
 - [ ] Refine or replace the `forward_host` join
 - [ ] Model ports, protocols, and Grants safely
 - [ ] Derive browser-facing URLs from NPM frontend fields

@@ -1,0 +1,47 @@
+{
+  // Complete validation seed for a fresh policy. If Headscale already has a
+  // policy, merge these groups, hosts, and ACL entries instead of overwriting
+  // unrelated access rules. Replace both identities and all three addresses with
+  // your real Headscale and NPM deployment. The service destinations must be
+  // reachable through Headscale: use distinct Tailscale node IPs for the
+  // simplest exercise, or complete subnet-routing setup before using LAN IPs.
+  // Velociportal evaluates the legacy `acls` subset; Grants do not produce cards.
+  "groups": {
+    "group:vp-shared": [
+      "alice@example.com",
+      "bob@example.com",
+    ],
+    "group:vp-admin": [
+      "alice@example.com",
+    ],
+  },
+
+  "tagOwners": {},
+
+  "hosts": {
+    // Tailscale IP of the TrueNAS node that publishes HTTP Serve on port 8081.
+    "vp-portal-host": "100.64.0.10",
+    // Distinct tailnet-routable destinations that exactly match NPM forward_host.
+    "vp-shared-service": "100.64.0.20",
+    "vp-admin-service": "100.64.0.21",
+  },
+
+  "acls": [
+    {
+      // Without this rule, Headscale policy blocks both users from the portal.
+      "action": "accept",
+      "src": ["group:vp-shared"],
+      "dst": ["vp-portal-host:8081"],
+    },
+    {
+      "action": "accept",
+      "src": ["group:vp-shared"],
+      "dst": ["vp-shared-service:8096"],
+    },
+    {
+      "action": "accept",
+      "src": ["group:vp-admin"],
+      "dst": ["vp-admin-service:9090"],
+    },
+  ],
+}

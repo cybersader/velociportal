@@ -13,6 +13,8 @@ import (
 	"golang.org/x/term"
 )
 
+const headscaleHTTPSetupWarning = "WARNING: Headscale HTTP is allowed only for the canonical internal or same-host route; setup cannot prove route confinement or external inaccessibility."
+
 const setupUsage = `Usage:
   velociportal setup [--env-file FILE]
   velociportal setup observe-proxy [options]
@@ -140,19 +142,18 @@ func runSetupWizard(envFile string, stdin io.Reader, stdout, stderr io.Writer, r
 	}
 
 	reader := bufio.NewReader(stdin)
-	values["HEADSCALE_URL"], err = promptSetupValue(reader, stdout, stderr, "Headscale base URL", values["HEADSCALE_URL"], "", func(value string) (string, error) {
-		return normalizeBaseURL("HEADSCALE_URL", value)
-	})
+	values["HEADSCALE_URL"], err = promptSetupValue(reader, stdout, stderr, "Headscale base URL", values["HEADSCALE_URL"], "", normalizeHeadscaleBaseURL)
 	if err != nil {
 		return err
+	}
+	if classifyHeadscaleTransport(values["HEADSCALE_URL"]) == headscaleTransportRestrictedHTTP {
+		fmt.Fprintln(stderr, headscaleHTTPSetupWarning)
 	}
 	values["HEADSCALE_API_KEY"], err = promptSetupSecret("Headscale API key", values["HEADSCALE_API_KEY"], readSecret, stdout, stderr)
 	if err != nil {
 		return err
 	}
-	values["NPM_URL"], err = promptSetupValue(reader, stdout, stderr, "Nginx Proxy Manager base URL", values["NPM_URL"], "", func(value string) (string, error) {
-		return normalizeBaseURL("NPM_URL", value)
-	})
+	values["NPM_URL"], err = promptSetupValue(reader, stdout, stderr, "Nginx Proxy Manager base URL", values["NPM_URL"], "", normalizeNPMBaseURL)
 	if err != nil {
 		return err
 	}

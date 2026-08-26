@@ -55,7 +55,10 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Validate Compose configuration
-        run: ENV_FILE=.env.example docker compose --profile tools config --quiet
+        run: |
+          ENV_FILE=.env.example docker compose -f docker-compose.yml --profile tools config --quiet
+          ENV_FILE=.env.example PRIVATE_CA_FILE="$PWD/.env.example" docker compose -f docker-compose.yml -f docker-compose.private-ca.yml --profile tools config --quiet
+          python3 scripts/verify-production-compose.py
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
       - name: Build image (verify only, no push)

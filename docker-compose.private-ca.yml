@@ -1,0 +1,29 @@
+# Opt-in trust for a private certificate authority.
+#
+# Activate by setting PRIVATE_CA_FILE to the public root certificate before using
+# the normal Make targets, for example:
+#   make doctor PRIVATE_CA_FILE=/secure/public/rootCA.pem
+#   make up PRIVATE_CA_FILE=/secure/public/rootCA.pem
+#
+# Mount only the public certificate. The source file and its parent directory must
+# be readable by container uid 65534 (0644 file in a 0755 public-cert directory is
+# appropriate). Never mount rootCA-key.pem or another CA private key.
+
+services:
+  velociportal:
+    volumes:
+      - type: bind
+        source: ${PRIVATE_CA_FILE:?set PRIVATE_CA_FILE to the public private-CA root certificate}
+        target: /etc/ssl/certs/velociportal-private-ca.crt
+        read_only: true
+        bind:
+          create_host_path: false
+
+  velociportal-tools:
+    volumes:
+      - type: bind
+        source: ${PRIVATE_CA_FILE:?set PRIVATE_CA_FILE to the public private-CA root certificate}
+        target: /etc/ssl/certs/velociportal-private-ca.crt
+        read_only: true
+        bind:
+          create_host_path: false

@@ -41,6 +41,14 @@ const (
 	goQuotedEnvEncoding   = "go-quoted-v1"
 )
 
+type headscaleTransportClass uint8
+
+const (
+	headscaleTransportUnknown headscaleTransportClass = iota
+	headscaleTransportVerifiedHTTPS
+	headscaleTransportRestrictedHTTP
+)
+
 var requiredConfigKeys = []string{
 	"HEADSCALE_URL",
 	"HEADSCALE_API_KEY",
@@ -91,11 +99,11 @@ func loadConfigFrom(lookup configLookup) (*Config, error) {
 		return nil, fmt.Errorf("loadConfig: missing required env: %s", strings.Join(missing, ", "))
 	}
 
-	headscaleURL, err := normalizeBaseURL("HEADSCALE_URL", values["HEADSCALE_URL"])
+	headscaleURL, err := normalizeHeadscaleBaseURL(values["HEADSCALE_URL"])
 	if err != nil {
 		return nil, fmt.Errorf("loadConfig: %w", err)
 	}
-	npmURL, err := normalizeBaseURL("NPM_URL", values["NPM_URL"])
+	npmURL, err := normalizeNPMBaseURL(values["NPM_URL"])
 	if err != nil {
 		return nil, fmt.Errorf("loadConfig: %w", err)
 	}
@@ -168,6 +176,83 @@ func trustedProxyCoversAddressSpace(network *net.IPNet) bool {
 	ipv6Last := net.ParseIP("ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff")
 	allIPv6 := network.Contains(net.IPv6zero) && network.Contains(ipv6Last)
 	return allIPv4 || allIPv6
+}
+
+func normalizeHeadscaleBaseURL(raw string) (string, error) {
+	normalized, err := normalizeBaseURL("HEADSCALE_URL", raw)
+	if err != nil {
+		return "", err
+	}
+	parsed, err := url.Parse(normalized)
+	if err != nil {
+		return "", fmt.Errorf("invalid HEADSCALE_URL: %w", err)
+	}
+	switch classifyHeadscaleTransport(normalized) {
+	case headscaleTransportVerifiedHTTPS:
+		return normalized, nil
+	case headscaleTransportRestrictedHTTP:
+		if allowedHeadscaleHTTPHost(parsed.Hostname()) {
+			return normalized, nil
+		}
+		return "", fmt.Errorf("invalid HEADSCALE_URL: http is allowed only for the canonical internal or same-host route")
+	default:
+		return "", fmt.Errorf("invalid HEADSCALE_URL: scheme must be http or https")
+	}
+}
+
+func allowedHeadscaleHTTPHost(host string) bool {
+	return allowedRestrictedHTTPHost(host, "headscale.velociportal.internal")
+}
+
+func normalizeNPMBaseURL(raw string) (string, error) {
+	normalized, err := normalizeBaseURL("NPM_URL", raw)
+	if err != nil {
+		return "", err
+	}
+	parsed, err := url.Parse(normalized)
+	if err != nil {
+		return "", fmt.Errorf("invalid NPM_URL: %w", err)
+	}
+	if parsed.Scheme == "https" {
+		return normalized, nil
+	}
+	if parsed.Scheme == "http" && allowedRestrictedHTTPHost(parsed.Hostname(), "npm.velociportal.internal") {
+		return normalized, nil
+	}
+	return "", fmt.Errorf("invalid NPM_URL: http is allowed only for the canonical internal or same-host route")
+}
+
+func allowedRestrictedHTTPHost(host, canonical string) bool {
+	if strings.EqualFold(host, canonical) ||
+		strings.EqualFold(host, "host.docker.internal") ||
+		strings.EqualFold(host, "localhost") {
+		return true
+	}
+
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return false
+	}
+	if strings.Contains(host, ":") {
+		return ip.Equal(net.IPv6loopback)
+	}
+	ipv4 := ip.To4()
+	return ipv4 != nil && ipv4[0] == 127
+}
+
+func classifyHeadscaleTransport(raw string) headscaleTransportClass {
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return headscaleTransportUnknown
+	}
+	switch strings.ToLower(parsed.Scheme) {
+	case "https":
+		return headscaleTransportVerifiedHTTPS
+	case "http":
+		return headscaleTransportRestrictedHTTP
+	default:
+		return headscaleTransportUnknown
+	}
 }
 
 func normalizeBaseURL(name, raw string) (string, error) {
@@ -277,10 +362,7 @@ func runServer(cfg *Config) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	httpClient := &http.Client{Timeout: 10 * time.Second}
-
-	hs := NewHeadscaleClient(cfg.HeadscaleURL, cfg.HeadscaleAPIKey, httpClient)
-	npm := NewNPMClient(cfg.NPMURL, cfg.NPMEmail, cfg.NPMPassword, httpClient)
+	hs, npm := newUpstreamClients(cfg)
 
 	cache := NewCache(hs, npm, cfg.PollInterval, slog.Default())
 	cache.Start(ctx)

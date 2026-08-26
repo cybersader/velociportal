@@ -29,7 +29,7 @@ func TestRunSetupCommandCreatesValidatedLocalConfiguration(t *testing.T) {
 	path := filepath.Join(directory, "velociportal.env")
 	stdin := strings.NewReader(strings.Join([]string{
 		"https://headscale.example.com/control/",
-		"http://npm:81/",
+		"http://npm.velociportal.internal:81/",
 		"portal@example.com",
 		"127.0.0.1:9090",
 		"45s",
@@ -55,7 +55,7 @@ func TestRunSetupCommandCreatesValidatedLocalConfiguration(t *testing.T) {
 	want := map[string]string{
 		"HEADSCALE_URL":      "https://headscale.example.com/control",
 		"HEADSCALE_API_KEY":  "headscale-secret-key",
-		"NPM_URL":            "http://npm:81",
+		"NPM_URL":            "http://npm.velociportal.internal:81",
 		"NPM_EMAIL":          "portal@example.com",
 		"NPM_PASSWORD":       "npm-secret-password",
 		"LISTEN_ADDR":        "127.0.0.1:9090",
@@ -97,6 +97,54 @@ func TestRunSetupCommandCreatesValidatedLocalConfiguration(t *testing.T) {
 		if !strings.Contains(stdout.String(), text) {
 			t.Errorf("stdout missing %q: %q", text, stdout.String())
 		}
+	}
+	if strings.Contains(stderr.String(), headscaleHTTPSetupWarning) {
+		t.Fatalf("HTTPS setup emitted the Headscale HTTP warning: %q", stderr.String())
+	}
+}
+
+func TestRunSetupCommandWarnsForAcceptedHeadscaleHTTPWithoutLeakingRouteOrSecrets(t *testing.T) {
+	path := filepath.Join(t.TempDir(), ".env")
+	stdin := strings.NewReader(strings.Join([]string{
+		"http://headscale.velociportal.internal:8080/control/",
+		"http://npm.velociportal.internal:81/",
+		"portal@example.com",
+		"127.0.0.1:9090",
+		"45s",
+	}, "\n") + "\n")
+	secrets := &secretQueue{values: []string{"http-headscale-secret", "http-npm-secret"}}
+	var stdout, stderr bytes.Buffer
+
+	code := runSetupCommandWithDependencies(
+		[]string{"--env-file", path},
+		stdin,
+		&stdout,
+		&stderr,
+		setupCommandDependencies{readSecret: secrets.read},
+	)
+	if code != 0 {
+		t.Fatalf("exit code = %d, stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stderr.String(), headscaleHTTPSetupWarning) {
+		t.Fatalf("stderr missing Headscale HTTP warning: %q", stderr.String())
+	}
+	for _, forbidden := range []string{
+		"headscale.velociportal.internal",
+		":8080",
+		"http-headscale-secret",
+		"http-npm-secret",
+	} {
+		if strings.Contains(stderr.String(), forbidden) {
+			t.Fatalf("Headscale HTTP warning leaked %q: %q", forbidden, stderr.String())
+		}
+	}
+
+	values, err := readEnvFile(path)
+	if err != nil {
+		t.Fatalf("readEnvFile() error = %v", err)
+	}
+	if values["HEADSCALE_URL"] != "http://headscale.velociportal.internal:8080/control" {
+		t.Fatalf("HEADSCALE_URL = %q", values["HEADSCALE_URL"])
 	}
 }
 
@@ -156,8 +204,10 @@ func TestRunSetupCommandValidatesEachAnswerImmediatelyWithoutLeakingRejectedSecr
 	path := filepath.Join(directory, ".env")
 	stdin := strings.NewReader(strings.Join([]string{
 		"ftp://headscale.example.com",
+		"http://headscale.example.com",
 		"https://headscale.example.com/",
 		"npm-without-a-url",
+		"http://npm.example.com:81",
 		"https://npm.example.com/",
 		"operator@example.com",
 		"example.com:8080",

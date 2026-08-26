@@ -1,5 +1,7 @@
-.PHONY: build fmt-check test vet lint check run docker validate-env-file docker-run setup observe-proxy doctor validate validate-json up logs health down verify clean
+.PHONY: build fmt-check test vet lint check run docker validate-env-file docker-run setup observe-proxy doctor validate validate-json up logs health down production-compose-check verify clean
+.NOTPARALLEL: check verify
 
+PYTHON ?= python3
 IMAGE ?= velociportal:latest
 BUILD_VERSION ?= dev
 GIT_REVISION ?= $(shell git rev-parse --verify HEAD 2>/dev/null || printf unknown)
@@ -17,10 +19,12 @@ HOST_GID ?= $(shell id -g)
 DOCKER_ROOTLESS ?= $(shell docker info --format '{{json .SecurityOptions}}' 2>/dev/null | grep -q rootless && printf 1)
 CONTAINER_UID ?= $(if $(DOCKER_ROOTLESS),0,$(HOST_UID))
 CONTAINER_GID ?= $(if $(DOCKER_ROOTLESS),0,$(HOST_GID))
+PRIVATE_CA_FILE ?=
 
-COMPOSE_ENV = IMAGE="$(IMAGE)" BUILD_VERSION="$(BUILD_VERSION)" GIT_REVISION="$(GIT_REVISION)" GIT_SOURCE_STATE="$(GIT_SOURCE_STATE)" VELOCIPORTAL_SUBNET="$(VELOCIPORTAL_SUBNET)" VELOCIPORTAL_GATEWAY="$(VELOCIPORTAL_GATEWAY)"
-COMPOSE = ENV_FILE="$(ENV_FILE)" $(COMPOSE_ENV) docker compose
-SETUP_COMPOSE = ENV_FILE=".env.example" $(COMPOSE_ENV) docker compose
+PRIVATE_CA_COMPOSE = $(if $(strip $(PRIVATE_CA_FILE)),-f docker-compose.private-ca.yml)
+COMPOSE_ENV = IMAGE="$(IMAGE)" BUILD_VERSION="$(BUILD_VERSION)" GIT_REVISION="$(GIT_REVISION)" GIT_SOURCE_STATE="$(GIT_SOURCE_STATE)" VELOCIPORTAL_SUBNET="$(VELOCIPORTAL_SUBNET)" VELOCIPORTAL_GATEWAY="$(VELOCIPORTAL_GATEWAY)" PRIVATE_CA_FILE="$(PRIVATE_CA_FILE)"
+COMPOSE = ENV_FILE="$(ENV_FILE)" $(COMPOSE_ENV) docker compose -f docker-compose.yml $(PRIVATE_CA_COMPOSE)
+SETUP_COMPOSE = ENV_FILE=".env.example" $(COMPOSE_ENV) docker compose -f docker-compose.yml $(PRIVATE_CA_COMPOSE)
 WORKSPACE_VOLUME = $(CURDIR):/workspace
 
 build:
@@ -126,9 +130,15 @@ health: validate-env-file
 down: validate-env-file
 	$(COMPOSE) down
 
-# Full local verification, including the raw Compose env model and image metadata.
-verify: fmt-check vet test docker
-	ENV_FILE=.env.example IMAGE="$(IMAGE)" docker compose --profile tools config --quiet
+# Verify the portable one-service bundle independently of a Docker daemon.
+production-compose-check:
+	$(PYTHON) scripts/verify-production-compose.py
+
+# Full local verification, including contributor Compose, the production bundle,
+# raw env semantics, and image metadata.
+verify: fmt-check vet test docker production-compose-check
+	ENV_FILE=.env.example IMAGE="$(IMAGE)" docker compose -f docker-compose.yml --profile tools config --quiet
+	ENV_FILE=.env.example IMAGE="$(IMAGE)" PRIVATE_CA_FILE="$(CURDIR)/.env.example" docker compose -f docker-compose.yml -f docker-compose.private-ca.yml --profile tools config --quiet
 	@test "$$(docker image inspect --format '{{json .Config.Healthcheck.Test}}' "$(IMAGE)")" = \
 		'["CMD","/velociportal","healthcheck"]' || { \
 		printf 'image %s does not contain the expected healthcheck command\n' "$(IMAGE)"; \

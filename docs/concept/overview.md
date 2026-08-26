@@ -1,6 +1,6 @@
 # Overview
 
-Velociportal is an **identity-aware visibility layer** for a self-hosted Headscale tailnet. It reads a supported subset of the Headscale policy, discovers services from Nginx Proxy Manager (NPM), and renders a filtered portal for a human identity supplied by a trusted proxy.
+Velociportal is an **identity-aware visibility layer** for a self-hosted Headscale tailnet. It reads a supported subset of the Headscale policy, discovers services from Nginx Proxy Manager (NPM), and renders a filtered portal for a human identity supplied by trusted Tailscale HTTP Serve.
 
 ## What it is
 

@@ -52,4 +52,4 @@ Headscale's documented standard layout puts configuration under `/etc/headscale`
 - Encrypt backups that contain private keys or credentials.
 - Test a restore periodically.
 
-Return to the [TrueNAS SCALE deployment guide](truenas-scale.md).
+Return to the [TrueNAS Quickstart](truenas-scale.md).

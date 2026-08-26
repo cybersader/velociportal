@@ -12,9 +12,9 @@ import (
 
 func validConfigValues() map[string]string {
 	return map[string]string{
-		"HEADSCALE_URL":      "http://headscale:8080",
+		"HEADSCALE_URL":      "https://headscale:8080",
 		"HEADSCALE_API_KEY":  "test-key",
-		"NPM_URL":            "http://npm:81",
+		"NPM_URL":            "http://npm.velociportal.internal:81",
 		"NPM_EMAIL":          "admin@example.com",
 		"NPM_PASSWORD":       "changeme",
 		"TRUSTED_PROXY_CIDR": "127.0.0.1/32",
@@ -32,7 +32,7 @@ func cloneStrings(values map[string]string) map[string]string {
 func TestLoadConfigFromValidAndNormalized(t *testing.T) {
 	values := validConfigValues()
 	values["HEADSCALE_URL"] = " https://headscale.example.com/control/ "
-	values["NPM_URL"] = "http://npm:81///"
+	values["NPM_URL"] = "http://npm.velociportal.internal:81///"
 	values["NPM_EMAIL"] = " admin@example.com "
 	values["LISTEN_ADDR"] = " LOCALHOST:9090 "
 	values["POLL_INTERVAL"] = " 1m "
@@ -46,7 +46,7 @@ func TestLoadConfigFromValidAndNormalized(t *testing.T) {
 	if cfg.HeadscaleURL != "https://headscale.example.com/control" {
 		t.Errorf("HeadscaleURL = %q", cfg.HeadscaleURL)
 	}
-	if cfg.NPMURL != "http://npm:81" {
+	if cfg.NPMURL != "http://npm.velociportal.internal:81" {
 		t.Errorf("NPMURL = %q", cfg.NPMURL)
 	}
 	if cfg.HeadscaleAPIKey != "test-key" {
@@ -76,6 +76,140 @@ func TestNormalizeBaseURLPreservesEscapedPathData(t *testing.T) {
 	}
 	if got != "https://example.com/base/%2F" {
 		t.Fatalf("normalizeBaseURL() = %q, want escaped slash preserved", got)
+	}
+}
+
+func TestNormalizeHeadscaleBaseURLAllowsVerifiedHTTPSGenerally(t *testing.T) {
+	for _, input := range []string{
+		"https://headscale.example.com:443/control/",
+		"HTTPS://HEADSCALE",
+		"https://10.0.0.2:8080",
+		"https://headscale.velociportal.internal.evil.example",
+	} {
+		t.Run(input, func(t *testing.T) {
+			if _, err := normalizeHeadscaleBaseURL(input); err != nil {
+				t.Fatalf("normalizeHeadscaleBaseURL(%q) error = %v", input, err)
+			}
+		})
+	}
+}
+
+func TestLoadConfigFromAllowsRestrictedHeadscaleHTTPHosts(t *testing.T) {
+	tests := map[string]string{
+		"canonical internal":      "http://headscale.velociportal.internal:8080/control/",
+		"canonical internal case": "HTTP://HEADSCALE.VELOCIPORTAL.INTERNAL:8080",
+		"Docker host":             "http://host.docker.internal:8080",
+		"Docker host case":        "http://HOST.DOCKER.INTERNAL:8080",
+		"localhost":               "http://localhost:8080",
+		"localhost case":          "http://LOCALHOST:8080",
+		"IPv4 loopback first":     "http://127.0.0.0:8080",
+		"IPv4 loopback range":     "http://127.255.255.255:8080",
+		"IPv6 loopback":           "http://[::1]:8080",
+	}
+	for name, input := range tests {
+		t.Run(name, func(t *testing.T) {
+			values := validConfigValues()
+			values["HEADSCALE_URL"] = input
+			cfg, err := loadConfigFrom(mapConfigLookup(values))
+			if err != nil {
+				t.Fatalf("loadConfigFrom() error = %v", err)
+			}
+			if classifyHeadscaleTransport(cfg.HeadscaleURL) != headscaleTransportRestrictedHTTP {
+				t.Fatalf("Headscale transport for %q was not classified as restricted HTTP", cfg.HeadscaleURL)
+			}
+		})
+	}
+}
+
+func TestNormalizeHeadscaleBaseURLRejectsOtherHTTPHosts(t *testing.T) {
+	for _, input := range []string{
+		"http://headscale:8080",
+		"http://headscale.home:8080",
+		"http://10.0.0.2:8080",
+		"http://172.17.0.2:8080",
+		"http://192.168.1.2:8080",
+		"http://100.64.0.2:8080",
+		"http://169.254.1.2:8080",
+		"http://126.255.255.255:8080",
+		"http://128.0.0.0:8080",
+		"http://203.0.113.10:8080",
+		"http://headscale.example.com:8080",
+		"http://headscale.velociportal.internal.evil.example:8080",
+		"http://evil-headscale.velociportal.internal:8080",
+		"http://headscale.velociportal.internal.:8080",
+		"http://host.docker.internal.evil.example:8080",
+		"http://localhost.example:8080",
+		"http://0.0.0.0:8080",
+		"http://[::]:8080",
+		"http://[::2]:8080",
+		"http://[fe80::1]:8080",
+		"http://[::ffff:127.0.0.1]:8080",
+	} {
+		t.Run(input, func(t *testing.T) {
+			if _, err := normalizeHeadscaleBaseURL(input); err == nil {
+				t.Fatalf("normalizeHeadscaleBaseURL(%q) accepted disallowed HTTP host", input)
+			}
+		})
+	}
+}
+
+func TestNormalizeNPMBaseURLAllowsVerifiedHTTPSAndRestrictedHTTP(t *testing.T) {
+	for _, input := range []string{
+		"https://npm.example.com:443/",
+		"HTTPS://NPM.EXAMPLE.COM",
+		"http://npm.velociportal.internal:81/",
+		"HTTP://NPM.VELOCIPORTAL.INTERNAL:81",
+		"http://host.docker.internal:81",
+		"http://localhost:81",
+		"http://127.0.0.1:81",
+		"http://[::1]:81",
+	} {
+		t.Run(input, func(t *testing.T) {
+			if _, err := normalizeNPMBaseURL(input); err != nil {
+				t.Fatalf("normalizeNPMBaseURL(%q) error = %v", input, err)
+			}
+		})
+	}
+}
+
+func TestNormalizeNPMBaseURLRejectsOtherHTTPHosts(t *testing.T) {
+	for _, input := range []string{
+		"http://npm:81",
+		"http://npm.home:81",
+		"http://10.0.0.2:81",
+		"http://172.17.0.2:81",
+		"http://192.168.1.2:81",
+		"http://100.64.0.2:81",
+		"http://npm.example.com:81",
+		"http://npm.velociportal.internal.evil.example:81",
+		"http://evil-npm.velociportal.internal:81",
+		"http://npm.velociportal.internal.:81",
+		"http://0.0.0.0:81",
+		"http://[::]:81",
+		"http://[::ffff:127.0.0.1]:81",
+	} {
+		t.Run(input, func(t *testing.T) {
+			if _, err := normalizeNPMBaseURL(input); err == nil {
+				t.Fatalf("normalizeNPMBaseURL(%q) accepted disallowed HTTP host", input)
+			}
+		})
+	}
+}
+
+func TestClassifyHeadscaleTransport(t *testing.T) {
+	for _, test := range []struct {
+		input string
+		want  headscaleTransportClass
+	}{
+		{input: "https://headscale.example.com", want: headscaleTransportVerifiedHTTPS},
+		{input: "HTTPS://headscale.example.com", want: headscaleTransportVerifiedHTTPS},
+		{input: "http://localhost", want: headscaleTransportRestrictedHTTP},
+		{input: "ftp://localhost", want: headscaleTransportUnknown},
+		{input: "://invalid", want: headscaleTransportUnknown},
+	} {
+		if got := classifyHeadscaleTransport(test.input); got != test.want {
+			t.Errorf("classifyHeadscaleTransport(%q) = %v, want %v", test.input, got, test.want)
+		}
 	}
 }
 
@@ -266,6 +400,7 @@ func TestLoadConfigFromURLValidation(t *testing.T) {
 		value string
 	}{
 		{name: "relative", key: "HEADSCALE_URL", value: "headscale:8080"},
+		{name: "insecure headscale", key: "HEADSCALE_URL", value: "http://headscale.example.com"},
 		{name: "unsupported scheme", key: "HEADSCALE_URL", value: "ftp://headscale.example.com"},
 		{name: "missing host", key: "NPM_URL", value: "https:///api"},
 		{name: "userinfo", key: "NPM_URL", value: "https://admin:secret@npm.example.com"},

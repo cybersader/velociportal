@@ -47,6 +47,8 @@ velociportal setup --env-file .env
 The wizard:
 
 - prompts for Headscale and NPM connection details;
+- accepts Headscale HTTP only for the implementation's exact local/internal allowlist and otherwise requires verified HTTPS;
+- warns that an accepted Headscale HTTP hostname does not prove route confinement or external inaccessibility;
 - reads API keys and passwords through hidden terminal input;
 - preserves existing hidden secrets when Enter is pressed;
 - validates values before writing;
@@ -85,6 +87,7 @@ Doctor reports stable `PASS`, `WARN`, and `FAIL` stages for:
 
 - configuration and owner-only environment-file permissions;
 - trusted proxy CIDR narrowness;
+- a pre-contact warning when Headscale uses allowlisted HTTP, because the CLI cannot prove private route confinement;
 - Headscale policy and node retrieval;
 - NPM authentication and proxy-host retrieval;
 - complete snapshot construction;
@@ -105,7 +108,7 @@ Validation loads one complete live snapshot, compares the supplied identity labe
 
 Use `--format json` for deterministic, schema-versioned output. A complete report returns `1` when findings such as an unmatched forward host, a zero-card identity, identical card sets, or an unknown/dirty build require review. Notices about known limitations do not by themselves fail the report. GNU Make converts any failed recipe into Make exit code `2`, so automation that needs the application's exact `0`/`1`/`2` distinction should invoke `velociportal validate` directly; Make users should inspect the report status and findings.
 
-Validation is still a visibility prediction. Follow the [real-deployment worksheet](../getting-started/validation.md) to verify the final identity proxy, `401`/`403` paths, browser-facing links, and actual Headscale reachability.
+Validation is still a visibility prediction. When Headscale uses allowlisted HTTP, validation emits a non-failing, redacted route-confinement notice and records the limitation in the report. Follow the [real-deployment worksheet](../getting-started/validation.md) to verify the private upstream network, NPM control proxy, final identity path, `401`/`403` behavior, LAN-negative ports, browser-facing links, and actual Headscale reachability.
 
 ## Healthcheck
 
@@ -116,7 +119,11 @@ velociportal healthcheck --url http://127.0.0.1:8080/healthz --timeout 3s
 
 The probe succeeds only on HTTP 200, refuses redirects, bounds response headers, and does not load application secrets. The production image invokes the same command directly through its Docker healthcheck.
 
-## Canonical operator journey
+## Production deployment versus repository commands
+
+The normal TrueNAS, Dockge, Dokploy, or Docker Compose installation uses `deploy/compose.yaml` with a published immutable image. It creates `velociportal-upstreams`, has no base-stack CA mount, and does not require Git, Make, Go, a source build on the NAS, or recurring NAS shell access. Follow the [TrueNAS Quickstart](../guides/truenas-scale.md) for the linear UI-managed journey.
+
+The commands below are the **local-source and diagnostic workflow** for contributors, preflight investigation, and detailed validation:
 
 ```bash
 make setup
@@ -126,23 +133,23 @@ make up
 make health
 ```
 
-<div class="vp-chip-row" aria-label="Guided target availability">
-<span class="vp-chip vp-chip--supported">Repository workflow implemented</span>
+<div class="vp-chip-row" aria-label="Local-source target availability">
+<span class="vp-chip vp-chip--supported">Repository diagnostics implemented</span>
 <span class="vp-chip vp-chip--security">Exact proxy confirmation required</span>
 <span class="vp-chip vp-chip--validation">Real deployment validation still required</span>
 </div>
 
-| Guided step | What it runs |
+| Local-source step | What it runs |
 |---|---|
-| `make setup` | Builds the production image and runs the interactive setup wizard with a writable project mount |
-| `make observe-proxy` | Runs the temporary observer on the production Compose network with a loopback-published port, then updates only the selected environment file |
-| `make doctor` | Mounts the environment file read-only and runs preflight diagnostics on the production Compose network |
-| `make validate` | Builds a human-readable two-or-more-identity validation report on the same production network |
+| `make setup` | Builds the local scratch image and runs the interactive setup wizard with a writable project mount |
+| `make observe-proxy` | Runs the temporary observer on the repository Compose network with a loopback-published port, then updates only the selected environment file |
+| `make doctor` | Mounts the environment file read-only and runs preflight diagnostics on the repository Compose network |
+| `make validate` | Builds a human-readable two-or-more-identity validation report on the same repository network |
 | `make validate-json` | Keeps stdout JSON-only so it can be redirected to an owner-readable report file |
-| `make up` | Builds the image, starts Compose without rebuilding, and waits for Docker health |
+| `make up` | Builds the local image, starts Compose without rebuilding, and waits for Docker health |
 | `make health` | Executes the binary-native health client in the running container |
 
-Use the full [Guided setup](../getting-started/setup.md) for the ordered workflow and final validation matrix.
+Use the full [local-source and diagnostic workflow](../getting-started/setup.md) for the ordered commands and diagnostic validation matrix.
 
 ## Other Make targets
 
@@ -155,11 +162,12 @@ Use the full [Guided setup](../getting-started/setup.md) for the ordered workflo
 | `make lint` | Run formatting and vet checks |
 | `make check` | Run formatting, vet, and race tests |
 | `make run` | Run from source with `serve --env-file`; requires Go |
-| `make docker` | Build the production scratch image |
-| `make docker-run` | Run the production image read-only with loopback-only publication |
-| `make logs` | Follow Compose logs |
-| `make down` | Stop the Compose deployment |
-| `make verify` | Run Go, Compose, image metadata, and in-image CLI checks; requires Go and Docker |
+| `make docker` | Build the local production-shaped scratch image |
+| `make docker-run` | Run the local image read-only with loopback-only publication |
+| `make production-compose-check` | Render and assert the one-service, always-pull, no-build, loopback, raw-env, fixed ingress, named internal upstream network, no base CA mount, optional CA overlay, healthcheck, and hardening shape |
+| `make logs` | Follow repository Compose logs |
+| `make down` | Stop the repository Compose deployment |
+| `make verify` | Run Go, contributor and production Compose, image metadata, and in-image CLI checks; requires Go, Python 3, and Docker Compose |
 | `make clean` | Remove the locally built binary |
 
 ## Make variables
@@ -170,6 +178,7 @@ Pass Make variables before or after the target:
 make doctor DOCTOR_ARGS="--identity ${VP_USER_A} --identity ${VP_USER_B}"
 make validate VALIDATE_ARGS="--identity user-a=${VP_USER_A} --identity user-b=${VP_USER_B}"
 make health HEALTH_URL=http://127.0.0.1:8080/healthz
+make doctor PRIVATE_CA_FILE="$HOME/.local/share/velociportal/certs/rootCA.pem"
 make docker IMAGE=registry.example/velociportal:test
 ```
 
@@ -179,6 +188,7 @@ For validation, populate `VP_USER_A` and `VP_USER_B` with hidden `read -s` promp
 |---|---|---|
 | `IMAGE` | `velociportal:latest` | Image build, Compose, and local container commands |
 | `ENV_FILE` | `.env` | Project-relative environment-file path used by guided and runtime commands; absolute paths and `..` components are rejected by Make wrappers so host and container cannot address different files |
+| `PRIVATE_CA_FILE` | empty | Opts into `docker-compose.private-ca.yml` and mounts only the public private-CA root read-only into runtime and tools containers |
 | `DOCTOR_ARGS` | empty | Additional doctor options, such as repeated identity previews |
 | `VALIDATE_ARGS` | empty | Labeled identities plus optional privacy/format flags; never place credentials here |
 | `BUILD_VERSION` | `dev` | Build provenance included in validation reports |
@@ -190,15 +200,15 @@ For validation, populate `VP_USER_A` and `VP_USER_B` with hidden `read -s` promp
 | `HOST_UID` / `HOST_GID` | current operator IDs | Native-Docker ownership for files written through the setup bind mount |
 | `CONTAINER_UID` / `CONTAINER_GID` | host IDs, or `0:0` when rootless Docker is detected | Container identity for one-off tools; rootless container UID 0 maps to the unprivileged daemon owner |
 
-Do not commit a populated environment file. Registry names and image tags are not secrets, but credentials, API keys, and passwords are.
+Do not commit a populated environment file. Registry names and image tags are not secrets, but credentials, API keys, and passwords are. Use separate Headscale operator and Velociportal runtime keys. `PRIVATE_CA_FILE` is optional and must identify only a public root certificate for a verified-HTTPS alternative, never a CA private key or leaf private key. See [Optional native Headscale TLS](../guides/private-tls.md).
 
 ## Runtime environment
 
 | Variable | Required | Notes |
 |---|---:|---|
-| `HEADSCALE_URL` | Yes | Base URL without `/api/v1` |
-| `HEADSCALE_API_KEY` | Yes | Headscale Bearer API key |
-| `NPM_URL` | Yes | Use HTTPS unless traffic stays on an isolated local/container network |
+| `HEADSCALE_URL` | Yes | Exact allowlisted local/internal HTTP or verified HTTPS elsewhere; canonical production value is `http://headscale.velociportal.internal:8080` |
+| `HEADSCALE_API_KEY` | Yes | Dedicated Velociportal runtime key; Headscale v0.29.3 keys are unscoped administrator credentials |
+| `NPM_URL` | Yes | Canonical production value is `http://npm.velociportal.internal:81`; HTTP is limited to the exact internal/same-host allowlist and every other location requires verified HTTPS |
 | `NPM_EMAIL` | Yes | NPM account identity |
 | `NPM_PASSWORD` | Yes | NPM account password |
 | `LISTEN_ADDR` | No | Defaults to `127.0.0.1:8080`; Compose overrides it inside the container |
@@ -217,7 +227,7 @@ ports:
   - "127.0.0.1:8080:8080"
 ```
 
-`0.0.0.0` inside the container accepts bridged traffic. The loopback-only host publication prevents direct LAN access.
+`0.0.0.0` inside the container accepts bridged traffic. On Docker Engine 28 or newer, the loopback-only host publication prevents direct LAN and same-L2 access; older engines are not safe for this topology.
 
 ## Health endpoint
 

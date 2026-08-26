@@ -6,17 +6,17 @@
 
 # Your network policy is your dashboard policy.
 
-<p class="vp-hero__lede">Velociportal reads Headscale legacy ACL rules and Nginx Proxy Manager proxy hosts, then renders a server-authorized portal for the human identity supplied by your trusted proxy.</p>
+<p class="vp-hero__lede">Velociportal reads Headscale legacy ACL rules and Nginx Proxy Manager proxy hosts, then renders a server-filtered visibility portal for the human identity supplied by Tailscale Serve.</p>
 
 <div class="vp-actions" markdown>
-[Start the guided setup](getting-started/setup.md){ .md-button .md-button--primary }
+[Start the TrueNAS Quickstart](guides/truenas-scale.md){ .md-button .md-button--primary }
 [See how trust works](reference/tailscale-headers.md){ .md-button }
 </div>
 
 <div class="vp-chip-row" aria-label="Project status">
-<span class="vp-chip vp-chip--supported">Supported: Headscale + NPM</span>
-<span class="vp-chip vp-chip--validation">Validation pending: real deployment</span>
-<span class="vp-chip vp-chip--security">Security boundary: trusted proxy</span>
+<span class="vp-chip vp-chip--supported">Architecture implemented</span>
+<span class="vp-chip vp-chip--validation">Live acceptance pending</span>
+<span class="vp-chip vp-chip--security">Identity: tailnet Serve</span>
 </div>
 
 </div>
@@ -28,91 +28,110 @@
 </div>
 
 !!! info "Visibility, not enforcement"
-    Velociportal does not authenticate users, issue tokens, proxy service traffic, or enforce access. Headscale ACLs, your reverse proxy, your IdP, and each backend remain the security boundaries. A hidden card is not authorization.
+    Velociportal does not authenticate users, issue tokens, proxy service traffic, or enforce access. Tailscale Serve, Headscale ACLs, NPM, and each backend remain security boundaries. A hidden card is not authorization.
 
-## Follow the operator journey
-
-<div class="grid cards" markdown>
-
--   :material-rocket-launch-outline: **Set up the supported stack**
-
-    Run the guided sequence from local configuration through health verification.
-
-    [Open guided setup →](getting-started/setup.md)
-
--   :material-shield-account-outline: **Establish the identity boundary**
-
-    See why trusted proxy traffic is accepted while direct header spoofing is rejected.
-
-    [Review identity headers →](reference/tailscale-headers.md)
-
--   :material-server-network: **Deploy on TrueNAS SCALE**
-
-    Use the guided Make path first, with manual Compose and Custom App instructions as advanced fallbacks.
-
-    [Deploy on TrueNAS →](guides/truenas-scale.md)
-
--   :material-alert-circle-outline: **Validate known limitations**
-
-    Compare rendered cards with real Headscale connectivity before relying on the current `forward_host` join.
-
-    [Read the support boundary →](reference/known-limitations.md)
-
-</div>
-
-## One snapshot, one request decision
+## Canonical TrueNAS shape
 
 ```mermaid
 flowchart LR
-    accTitle: Velociportal data and request flow
-    accDescr: Headscale policy and nodes plus NPM proxy hosts build a complete in-memory snapshot. A trusted identity proxy supplies the user login. Velociportal matches the user to visible services and returns a filtered portal. Service traffic then goes to NPM, not through Velociportal.
-
-    HS["Headscale<br/>policy + nodes"] -->|poll| VP["Velociportal<br/>complete snapshot + matcher"]
-    NPM["NPM<br/>proxy hosts"] -->|poll| VP
-    Proxy["Trusted identity proxy<br/>Tailscale-User-Login"] -->|request| VP
-    VP --> Portal["Filtered portal<br/>authorized cards only"]
-    Portal -. "service request bypasses Velociportal" .-> NPM
-
-    class HS control
-    class NPM service
-    class Proxy identity
-    class VP core
-    class Portal output
+    Client["New client"] -->|"trusted HTTPS"| NPMControl["Existing NPM<br/>Headscale control proxy"]
+    NPMControl -->|"internal HTTP + upgrades"| HS["Headscale"]
+    HS -->|"internal runtime API"| VP["Velociportal"]
+    NPM["NPM proxy-host API"] -->|"internal API"| VP
+    Human["Tailnet human"] -->|"WireGuard"| Serve["Tailscale HTTP Serve"]
+    Serve -->|"127.0.0.1:18080"| VP
+    VP --> Portal["Filtered portal"]
 ```
 
-<p class="vp-diagram-note">Labels name every role; color is only a secondary visual cue. Requests are served from the last complete in-memory snapshot, so page rendering never waits on an upstream API.</p>
+The runtime upstream network is the named private Docker network `velociportal-upstreams`:
 
-<div class="vp-fact-grid">
-<div class="vp-fact"><strong>Complete refreshes</strong><span>Policy, nodes, and proxy hosts must all succeed before the snapshot is replaced.</span></div>
-<div class="vp-fact"><strong>Server-side filtering</strong><span>Unauthorized cards are omitted before HTML is rendered; the browser does not make the decision.</span></div>
-<div class="vp-fact"><strong>No app database</strong><span>State is an atomic in-process snapshot. Restarting starts cold and requires a successful refresh.</span></div>
+```text
+HEADSCALE_URL=http://headscale.velociportal.internal:8080
+NPM_URL=http://npm.velociportal.internal:81
+```
+
+Headscale HTTP is accepted only for the implementation's exact local/internal allowlist. Other locations require verified HTTPS. The base Compose bundle has no CA mount.
+
+Existing NPM provides the trusted HTTPS endpoint needed before a client joins the tailnet. Its certificate comes from the operator's existing automated NPM lifecycle. If a joining client does not already trust that endpoint, stop rather than disabling verification. Runtime Velociportal bypasses NPM; workstation-only `headscale-ops` stays HTTPS-only.
+
+## Follow one operator journey
+
+<div class="grid cards" markdown>
+
+-   :material-server-network: **Start with the TrueNAS Quickstart**
+
+    Create the internal network, attach Headscale and NPM through TrueNAS UI settings, configure the trusted NPM control proxy, bootstrap separate keys, configure policy and Serve, deploy one container, and run acceptance.
+
+    [Open the Quickstart →](guides/truenas-scale.md)
+
+-   :material-router-network: **Understand Headscale + NPM**
+
+    See the separate pre-tailnet control path, direct runtime path, NPM trust boundary, exact aliases, and backup requirements.
+
+    [Review the architecture →](guides/headscale-npm.md)
+
+-   :material-shield-account-outline: **Understand identity trust**
+
+    Learn why HTTP Serve over WireGuard is the canonical browser path, why NPM cannot assert the portal identity, and how bypass attempts are handled.
+
+    [Review identity headers →](reference/tailscale-headers.md)
+
+-   :material-test-tube: **Validate a real deployment**
+
+    Compare two users, NPM joins, card URLs, restart persistence, LAN-negative results, and actual Headscale reachability before making a support claim.
+
+    [Open the validation worksheet →](getting-started/validation.md)
+
+-   :material-certificate-outline: **Use optional native Headscale TLS**
+
+    Native Headscale HTTPS with a private CA remains an alternative. It is not required by the canonical NPM-control-proxy path and adds no PKI service.
+
+    [Review the optional overlay →](guides/private-tls.md)
+
+-   :material-tools: **Develop or diagnose from source**
+
+    Use repository commands for contributors and advanced diagnostics, not as the normal NAS installation path.
+
+    [Open local-source workflow →](getting-started/setup.md)
+
 </div>
 
 ## Current support boundary
 
 === "Implemented"
 
-    - Headscale `GET /api/v1/policy` and `GET /api/v1/node`
+    - Exact local/internal Headscale HTTP allowlist plus verified HTTPS elsewhere
+    - Separate hardened Headscale and NPM transports
+    - Named internal production network and direct runtime aliases
+    - Optional private-CA overlay; no base-stack CA mount
     - NPM credential login and proxy-host discovery
     - Legacy ACL `accept` matching for supported identity and destination forms
     - Trusted `Tailscale-User-*` identity headers
     - Responsive server-rendered portal with embedded htmx
     - Single non-root `FROM scratch` container
+    - Portable one-service production bundle for Compose 2.30+ and Engine 28+
 
 === "Not implemented"
 
+    - Headscale automatic HTTPS Serve certificate automation
     - Tailscale SaaS API support
-    - Grants, SSH, posture, capabilities, or protocol evaluation
-    - Caddy or Traefik service discovery
+    - Grants, SSH, posture, capabilities, port, or protocol evaluation
+    - Caddy or Traefik discovery
     - Direct Authentik, Authelia, `Remote-User`, or `X-Webauth-*` adapters
     - NPM access-list-driven visibility
 
 === "Must be validated"
 
-    - The NPM `forward_host` join against real Headscale destinations
-    - The complete identity-proxy path and observed trusted source address
-    - Card visibility for at least two human identities with different groups
-    - Every generated card URL, including its browser-facing scheme
+    - Trusted NPM HTTPS for brand-new clients and WebSocket/upgrade preservation
+    - Headscale port `8080` not published to the LAN
+    - Separate operator/runtime API keys and safe NPM logging
+    - Policy permission to Serve port `8081` and identity-header replacement
+    - Two different human card sets and actual reachability parity
+    - Every NPM `forward_host`, generated card URL, restart, and backup/restore path
 
-!!! warning "Sprint 3 limitation remains"
-    The clients, matcher, and request flow are covered by fixtures and `httptest`, but the project has not yet been validated end-to-end against a real Headscale + NPM + identity-proxy deployment. Start with the [guided setup](getting-started/setup.md), then complete its validation matrix.
+!!! warning "Fixture coverage is not production proof"
+    The clients, matcher, transport, and request flow have automated coverage, but the full TrueNAS acceptance matrix has not run. Tailnet HTTP over WireGuard blocks ordinary on-path LAN/router/ISP interception; it does not eliminate endpoint, NPM, host, or control-plane compromise. Preserve release-candidate status until the [validation worksheet](getting-started/validation.md) passes.
+
+## Router replacement boundary
+
+No CA state lives on pfSense/the router. Restore ordinary DNS and routing after router replacement. Durable Headscale, NPM, policy, certificate, Serve, Docker-network, and Velociportal configuration belongs on TrueNAS and in tested backups.

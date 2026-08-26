@@ -2,11 +2,11 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
 	"regexp"
 	"sort"
@@ -23,9 +23,10 @@ Options:
 `
 
 const (
-	maxDoctorIdentityLength = 320
-	maxDoctorErrorLength    = 240
-	maxDoctorErrorWork      = 4096
+	maxDoctorIdentityLength    = 320
+	maxDoctorErrorLength       = 240
+	maxDoctorErrorWork         = 4096
+	headscaleHTTPDoctorWarning = "WARN Headscale HTTP route: private Docker/host route confinement and external inaccessibility are not proven"
 )
 
 var (
@@ -36,6 +37,14 @@ var (
 )
 
 type doctorIdentityFlags []string
+
+type doctorDependencies struct {
+	newClients func(*Config) (*HeadscaleClient, *NPMClient)
+}
+
+func defaultDoctorDependencies() doctorDependencies {
+	return doctorDependencies{newClients: newUpstreamClients}
+}
 
 func (values *doctorIdentityFlags) String() string {
 	return strings.Join(*values, ",")
@@ -57,6 +66,10 @@ func (values *doctorIdentityFlags) Set(raw string) error {
 }
 
 func runDoctorCommand(args []string, stdout, stderr io.Writer) int {
+	return runDoctorCommandWithDependencies(args, stdout, stderr, defaultDoctorDependencies())
+}
+
+func runDoctorCommandWithDependencies(args []string, stdout, stderr io.Writer, dependencies doctorDependencies) int {
 	if stdout == nil {
 		stdout = io.Discard
 	}
@@ -143,10 +156,14 @@ func runDoctorCommand(args []string, stdout, stderr io.Writer) int {
 	} else {
 		fmt.Fprintf(stdout, "WARN trusted proxy CIDR: %s contains multiple addresses; confirm every source may assert identity\n", cfg.TrustedProxyCIDR.String())
 	}
+	if classifyHeadscaleTransport(cfg.HeadscaleURL) == headscaleTransportRestrictedHTTP {
+		fmt.Fprintln(stdout, headscaleHTTPDoctorWarning)
+	}
 
-	httpClient := &http.Client{Timeout: upstreamTimeout}
-	headscale := NewHeadscaleClient(cfg.HeadscaleURL, cfg.HeadscaleAPIKey, httpClient)
-	npm := NewNPMClient(cfg.NPMURL, cfg.NPMEmail, cfg.NPMPassword, httpClient)
+	if dependencies.newClients == nil {
+		dependencies.newClients = newUpstreamClients
+	}
+	headscale, npm := dependencies.newClients(cfg)
 
 	progress := func(stage snapshotLoadStage, count int) {
 		switch stage {
@@ -223,8 +240,12 @@ func sanitizeDoctorError(err error, secrets []string) string {
 		return len(redactions[i]) > len(redactions[j])
 	})
 	for _, secret := range redactions {
-		if secret != "" {
-			text = strings.ReplaceAll(text, secret, "[REDACTED]")
+		if secret == "" {
+			continue
+		}
+		text = strings.ReplaceAll(text, secret, "[REDACTED]")
+		if encoded, marshalErr := json.Marshal(secret); marshalErr == nil && len(encoded) >= 2 {
+			text = strings.ReplaceAll(text, string(encoded[1:len(encoded)-1]), "[REDACTED]")
 		}
 	}
 

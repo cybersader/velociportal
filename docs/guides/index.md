@@ -1,9 +1,9 @@
 # Choose an architecture
 
-Start with the only implemented adapter pair, then choose where to run it. Velociportal is a **visibility layer**: it reads policy and service metadata, renders a filtered dashboard, and stays out of backend service traffic.
+Start with the only implemented adapter pair. Velociportal is a **visibility layer**: it reads policy and service metadata, renders a filtered dashboard, and stays out of backend service traffic.
 
 !!! note "Current support boundary"
-    **Headscale + Nginx Proxy Manager (NPM)** is the implemented and fixture-tested adapter pair. Tailscale SaaS, Caddy, and Traefik pages are design notes, not deployable integrations.
+    **Headscale + Nginx Proxy Manager (NPM)** is implemented and fixture-tested. The approved TrueNAS architecture uses Tailscale HTTP Serve for browser identity, existing NPM HTTPS for the pre-tailnet Headscale control path, and a named internal Docker network for runtime upstream calls. Real acceptance is still pending.
 
 ## Architecture cards
 
@@ -11,12 +11,12 @@ Start with the only implemented adapter pair, then choose where to run it. Veloc
 
 -   :material-check-decagram-outline: **Headscale + NPM**
 
-    <span class="vp-chip vp-chip--supported">Implemented</span>
-    <span class="vp-chip vp-chip--validation">Real join validation pending</span>
+    <span class="vp-chip vp-chip--supported">Implemented architecture</span>
+    <span class="vp-chip vp-chip--validation">Real acceptance pending</span>
 
-    Reads Headscale policy and nodes, discovers services from NPM, and matches supported legacy ACL destinations against NPM `forward_host`.
+    Reads Headscale policy and nodes, discovers services from NPM, and matches supported legacy ACL destinations against NPM `forward_host`. Existing NPM also provides the trusted HTTPS Headscale endpoint needed before clients join the tailnet; runtime Velociportal bypasses that proxy over `velociportal-upstreams`.
 
-    [Use the supported architecture →](headscale-npm.md)
+    [Use the approved architecture →](headscale-npm.md)
 
 -   :material-cloud-outline: **Tailscale SaaS + NPM**
 
@@ -48,28 +48,30 @@ Start with the only implemented adapter pair, then choose where to run it. Veloc
 
 === "I want to deploy now"
 
-    1. Follow the [guided setup](../getting-started/setup.md).
-    2. Use the [TrueNAS SCALE guide](truenas-scale.md) for the canonical NAS deployment.
-    3. Read [Known Limitations](../reference/known-limitations.md).
-    4. Validate at least two users, direct bypass rejection, every card URL, and the `forward_host` join.
+    Follow the [TrueNAS Quickstart](truenas-scale.md). It is the single linear, UI-managed journey. It does not require a source build or recurring NAS shell.
+
+=== "I need native Headscale HTTPS"
+
+    Read [Optional native Headscale TLS](private-tls.md). It keeps verified HTTPS and the private-CA overlay available without making private PKI canonical or adding a PKI service.
 
 === "I want Headscale off the NAS"
 
-    Read [VPS options for Headscale](vps-headscale.md), then return to the TrueNAS guide. A VPS can separate coordination from NAS reboots, but it adds cost, another security surface, and another backup domain.
+    Read [VPS options for Headscale](vps-headscale.md), then return to the security and validation boundaries. Remote Headscale locations require verified HTTPS.
 
 === "I need another adapter"
 
-    Do not translate planned pages into configuration that the runtime does not support. The current binary reads Headscale and NPM only. New adapters require an explicit model, fixtures, safe failure behavior, and real API validation.
+    Do not translate planned pages into configuration that the runtime does not support. New adapters require an explicit data model, fixtures, safe failure behavior, and real API validation.
 
 ## Responsibility map
 
 | Layer | Owns | Does not delegate to Velociportal |
 |---|---|---|
 | Headscale | Network policy and tailnet coordination | Actual authorization remains enforced here |
-| Identity proxy / Tailscale Serve path | Human identity assertion and header sanitization | Source trust cannot be inferred by a header name alone |
-| NPM | Public routing and service metadata | Access lists are not current visibility inputs |
+| Existing NPM control proxy | Trusted pre-tailnet Headscale HTTPS, certificate lifecycle, upgrade forwarding | It is not portal identity and runtime Velociportal bypasses it |
+| Tailscale HTTP Serve | Human identity assertion and header sanitization | Source trust cannot be inferred from a header name alone |
+| NPM service catalog | Proxy-host metadata and application routing | Access lists are not current visibility inputs |
 | Velociportal | Supported policy-to-card visibility prediction | No login, traffic proxying, or request enforcement |
 | Backend application | Application authorization and data access | A hidden card is not a backend security control |
 
 !!! tip "Recommended route"
-    Use **Headscale + NPM**, deploy through the guided path, and treat the first installation as a validation exercise rather than proof of full Tailscale policy parity.
+    Use **Headscale + NPM**, follow the **TrueNAS Quickstart**, and treat the first installation as a release-candidate acceptance exercise. No public support claim is warranted until the full worksheet passes.

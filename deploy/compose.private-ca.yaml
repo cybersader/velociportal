@@ -1,0 +1,9 @@
+services:
+  velociportal:
+    volumes:
+      - type: bind
+        source: ${VELOCIPORTAL_CA_FILE:?set VELOCIPORTAL_CA_FILE to a readable public CA certificate}
+        target: /etc/ssl/certs/velociportal-private-ca.crt
+        read_only: true
+        bind:
+          create_host_path: false
