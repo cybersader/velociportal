@@ -44,6 +44,10 @@ theme:
 extra_css:
   - assets/stylesheets/extra.css
 
+# Internal workflow notes under docs/improvements are not public documentation.
+exclude_docs: |
+  improvements/
+
 markdown_extensions:
   - admonition
   - pymdownx.details
@@ -67,17 +71,18 @@ markdown_extensions:
 
 nav:
   - Home: index.md
+  - TrueNAS Quickstart: guides/truenas-scale.md
   - Start here:
-      - Guided setup: getting-started/setup.md
       - Validate a real deployment: getting-started/validation.md
+      - Local-source diagnostics: getting-started/setup.md
   - Choose an architecture:
       - Architecture overview: guides/index.md
-      - Headscale + NPM: guides/headscale-npm.md
+      - Headscale + NPM control and runtime: guides/headscale-npm.md
       - Tailscale SaaS + NPM (planned): guides/tailscale-saas-npm.md
       - Headscale + Caddy (planned): guides/headscale-caddy.md
       - Headscale + Traefik (planned): guides/headscale-traefik.md
   - Deploy:
-      - TrueNAS SCALE: guides/truenas-scale.md
+      - Optional native Headscale TLS: guides/private-tls.md
       - VPS for Headscale: guides/vps-headscale.md
   - Integrate identity:
       - Integration overview: integrations/index.md

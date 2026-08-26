@@ -1,99 +1,100 @@
 # 02 — Design Decisions (Locked)
 
-> Decisions that are settled. Revisit only with a stated reason. "Locked" means
-> don't relitigate casually during implementation.
+> Decisions that are settled. Revisit only with a stated reason. "Locked" means do not relitigate casually during implementation.
 
-## D1 — Complementary to IdPs; visibility layer only
+## D1 — Visibility layer only
 
-Velociportal decides **what shows on the dashboard**, nothing more. Authentication,
-SSO, and access *enforcement* stay with the IdP (Authentik/Authelia/Keycloak) and
-the Tailscale ACL. **Hiding a service card is UX, not security** — the ACL and
-forward-auth are the real gate. We never present card-filtering as an access
-control.
+Velociportal decides **what shows on the dashboard**, nothing more. Authentication, identity assertion, and access enforcement stay with Tailscale Serve, Headscale policy, NPM, and backend applications. Hiding a service card is UX, not authorization.
 
-## D2 — Deployment: single container
+## D2 — Single-container deployment
 
-One static binary in one container, primary target **TrueNAS Scale**.
+Velociportal is one static non-root binary in one minimal container, with no application database and no persisted cache. Secrets come from administrator-managed environment files or secret facilities and are never baked into the image.
 
-- Multi-stage Docker build: a Go builder stage runs `templ generate` +
-  `CGO_ENABLED=0 go build`, final stage is `FROM scratch` (or distroless/static)
-  holding just the binary + a CA-cert bundle. Smallest, most reproducible artifact,
-  near-zero OS attack surface.
-- **Secrets** (Headscale API key, NPM credentials) come from **env vars or a mounted
-  file** (TrueNAS app config / Docker secret) — never baked into the image or the
-  build context.
+## D3 — Headscale and NPM remain the data sources
 
-## D3 — Data sources: Headscale API + NPM API, no config DB
+The runtime reads:
 
-The upstream APIs **are** the source of truth. Velociportal keeps **no separate
-database** for service or permission config.
+- Headscale `GET /api/v1/policy` and `GET /api/v1/node`.
+- NPM `POST /api/tokens` and `GET /api/nginx/proxy-hosts`.
 
-- Groups/users/ACL rules  ← Headscale `GET /api/v1/policy` (parse the JSON).
-- Services/domains         ← NPM `GET /api/nginx/proxy-hosts`.
-- All state lives in an **in-memory cache**, refreshed on an interval. Anything we
-  persist later (custom icons, descriptions, categories) is metadata *decoration*,
-  not a second permission model.
+A single polling loop builds a complete in-memory snapshot. It publishes only when policy, nodes, and proxy hosts all succeed. Metadata added later must not become a second authorization model.
 
-**Polling model:** a single background goroutine with a `time.Ticker` refreshes the
-cache (guarded by `sync.RWMutex` or an atomic pointer); dashboard requests serve
-from cache so a slow/unreachable upstream never blocks the page. Per-request
-`context` timeouts on all upstream HTTP calls. Interval 30–60s.
+## D4 — Human identity comes from Tailscale HTTP Serve
 
-## D4 — Identity via Tailscale headers
+The canonical browser path is the existing host-network TrueNAS Tailscale app with declarative HTTP Serve:
 
-User identity comes from **Tailscale identity headers**, not a login form.
+```text
+Tailnet HTTP :8081 -> http://127.0.0.1:18080
+```
 
-- Behind **Tailscale Serve**: `Tailscale-User-Login`, `Tailscale-User-Name`,
-  `Tailscale-User-Profile-Pic`. Serve **strips incoming `Tailscale-*` headers**
-  before injecting its own (anti-spoofing). Values may be RFC2047 Q-encoded.
-- Behind a plain reverse proxy: the tailscaled LocalAPI whois pattern
-  (`X-Webauth-User`/`-Login`/`-Tailnet`, à la `tailscale/cmd/nginx-auth`). Headscale
-  does **not** emit Serve headers itself — they come from the local tailscaled
-  daemon, which works the same against a Headscale control server.
-- **Threat model (core):** identity headers are authoritative **only** when the
-  request arrives from the trusted proxy. Bind the container to the internal
-  Docker/Tailscale network (**never `0.0.0.0` on the LAN**) and
-  **reject/ignore `Tailscale-*` headers on any other path**. Spoofed identity
-  headers are the primary risk. Use `Tailscale-Tailnet`/`X-Webauth-Tailnet` to
-  reject shared-in nodes from other tailnets for admin gating.
+WireGuard protects the client-to-NAS path from ordinary on-path LAN/router/ISP interception. Tailscale Serve strips caller-supplied `Tailscale-User-*` headers and injects the authenticated human identity. Velociportal accepts those headers only from `TRUSTED_PROXY_CIDR`.
 
-## D5 — Tech stack: Go + templ + htmx
+NPM is not the portal identity provider. Velociportal has no direct Authentik, Authelia, `Remote-User`, or `X-Webauth-*` adapter. Endpoint compromise, Tailscale/Headscale control-plane compromise, and trusted-host compromise remain in scope.
 
-From research, the recommended primary stack:
+## D5 — Go, server-rendered HTML, embedded htmx
 
-- **Go + `templ` + `htmx`**, compiled to a single static binary with templates and
-  `htmx.min.js` embedded via `go:embed`.
-- Stdlib for HTTP (Go 1.22+ `ServeMux` with method+path patterns), the two API
-  clients (`net/http` + `encoding/json`), and scheduling. Third-party deps limited
-  to `templ` (build-time) and a router only if `ServeMux` isn't enough.
-- Server-rendered, no SPA. **Authorization happens server-side in Go before
-  rendering** — map the user to their allowed service set and let templ render only
-  that subset. Never filter in the client (htmx/HTML is fully visible).
-- **Fallback:** FastAPI + Jinja2 + htmx **only if** the maintainer is decisively
-  more comfortable in Python (accepting a bigger image + Python runtime). Do **not**
-  pick Rust/Axum (needless complexity for I/O-bound work) or Node/Deno (reintroduces
-  the npm supply chain) as primary.
+Use Go 1.22+, standard-library HTTP/JSON primitives, embedded server-rendered HTML, and an embedded htmx asset. Authorization-like visibility filtering happens server-side before HTML is rendered. Add dependencies only when necessary.
 
-> Note on the maintainer's usual Rust preference: this is an I/O-bound glue service
-> where the Go + templ + htmx ecosystem (single static binary, `go:embed`, tiny
-> `scratch` image) is the stronger fit. Go is the deliberate call here.
+## D6 — Legacy ACL matching only
 
-## D6 — ACL matching approach
+Velociportal evaluates legacy `acls` entries with `action: "accept"`. It resolves supported user/group sources and destination hosts, CIDRs, policy aliases, destination tags, wildcard, and `autogroup:self` against NPM `forward_host`.
 
-Correlate ACL policy with NPM proxy hosts to decide each user's card set:
+Locked exclusions:
 
-1. Parse the Headscale policy → resolve `groups` to their member users, note
-   `tagOwners` and `acls` rules.
-2. Resolve the requesting user (from Tailscale headers) → the set of groups/tags
-   they belong to.
-3. For each NPM proxy host, determine which groups/tags/users may reach it. Two
-   correlation signals:
-   - **ACL rules** targeting the service's host/tag/CIDR (the network-level truth).
-   - **NPM `access_list_id`** on the proxy host (usernames + IP `allow`/`deny`
-     rules) as a secondary signal.
-4. A card renders for a user iff the ACL grants that user's identity a path to the
-   service. Enforcement still lives in the ACL/forward-auth — this only chooses what
-   to show.
+- Grants, SSH, posture, capabilities, protocols, and ports are not modeled for visibility.
+- `autogroup:internet` fails closed.
+- `tagOwners` and tags on owned nodes do not make a human a `tag:*` source.
+- NPM access lists are not visibility inputs.
+- The `forward_host` join remains subject to real-deployment validation.
 
-**Open detail** (see 04): the exact join between an NPM proxy host and an ACL rule
-(match on forward_host/domain vs. tag vs. CIDR) needs prototyping against real data.
+## D7 — Named internal upstream network
+
+The canonical production bundle creates the Docker network `velociportal-upstreams`. Existing apps attach through TrueNAS-managed network settings with these exact aliases:
+
+- Headscale: `headscale.velociportal.internal`
+- NPM: `npm.velociportal.internal`
+
+Velociportal uses:
+
+```text
+HEADSCALE_URL=http://headscale.velociportal.internal:8080
+NPM_URL=http://npm.velociportal.internal:81
+```
+
+Headscale port `8080` is container-exposed only (`None`/`Expose` in the TrueNAS app), never LAN-published. Untrusted containers must not join this network. Plain NPM HTTP is accepted only for the exact canonical alias or same-host/loopback compatibility routes; every other NPM location requires verified HTTPS. The base Compose bundle mounts no CA certificate.
+
+## D8 — Exact Headscale HTTP allowlist; verified HTTPS everywhere else
+
+Configuration validation accepts Headscale HTTP only for the exact local/internal host forms encoded in the implementation. The named internal alias is the canonical production case. Headscale URLs outside that allowlist require normal verified HTTPS.
+
+Credentialed transports remain isolated, ignore environment proxies, refuse redirects, require bounded responses, and have no certificate-verification bypass. HTTP acceptance is not proof that the Docker/host route is actually private; setup, doctor, validation, and acceptance documentation must retain that caveat.
+
+## D9 — Existing NPM is the pre-tailnet Headscale HTTPS boundary
+
+Brand-new clients need a trusted HTTPS Headscale control URL before they can join the tailnet. Existing NPM provides that endpoint using split-horizon/private DNS plus the operator's existing automated DNS-01 wildcard-certificate lifecycle, then proxies to Headscale over `velociportal-upstreams`. Do not publish the exact Headscale hostname/address in public DNS or issue an exact-host public leaf certificate that discloses it through certificate-transparency logs.
+
+This makes NPM an explicit trust and availability boundary:
+
+- NPM can observe Headscale control traffic and operator Bearer API keys.
+- Preserve WebSocket and HTTP upgrade behavior.
+- Do not enable authorization-header or full-request-header logging.
+- Back up and restore NPM configuration and certificate state with the rest of the application state.
+- If the NPM certificate is not already trusted by a joining client, stop rather than disabling verification.
+
+Use separate Headscale API keys for workstation operators and Velociportal runtime. Runtime Velociportal bypasses NPM and reaches Headscale directly over the internal network. `headscale-ops` remains workstation-only and HTTPS-only.
+
+## D10 — Native Headscale HTTPS/private CA is optional
+
+Direct native Headscale HTTPS remains an optional alternative through the optional Compose CA overlay. It adds no PKI daemon or container and no insecure mode. The canonical TrueNAS path does not require a CA mount and does not prescribe manual CA creation.
+
+## D11 — Tailnet HTTP Serve is acceptable; native HTTPS Serve is future work
+
+Official Tailscale can automate `*.ts.net` certificates. Headscale automatic HTTPS Serve remains upstream work tracked by [issue #2527](https://github.com/juanfont/headscale/issues/2527) and [PR #3300](https://github.com/juanfont/headscale/pull/3300). Tailnet HTTP Serve over WireGuard is therefore not a release blocker.
+
+## D12 — Router replacement restores only ordinary network state
+
+No CA private key, certificate lifecycle, application database, policy file, or durable service configuration lives on pfSense/the router. Router replacement requires restoring ordinary DNS and routing. Durable Headscale, NPM, Docker-network, policy, and application state stays on TrueNAS and in backups.
+
+## D13 — No public support claim before real acceptance
+
+Unit tests, fixtures, Compose rendering, and documentation builds are not production acceptance. Public support requires the canonical TrueNAS path to pass trusted NPM HTTPS checks, bootstrap/key separation, two distinct human identities, header replacement, LAN-negative raw-port tests, restart recovery, NPM join review, and comparison with actual Headscale reachability.

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -163,11 +164,16 @@ func TestNPMClient_FetchAccessLists(t *testing.T) {
 
 func TestNPMClientBoundsAndRedactsErrorBodies(t *testing.T) {
 	t.Run("authentication password", func(t *testing.T) {
-		const password = "npm-password-canary"
+		const password = `npm-"password-canary`
 		mux := http.NewServeMux()
 		mux.HandleFunc("/api/tokens", func(w http.ResponseWriter, r *http.Request) {
+			encodedPassword, marshalErr := json.Marshal(password)
+			if marshalErr != nil {
+				t.Fatalf("json.Marshal() error = %v", marshalErr)
+			}
+			response := []byte(`{"password":` + string(encodedPassword) + `,"padding":"` + strings.Repeat("x", maxNPMErrorBody*2) + `"}`)
 			w.WriteHeader(http.StatusForbidden)
-			_, _ = w.Write([]byte(`{"password":"` + password + `","padding":"` + strings.Repeat("x", maxNPMErrorBody*2) + `"}`))
+			_, _ = w.Write(response)
 		})
 		server := httptest.NewServer(mux)
 		t.Cleanup(server.Close)

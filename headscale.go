@@ -12,6 +12,8 @@ import (
 	"time"
 )
 
+const maxHeadscaleErrorBody = 4096
+
 type HeadscaleClient struct {
 	baseURL    string
 	apiKey     string
@@ -20,7 +22,7 @@ type HeadscaleClient struct {
 
 func NewHeadscaleClient(baseURL, apiKey string, httpClient *http.Client) *HeadscaleClient {
 	if httpClient == nil {
-		httpClient = &http.Client{Timeout: 10 * time.Second}
+		httpClient = newUpstreamHTTPClient()
 	}
 	return &HeadscaleClient{
 		baseURL:    baseURL,
@@ -79,6 +81,23 @@ func standardizeHuJSON(b []byte) []byte {
 	return trailingCommaRE.ReplaceAll([]byte(joined), []byte("$1"))
 }
 
+func headscaleErrorExcerpt(body io.Reader, apiKey string) string {
+	if body == nil {
+		return "response body unavailable"
+	}
+	contents, err := io.ReadAll(io.LimitReader(body, maxHeadscaleErrorBody+1))
+	if err != nil {
+		return "response body unreadable"
+	}
+	if len(contents) > maxHeadscaleErrorBody {
+		contents = contents[:maxHeadscaleErrorBody]
+	}
+	if len(contents) == 0 {
+		return "response body empty"
+	}
+	return sanitizeDoctorError(fmt.Errorf("%s", contents), []string{apiKey})
+}
+
 func (c *HeadscaleClient) get(ctx context.Context, path string, out any) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil)
 	if err != nil {
@@ -94,11 +113,11 @@ func (c *HeadscaleClient) get(ctx context.Context, path string, out any) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		b, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
-		return fmt.Errorf("get: %s returned status %d: %s", path, resp.StatusCode, strings.TrimSpace(string(b)))
+		excerpt := headscaleErrorExcerpt(resp.Body, c.apiKey)
+		return fmt.Errorf("get: %s returned status %d: %s", path, resp.StatusCode, excerpt)
 	}
 
-	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
+	if err := decodeUpstreamJSON(resp.Body, out); err != nil {
 		return fmt.Errorf("get: decode %s: %w", path, err)
 	}
 	return nil

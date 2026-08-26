@@ -78,6 +78,9 @@ func TestRunValidationCommandSummaryJSONIsDeterministicAndPrivate(t *testing.T) 
 	if firstCode != 0 || secondCode != 0 {
 		t.Fatalf("exit codes = %d, %d; stderr=%q %q", firstCode, secondCode, firstErr, secondErr)
 	}
+	if firstErr != "" || secondErr != "" {
+		t.Fatalf("HTTPS validation emitted warnings: %q %q", firstErr, secondErr)
+	}
 	if first != second {
 		t.Fatalf("JSON output was not deterministic:\n%s\n%s", first, second)
 	}
@@ -115,6 +118,57 @@ func TestRunValidationCommandSummaryJSONIsDeterministicAndPrivate(t *testing.T) 
 	}
 	if len(report.CommonServices) != 0 {
 		t.Fatalf("common services = %v", report.CommonServices)
+	}
+}
+
+func TestRunValidationCommandHeadscaleHTTPNoticeIsDeterministicNonFailingAndRedacted(t *testing.T) {
+	setValidationProcessConfig(t)
+	t.Setenv("HEADSCALE_URL", "http://127.0.0.1:8080/control")
+	setValidationBuildInfo(t, "v1.2.3", "revision-canary", "clean")
+	args := []string{
+		"--identity", "alpha=alice@example.com",
+		"--identity", "beta=bob@example.com",
+		"--format", "json",
+	}
+	firstCode, first, firstErr := runValidationForTest(args, validationDependenciesFor(validationTestSnapshot()))
+	secondCode, second, secondErr := runValidationForTest(args, validationDependenciesFor(validationTestSnapshot()))
+	if firstCode != 0 || secondCode != 0 {
+		t.Fatalf("exit codes = %d, %d; stdout=%q %q stderr=%q %q", firstCode, secondCode, first, second, firstErr, secondErr)
+	}
+	if first != second || firstErr != secondErr {
+		t.Fatalf("HTTP validation output was not deterministic:\nstdout 1=%s\nstdout 2=%s\nstderr 1=%q\nstderr 2=%q", first, second, firstErr, secondErr)
+	}
+	if firstErr != headscaleHTTPValidationWarning+"\n" {
+		t.Fatalf("stderr = %q, want only the Headscale HTTP warning", firstErr)
+	}
+
+	var report ValidationReport
+	if err := json.Unmarshal([]byte(first), &report); err != nil {
+		t.Fatalf("stdout is not JSON-only: %v\n%s", err, first)
+	}
+	if report.SchemaVersion != "1" || report.Status != "pass" {
+		t.Fatalf("report metadata = %#v", report)
+	}
+	if !strings.Contains(report.Scope, headscaleHTTPValidationScopeNotice) {
+		t.Fatalf("scope missing Headscale HTTP limitation: %q", report.Scope)
+	}
+	matchingFindings := 0
+	for _, finding := range report.Findings {
+		if finding.Code != headscaleHTTPRouteUnverifiedCode {
+			continue
+		}
+		matchingFindings++
+		if finding.Severity != "notice" || finding.Message != headscaleHTTPRouteUnverifiedMessage {
+			t.Fatalf("Headscale HTTP finding = %#v", finding)
+		}
+	}
+	if matchingFindings != 1 {
+		t.Fatalf("Headscale HTTP finding count = %d, findings=%#v", matchingFindings, report.Findings)
+	}
+	for _, forbidden := range []string{"http://", "127.0.0.1", "8080", "control", "test-key", "changeme"} {
+		if strings.Contains(first, forbidden) || strings.Contains(firstErr, forbidden) {
+			t.Fatalf("HTTP validation output leaked %q:\nstdout=%s\nstderr=%s", forbidden, first, firstErr)
+		}
 	}
 }
 

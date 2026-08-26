@@ -37,12 +37,12 @@ flowchart TD
 ```mermaid
 sequenceDiagram
     accTitle: Identity, control-plane, and service request sequence
-    accDescr: A background poll builds the complete snapshot from Headscale and NPM. A human requests the portal through a trusted identity proxy, which sanitizes and injects Tailscale user headers. Velociportal checks the proxy source, reads the snapshot, matches supported ACL rules, and returns filtered cards. When the human selects a card, service traffic goes through NPM to the backend without passing through Velociportal.
+    accDescr: A background poll builds the complete snapshot from Headscale and NPM. A human requests the portal through Tailscale HTTP Serve over the encrypted tailnet. Serve sanitizes and injects Tailscale user headers. Velociportal checks the source, reads the snapshot, matches supported ACL rules, and returns filtered cards. When the human selects a card, service traffic goes through NPM to the backend without passing through Velociportal.
 
     participant HS as Headscale (control plane)
     participant Catalog as NPM API (service catalog)
     participant VP as Velociportal
-    participant Proxy as Trusted identity proxy
+    participant Proxy as Tailscale HTTP Serve
     participant User as Human user
     participant Route as NPM route
     participant App as Backend service
@@ -69,7 +69,7 @@ sequenceDiagram
     Note over User,App: Service traffic does not pass through Velociportal
 ```
 
-<p class="vp-diagram-note">Every participant includes its role in text. Velociportal predicts visibility; Headscale, NPM, the IdP, and the backend continue to enforce access.</p>
+<p class="vp-diagram-note">Every participant includes its role in text. Velociportal predicts visibility; Headscale, Tailscale Serve, NPM, and the backend retain their authentication, identity, routing, and enforcement roles.</p>
 
 ## Request decision path
 

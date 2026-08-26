@@ -1,7 +1,26 @@
 site/
+__pycache__/
+*.py[cod]
 velociportal
 .env
 .env.*
 !.env.example
+
+# Dataset-hosted production copies may contain credentials, identities, and
+# private topology. Keep only their *.example templates in the repository.
+velociportal.env
+stack.env
+serve.json
+policy.hujson
+
 validation-*.json
 validation-*.txt
+
+# Local agent memory contains user-specific workflow context, not project source.
+.claude/agent-memory/
+
+# Private-PKI material stays outside the repository. Public roots and leaf
+# certificates can still disclose private infrastructure names.
+*.key
+*.crt
+*.pem

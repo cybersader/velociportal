@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"net/http"
 	"os"
 	"sort"
 	"strings"
@@ -28,10 +27,14 @@ Options:
 `
 
 const (
-	validationSchemaVersion = "1"
-	maxValidationIdentities = 20
-	maxValidationLabelBytes = 64
-	validationScopeNotice   = "Matcher evidence only: this report does not prove Headscale authorization, proxy identity injection, service reachability, or link correctness."
+	validationSchemaVersion             = "1"
+	maxValidationIdentities             = 20
+	maxValidationLabelBytes             = 64
+	validationScopeNotice               = "Matcher evidence only: this report does not prove Headscale authorization, proxy identity injection, service reachability, or link correctness."
+	headscaleHTTPValidationScopeNotice  = "For Headscale HTTP, this report does not prove private Docker/host route confinement or external inaccessibility."
+	headscaleHTTPValidationWarning      = "WARNING: Headscale HTTP route confinement and external inaccessibility are not proven."
+	headscaleHTTPRouteUnverifiedCode    = "headscale-http-route-unverified"
+	headscaleHTTPRouteUnverifiedMessage = "The restricted Headscale HTTP path is configured; private Docker/host route confinement and external inaccessibility remain unverified."
 )
 
 type validationFormat string
@@ -270,6 +273,10 @@ func runValidationCommandWithDependencies(args []string, stdout, stderr io.Write
 		return 1
 	}
 	secrets = append(secrets, cfg.HeadscaleAPIKey, cfg.NPMPassword)
+	headscaleHTTP := classifyHeadscaleTransport(cfg.HeadscaleURL) == headscaleTransportRestrictedHTTP
+	if headscaleHTTP {
+		fmt.Fprintln(stderr, headscaleHTTPValidationWarning)
+	}
 	if dependencies.now == nil {
 		dependencies.now = time.Now
 	}
@@ -277,9 +284,7 @@ func runValidationCommandWithDependencies(args []string, stdout, stderr io.Write
 		dependencies.loadSnapshot = defaultValidationDependencies().loadSnapshot
 	}
 
-	httpClient := &http.Client{Timeout: upstreamTimeout}
-	headscale := NewHeadscaleClient(cfg.HeadscaleURL, cfg.HeadscaleAPIKey, httpClient)
-	npm := NewNPMClient(cfg.NPMURL, cfg.NPMEmail, cfg.NPMPassword, httpClient)
+	headscale, npm := newUpstreamClients(cfg)
 	snapshot, err := dependencies.loadSnapshot(context.Background(), headscale, npm)
 	if err != nil {
 		secrets = append(secrets, doctorNPMToken(npm))
@@ -288,6 +293,9 @@ func runValidationCommandWithDependencies(args []string, stdout, stderr io.Write
 	}
 
 	report := buildValidationReport(snapshot, identities, privacy, configSource, dependencies.now().UTC())
+	if headscaleHTTP {
+		addHeadscaleHTTPValidationNotice(&report)
+	}
 	if privacy == validationPrivacyPrivate {
 		fmt.Fprintln(stderr, "WARNING: private validation output contains internal topology and must not be shared publicly.")
 	}
@@ -470,17 +478,7 @@ func buildValidationReport(snapshot *CacheData, identities []validationIdentityI
 		addValidationFinding(&report, "review", "identical-card-sets", "", "All supplied identities receive identical card sets; confirm that their policy membership is meaningfully different.")
 	}
 
-	sort.Slice(report.Findings, func(i, j int) bool {
-		leftRank := validationSeverityRank(report.Findings[i].Severity)
-		rightRank := validationSeverityRank(report.Findings[j].Severity)
-		if leftRank != rightRank {
-			return leftRank < rightRank
-		}
-		if report.Findings[i].Code != report.Findings[j].Code {
-			return report.Findings[i].Code < report.Findings[j].Code
-		}
-		return report.Findings[i].Subject < report.Findings[j].Subject
-	})
+	sortValidationFindings(&report)
 	return report
 }
 
@@ -646,11 +644,34 @@ func validationSetsIdentical(identitySets map[string]map[string]bool) bool {
 	return true
 }
 
+func addHeadscaleHTTPValidationNotice(report *ValidationReport) {
+	if report == nil {
+		return
+	}
+	report.Scope = strings.TrimSpace(report.Scope + " " + headscaleHTTPValidationScopeNotice)
+	addValidationFinding(report, "notice", headscaleHTTPRouteUnverifiedCode, "", headscaleHTTPRouteUnverifiedMessage)
+	sortValidationFindings(report)
+}
+
 func addValidationFinding(report *ValidationReport, severity, code, subject, message string) {
 	report.Findings = append(report.Findings, ValidationFinding{Severity: severity, Code: code, Subject: subject, Message: message})
 	if severity == "review" {
 		report.Status = "review_required"
 	}
+}
+
+func sortValidationFindings(report *ValidationReport) {
+	sort.Slice(report.Findings, func(i, j int) bool {
+		leftRank := validationSeverityRank(report.Findings[i].Severity)
+		rightRank := validationSeverityRank(report.Findings[j].Severity)
+		if leftRank != rightRank {
+			return leftRank < rightRank
+		}
+		if report.Findings[i].Code != report.Findings[j].Code {
+			return report.Findings[i].Code < report.Findings[j].Code
+		}
+		return report.Findings[i].Subject < report.Findings[j].Subject
+	})
 }
 
 func validationSeverityRank(severity string) int {

@@ -1,6 +1,6 @@
 # Tailscale identity headers
 
-Velociportal uses a small, fixed header contract to identify a human viewer. A header is accepted only when the TCP source address is inside `TRUSTED_PROXY_CIDR`.
+Velociportal uses a fixed header contract for a human viewer. A header is accepted only when the immediate TCP source is inside `TRUSTED_PROXY_CIDR`.
 
 <div class="vp-chip-row" aria-label="Identity request outcomes">
 <span class="vp-chip vp-chip--supported">Trusted source + login: evaluated</span>
@@ -12,66 +12,84 @@ Velociportal uses a small, fixed header contract to identify a human viewer. A h
 
 | Header | Required | Purpose |
 |---|---:|---|
-| `Tailscale-User-Login` | Yes | Stable login used for policy and group matching |
+| `Tailscale-User-Login` | Yes | Stable login used for policy/group matching |
 | `Tailscale-User-Name` | No | Display name |
-| `Tailscale-User-Profile-Pic` | No | Optional profile URL; accepted but not currently rendered |
+| `Tailscale-User-Profile-Pic` | No | Optional profile URL; not currently rendered |
 
-The runtime does not accept `X-Webauth-*`, `Remote-User`, or IdP-specific identity headers.
+The runtime does not accept `X-Webauth-*`, `Remote-User`, Authentik, Authelia, or other IdP-specific identity headers.
 
-## Trusted route versus rejected bypass
+## Canonical browser route
+
+The existing TrueNAS Tailscale app is the identity-aware publisher:
+
+1. Headscale policy allows intended humans to reach the TrueNAS Tailscale IP on TCP `8081`.
+2. The Tailscale app uses host networking.
+3. A read-only `serve.json` is mounted and loaded through `TS_SERVE_CONFIG`.
+4. Serve listens on tailnet HTTP port `8081`.
+5. Serve proxies to `http://127.0.0.1:18080`.
+6. Docker Engine 28+ keeps the Velociportal host publication loopback-only.
+7. Velociportal accepts the injected login only from the exact configured immediate source.
 
 ```mermaid
 flowchart LR
-    accTitle: Trusted identity route and rejected bypass routes
-    accDescr: A human request through the trusted identity proxy has client identity headers removed and a verified Tailscale user login injected. Velociportal accepts it only when the source is inside the configured trusted CIDR. A direct request with a forged header is rejected with 403. A request from the trusted source without a login is rejected with 401.
-
-    Human["Human tailnet user"] --> Proxy["Trusted identity proxy<br/>strip client headers<br/>inject verified login"]
-    Proxy --> Check{"Source inside<br/>TRUSTED_PROXY_CIDR?"}
-    Check -->|"yes + login present"| Evaluate["Evaluate supported ACL rules<br/>render matching cards"]
-
-    Direct["Direct or bypass request<br/>even with forged login"] --> Reject403["403 · untrusted source"]
-    Missing["Trusted source<br/>login header missing"] --> Reject401["401 · no identity"]
-
-    class Human,Proxy identity
-    class Check core
-    class Evaluate accepted
-    class Direct,Missing output
-    class Reject403,Reject401 rejected
+    Human["Human tailnet user"] -->|"WireGuard + HTTP :8081"| Serve["Tailscale Serve<br/>strip caller headers<br/>inject human login"]
+    Serve -->|"127.0.0.1:18080"| Check{"Source trusted?"}
+    Check -->|"yes + login"| Portal["Evaluate ACL subset<br/>render cards"]
+    LAN["Direct LAN request"] --> Blocked["No connection<br/>loopback publication"]
+    Forged["Reachable untrusted source"] --> Reject["403"]
+    Missing["Trusted source without login"] --> NoIdentity["401"]
 ```
 
-<p class="vp-diagram-note">Outcomes are written in each node and edge. Red or green styling is not the only way to distinguish accepted and rejected requests.</p>
+The browser origin is intentionally HTTP, but client-to-NAS transport remains inside WireGuard. This prevents ordinary on-path LAN/router/ISP interception. It does not protect against compromised clients, TrueNAS, NPM, Tailscale/Headscale control components, or trusted host workloads.
 
-!!! danger "The proxy path is the security boundary"
-    If a client can bypass the trusted proxy and connect to Velociportal directly, it can attempt to forge `Tailscale-User-Login`. Keep the host publication loopback-only or behind an equivalent private network boundary, and use the narrowest trusted source CIDR.
+NPM is not part of this browser identity path. It cannot derive the caller's human Tailscale identity.
 
-## What Tailscale Serve guarantees
+## What Tailscale Serve must provide
 
-Tailscale documents that Serve removes incoming client-supplied versions of the `Tailscale-User-*` headers before adding values derived from the tailnet identity. It does not populate them for tagged devices or Funnel traffic. Tailscale also recommends binding the backend to localhost to prevent bypass.
+Tailscale documents that Serve removes incoming caller-supplied `Tailscale-User-*` headers before adding values derived from tailnet identity. It does not populate human identity for tagged devices or Funnel traffic.
 
 Source: [Tailscale Serve documentation](https://tailscale.com/docs/features/tailscale-serve).
 
-## What Velociportal additionally checks
+This behavior still requires real acceptance under Headscale. Fixtures cannot prove that the TrueNAS app loaded the declarative configuration, replaced caller headers, or retained the route after restarts.
 
-A correctly named header is still rejected unless the request source is inside `TRUSTED_PROXY_CIDR`.
+## Source trust remains mandatory
 
-Determine the source from the actual deployment path:
+A correctly named header is rejected unless the immediate peer is inside `TRUSTED_PROXY_CIDR`.
 
-- Host Serve to a host-native process commonly appears as `127.0.0.1`.
-- Host Serve reaching a loopback-published **bridged container** commonly appears inside that container as the Docker bridge gateway, not `127.0.0.1`.
-- A proxy container may appear as its container IP or bridge gateway.
-- Host networking and chained proxies can change the observed source.
+The production bundle defaults to:
 
-Use the exact `/32` where practical. If a subnet is necessary, use the smallest subnet that contains only trusted proxy instances.
+```text
+subnet: 172.31.255.0/24
+gateway: 172.31.255.1
+TRUSTED_PROXY_CIDR: 172.31.255.1/32
+```
 
-The [guided setup](../getting-started/setup.md) puts `make observe-proxy` before preflight and startup so the operator must make this trust decision explicitly.
+If the subnet conflicts, change subnet, gateway, and trusted CIDR together and verify the actual source. Do not trust a whole Docker, LAN, or tailnet range as a troubleshooting shortcut.
 
-## Headscale HTTPS Serve limitation
+The host-loopback topology has a residual boundary: another trusted host process or host-network container that can reach loopback may appear from the same Docker-gateway source. Keep the host and its local workloads trusted.
 
-Tailscale's automatic HTTPS Serve uses its `*.ts.net` DNS and certificate-provisioning flow. Headscale tracks HTTPS Serve support as an open feature gap: [headscale#1921](https://github.com/juanfont/headscale/issues/1921). TLS on the Headscale control-server URL is a separate concern and does not provide per-node Serve certificates.
+## Separate Headscale control and runtime paths
 
-Safe documented alternatives are:
+Identity transport must not be confused with Headscale control transport:
 
-1. Tailnet-only HTTP Serve, with the browser origin remaining HTTP while the tailnet transport stays WireGuard-encrypted.
-2. An identity-aware HTTPS proxy you operate, which derives the caller from a trusted Tailscale identity source, strips client headers, and injects only the supported contract.
+- Brand-new clients and workstation-only `headscale-ops` use the trusted NPM HTTPS Headscale endpoint.
+- Existing NPM proxies to Headscale over `velociportal-upstreams` and can observe operator Bearer API keys.
+- Runtime Velociportal bypasses NPM and reads Headscale directly through `http://headscale.velociportal.internal:8080`.
+- NPM provides neither portal identity nor card authorization.
 
-See the [TrueNAS deployment guide](../guides/truenas-scale.md#identity-publication) for the operational commands and limitations.
+## HTTPS Serve status
+
+Official Tailscale can automate `*.ts.net` certificates. Headscale automatic HTTPS Serve remains upstream work tracked by [issue #2527](https://github.com/juanfont/headscale/issues/2527) and [PR #3300](https://github.com/juanfont/headscale/pull/3300).
+
+The approved path is tailnet-only HTTP Serve over WireGuard. It is not a release blocker. A future upstream implementation may permit native HTTPS Serve, but it does not change Velociportal's trusted-source and header-replacement requirements.
+
+## Required acceptance
+
+- Two real human identities receive intentionally different card sets.
+- A caller-supplied `Tailscale-User-Login` is stripped or replaced.
+- The raw Velociportal port is unreachable through the LAN address.
+- A deliberately reachable untrusted source receives `403`.
+- A trusted source without a login receives `401`.
+- Serve returns after restarting Velociportal, Tailscale, NPM, Headscale, and TrueNAS.
+
+No public support claim is warranted until these checks and the full [validation worksheet](../getting-started/validation.md) pass.

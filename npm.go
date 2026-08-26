@@ -27,7 +27,7 @@ type NPMClient struct {
 
 func NewNPMClient(baseURL, email, password string, httpClient *http.Client) *NPMClient {
 	if httpClient == nil {
-		httpClient = &http.Client{Timeout: 10 * time.Second}
+		httpClient = newUpstreamHTTPClient()
 	}
 	return &NPMClient{
 		baseURL:    strings.TrimRight(baseURL, "/"),
@@ -119,7 +119,7 @@ func (c *NPMClient) authenticate(ctx context.Context) error {
 	}
 
 	var tr TokenResponse
-	if err := json.NewDecoder(resp.Body).Decode(&tr); err != nil {
+	if err := decodeUpstreamJSON(resp.Body, &tr); err != nil {
 		return fmt.Errorf("authenticate: %w", err)
 	}
 
@@ -205,7 +205,7 @@ func (c *NPMClient) FetchProxyHosts(ctx context.Context) ([]ProxyHost, error) {
 	defer resp.Body.Close()
 
 	var hosts []ProxyHost
-	if err := json.NewDecoder(resp.Body).Decode(&hosts); err != nil {
+	if err := decodeUpstreamJSON(resp.Body, &hosts); err != nil {
 		return nil, fmt.Errorf("FetchProxyHosts: %w", err)
 	}
 	slog.Debug("npm: fetched proxy hosts", "count", len(hosts), "duration", time.Since(start))
@@ -221,7 +221,7 @@ func (c *NPMClient) FetchAccessLists(ctx context.Context) ([]AccessList, error) 
 	defer resp.Body.Close()
 
 	var lists []AccessList
-	if err := json.NewDecoder(resp.Body).Decode(&lists); err != nil {
+	if err := decodeUpstreamJSON(resp.Body, &lists); err != nil {
 		return nil, fmt.Errorf("FetchAccessLists: %w", err)
 	}
 	slog.Debug("npm: fetched access lists", "count", len(lists), "duration", time.Since(start))

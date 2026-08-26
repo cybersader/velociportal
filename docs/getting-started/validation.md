@@ -11,7 +11,26 @@ The `validate` command turns one live upstream snapshot into an explainable, pri
 </div>
 
 !!! warning "Visibility evidence, not authorization proof"
-    The report evaluates Velociportal's supported legacy ACL subset. It cannot impersonate a human tailnet identity, prove that the final proxy injected a verified login, or establish that a visible service is reachable. Headscale, the proxy, NPM, and the backend remain the enforcement boundaries.
+    The report evaluates Velociportal's supported legacy ACL subset. It cannot impersonate a human tailnet identity, prove that Tailscale Serve injected a verified login, or establish that a visible service is reachable. Headscale, Serve, NPM, and the backend remain the enforcement boundaries.
+
+## Quickstart acceptance comes first
+
+For the production one-service bundle, record these manual results before using the source-based report tools below:
+
+- The selected Compose interface/version is 2.30+ and Docker Engine is 28.0+.
+- The immutable Velociportal image tag and digest, plus evidence that deployment pulled it rather than reusing a cached tag.
+- `velociportal-upstreams` exists and Headscale/NPM use the exact internal aliases.
+- Headscale port `8080` and the raw Velociportal host port are unreachable through the NAS LAN address.
+- The external NPM Headscale endpoint resolves through split-horizon/private DNS, has no public Headscale address record or exact-host certificate-transparency disclosure, and verifies normally for a brand-new client and HTTPS-only `headscale-ops`.
+- NPM preserves Headscale WebSocket/upgrade behavior and does not log authorization headers.
+- Separate operator and Velociportal runtime keys are active and the bootstrap key is expired.
+- Tailnet HTTP Serve returns after restarting Velociportal, Tailscale, NPM, Headscale, and the NAS.
+- Two real human identities receive intentionally different card sets.
+- A caller-supplied `Tailscale-User-Login` sent through Serve does not change the authenticated identity.
+- Every card is compared with actual Headscale and NPM reachability.
+- NPM certificate/configuration and Headscale/policy backups have a tested restore path.
+
+The [TrueNAS Quickstart](../guides/truenas-scale.md) defines the canonical topology. The remaining sections use the local-source `make validate` workflow for deeper join evidence; they are advanced diagnostics rather than a prerequisite for importing the production Compose bundle. Tailnet HTTP over WireGuard prevents ordinary on-path LAN/router/ISP interception but does not remove endpoint, NPM, host, or control-plane compromise from scope.
 
 ## Generate the first report
 
@@ -110,27 +129,51 @@ Record opaque labels and outcomes—not passwords, API tokens, raw response bodi
 ### Candidate and upstreams
 
 - [ ] Velociportal version, Git revision, and clean/dirty source state recorded
-- [ ] Image digest recorded if testing a container image
-- [ ] Headscale version recorded
-- [ ] NPM version recorded
-- [ ] Exact trusted proxy source observed by the container recorded
-- [ ] Summary report retained with owner-only permissions
+- [ ] Immutable image tag and digest recorded
+- [ ] Compose interface/version recorded and confirmed as 2.30+ (TrueNAS, Dockge, Dokploy, or CLI)
+- [ ] Docker Engine version recorded and confirmed as 28.0+
+- [ ] Headscale, NPM, and Tailscale app versions recorded
+- [ ] `velociportal-upstreams` recorded with exact aliases `headscale.velociportal.internal` and `npm.velociportal.internal`
+- [ ] Runtime URLs recorded as the direct internal aliases; Velociportal runtime bypasses NPM
+- [ ] Headscale container port `8080` confirmed `None`/`Expose` only, with no host mapping on any port; every current or previous mapped host port was tested from the LAN
+- [ ] Production subnet, gateway, and trusted proxy `/32` recorded
+- [ ] Raw Velociportal port confirmed unreachable on the NAS LAN address
+- [ ] Base deployment confirmed to have no CA mount; any private-CA overlay recorded as an optional alternative
+- [ ] Summary report retained with owner-only permissions when generated
+
+### Pre-tailnet Headscale control and keys
+
+- [ ] External Headscale `server_url` is the trusted NPM HTTPS origin
+- [ ] Split-horizon/private DNS resolves it for intended local enrollment, with no public Headscale A/AAAA/CNAME record
+- [ ] The existing DNS-01 wildcard certificate avoids exact-host disclosure in certificate-transparency logs
+- [ ] A brand-new required client verifies that certificate before joining; no insecure flag or verification bypass used
+- [ ] NPM forwards to `http://headscale.velociportal.internal:8080`
+- [ ] NPM WebSocket support and HTTP upgrade preservation verified
+- [ ] NPM custom logs confirmed not to record `Authorization` or full request headers
+- [ ] HTTPS-only `headscale-ops status` succeeds through NPM
+- [ ] Operator and Velociportal runtime keys are distinct
+- [ ] One-time bootstrap key is expired
+- [ ] NPM database/configuration/certificate backup and restore evidence recorded
 
 ### Identity path
 
-- [ ] `user-a` visited through the final identity-aware proxy
-- [ ] `user-b` visited through the final identity-aware proxy
+- [ ] Policy explicitly allowed both users to reach the Serve node on TCP port `8081`
+- [ ] `user-a` visited through declarative tailnet HTTP Serve
+- [ ] `user-b` visited through declarative tailnet HTTP Serve
 - [ ] Their actual card sets were recorded as opaque service IDs
-- [ ] Caller-supplied `Tailscale-User-*` headers were stripped or overwritten by the proxy
-- [ ] A trusted-source request without `Tailscale-User-Login` returned `401`
-- [ ] A request from outside `TRUSTED_PROXY_CIDR`, even with a forged login header, returned `403`
+- [ ] Caller-supplied `Tailscale-User-*` headers were stripped or overwritten by Serve
+- [ ] Serve returned after restarting Velociportal, the Tailscale app, NPM, Headscale, and the NAS
+- [ ] A trusted-source request without `Tailscale-User-Login` returned `401` where that diagnostic route was deliberately constructed
+- [ ] A reachable request from outside `TRUSTED_PROXY_CIDR`, even with a forged login, returned `403` where such a diagnostic route existed
+- [ ] A LAN request to the raw loopback-published port failed to connect; network inaccessibility was not misreported as an application `403`
 - [ ] Same-host behavior was interpreted using the documented Docker-gateway trust limitation rather than assumed to be an untrusted-source test
 
 ### Join and links
 
 For every enabled NPM proxy host:
 
-- [ ] Classify `forward_host` as an IP, FQDN, short/Docker name, localhost, or other
+- [ ] Classify `forward_host` as a tailnet IP, routed LAN IP, FQDN, short/Docker name, localhost, or other
+- [ ] Confirm the destination is reachable through Headscale; for LAN IPs, record the advertised/approved route and client route acceptance
 - [ ] Record the supported selector kind that joined it, or mark it unmatched
 - [ ] Check every generated card's browser-facing scheme and hostname
 - [ ] Note records with multiple domains; only the first currently becomes a card
@@ -158,3 +201,5 @@ The first real exercise should end with one explicit decision:
 3. **Resolve an upstream blocker first** — for example NPM 2FA authentication, a changed API response shape, Grants-only policy, or an identity proxy that cannot establish trusted `Tailscale-User-*` headers.
 
 Do not add ambient DNS guessing or a mapping database until the real report and worksheet show which relationship is actually missing.
+
+No public support claim is warranted until the full control-path, internal-network, identity, LAN-negative, restart, backup/restore, join, link, and reachability acceptance passes. Router replacement should require restoring ordinary DNS and routing only; no CA or durable application state belongs on the router.

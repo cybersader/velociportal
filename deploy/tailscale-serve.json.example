@@ -1,0 +1,16 @@
+{
+  "TCP": {
+    "8081": {
+      "HTTP": true
+    }
+  },
+  "Web": {
+    "truenas.tail.home:8081": {
+      "Handlers": {
+        "/": {
+          "Proxy": "http://127.0.0.1:18080"
+        }
+      }
+    }
+  }
+}
