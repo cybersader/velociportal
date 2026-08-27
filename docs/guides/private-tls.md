@@ -1,6 +1,6 @@
 # Optional native Headscale TLS
 
-Native Headscale HTTPS with a private certificate authority remains a supported **alternative**, not the canonical TrueNAS path. The canonical path uses the operator's existing trusted NPM HTTPS certificate lifecycle for pre-tailnet Headscale control and direct internal HTTP for Velociportal runtime calls.
+Native Headscale HTTPS with a private certificate authority remains a supported **alternative**, not the canonical TrueNAS path. The canonical path uses the operator's existing trusted NPM HTTPS certificate lifecycle for pre-tailnet Headscale control and direct private Docker-alias HTTP for Velociportal runtime calls.
 
 Use this alternative only when the operator deliberately wants Headscale itself to terminate HTTPS and every required client can trust the private root before joining.
 

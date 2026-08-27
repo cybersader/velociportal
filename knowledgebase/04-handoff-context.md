@@ -4,11 +4,13 @@
 
 ## Current stage
 
-**Task 31 architecture is implemented in the working tree; live acceptance is pending.** Velociportal now accepts Headscale HTTP only for an exact local/internal allowlist and otherwise requires verified HTTPS. The production bundle creates `velociportal-upstreams`; canonical runtime URLs are `http://headscale.velociportal.internal:8080` and `http://npm.velociportal.internal:81`. The base bundle has no CA mount; `compose.private-ca.yaml` remains an optional verified-HTTPS overlay.
+**RC.1 failed the first live TrueNAS network-attachment gate; RC.2 corrects the released topology defect.** Velociportal accepts Headscale HTTP only for an exact local/internal allowlist and otherwise requires verified HTTPS. The production bundle creates the private, egress-capable bridge `velociportal-upstreams`; canonical runtime URLs remain `http://headscale.velociportal.internal:8080` and `http://npm.velociportal.internal:81`. The base bundle has no CA mount; `compose.private-ca.yaml` remains an optional verified-HTTPS overlay.
 
-Browser ingress is the existing host-network TrueNAS Tailscale app with declarative HTTP Serve on `:8081`, forwarding to `http://127.0.0.1:18080`. Existing NPM terminates the trusted HTTPS Headscale endpoint used by new clients and workstation `headscale-ops`, then proxies to Headscale over the internal network. Runtime Velociportal bypasses NPM. `headscale-ops` remains workstation-only and HTTPS-only.
+TrueNAS catalog renderer library 2.3.4 replaces an app's implicit default network whenever any UI-managed network is selected. RC.1 made the selected bridge `internal: true`, so Headscale lost outbound Docker DNS, failed its mandatory DERP-map fetch, and restart-looped. Removing the network entry restored `{"status":"pass"}`; NPM was not attached. RC.2 makes the bridge a normal user-defined network and gives Velociportal's fixed ingress bridge the preferred gateway priority. A normal bridge provides outbound NAT without publishing container ports to the LAN.
 
-No commit, published artifact, production deployment, or public support claim is implied. The one-time API-key bootstrap, separate operator/runtime keys, NPM control-proxy acceptance, node/policy setup, declarative Serve verification, two-identity card comparison, LAN-negative tests, and real Headscale reachability checks are still pending. The `forward_host` join remains unproven.
+Browser ingress remains the existing host-network TrueNAS Tailscale app with declarative HTTP Serve on `:8081`, forwarding to `http://127.0.0.1:18080`. Existing NPM terminates the trusted HTTPS Headscale endpoint used by new clients and workstation `headscale-ops`, then proxies to Headscale over the private bridge. Runtime Velociportal bypasses NPM. `headscale-ops` remains workstation-only and HTTPS-only.
+
+RC.1 artifacts remain preserved as rejected acceptance evidence. RC.2 publication and redeployment, the one-time API-key bootstrap, separate operator/runtime keys, NPM control-proxy acceptance, node/policy setup, declarative Serve verification, two-identity card comparison, LAN-negative tests, and real Headscale reachability checks are still pending. The `forward_host` join remains unproven.
 
 ## Locked direction
 
@@ -17,7 +19,7 @@ No commit, published artifact, production deployment, or public support claim is
 - Current inputs: Headscale policy + nodes and NPM proxy hosts.
 - Browser identity: only trusted `Tailscale-User-*` headers from Tailscale Serve.
 - Canonical browser ingress: tailnet HTTP `:8081` over WireGuard to loopback `127.0.0.1:18080`.
-- Canonical runtime upstreams: direct HTTP over `velociportal-upstreams` and exact Docker aliases.
+- Canonical runtime upstreams: direct HTTP over the private, egress-capable `velociportal-upstreams` bridge and exact Docker aliases.
 - Headscale outside the local HTTP allowlist: verified HTTPS only, with no redirects, environment proxies, or insecure verification.
 - Pre-tailnet Headscale control/API: trusted NPM HTTPS endpoint reached through split-horizon/private DNS with an existing DNS-01 wildcard certificate, no public Headscale DNS record or exact-host certificate-transparency disclosure, WebSocket/upgrade preservation, and explicit NPM trust/availability exposure.
 - Separate Headscale operator and Velociportal runtime keys.
@@ -39,7 +41,7 @@ No commit, published artifact, production deployment, or public support claim is
 - **No human source-tag inference:** neither `tagOwners` nor tags on owned nodes make a user a `tag:*` source.
 - **Portal:** embedded server-rendered HTML, escaped card content, HTTP/HTTPS scheme allowlist, responsive light/dark theme, NPM status dots, embedded htmx refresh.
 - **Guided CLI:** environment-file-backed `serve`; hidden-secret `setup`; one-time exact-source `setup observe-proxy`; redacted upstream/join `doctor`; strict `validate` reports with labeled identity comparisons and summary/private privacy modes; configuration-free `healthcheck`; strict shared env-value decoding; and cooperating-writer directory locks.
-- **Deployment:** non-root scratch image, read-only container, loopback-only host publication, binary-native Docker healthcheck, stable ingress bridge, named internal upstream network, exact Headscale/NPM aliases, and optional private-CA public-root overlay only.
+- **Deployment:** non-root scratch image, read-only container, loopback-only host publication, binary-native Docker healthcheck, stable preferred ingress bridge, named private upstream bridge with required egress, exact Headscale/NPM aliases, and optional private-CA public-root overlay only.
 
 ## Known limitations that must remain explicit
 
@@ -49,7 +51,7 @@ No commit, published artifact, production deployment, or public support claim is
 4. **NPM access lists unused.** The runtime does not fetch or use them for visibility.
 5. **Identity adapters absent.** Authentik/Authelia/`Remote-User`/`X-Webauth-*` are not accepted.
 6. **Host-loopback trust boundary.** Host processes or host-network containers that can reach loopback can share the Docker-gateway source identity trusted for Serve ingress.
-7. **Restricted HTTP is topology-dependent.** The hostname allowlist does not prove that the real Docker network is private or that Headscale port `8080` is not published elsewhere.
+7. **Restricted HTTP is topology-dependent.** The hostname allowlist does not prove that the real Docker bridge is private, that Headscale port `8080` is not published elsewhere, or that direct LAN routing is absent.
 8. **NPM control-proxy exposure.** NPM can observe Headscale control traffic and operator Bearer API keys and becomes required for new-client enrollment and workstation operations.
 9. **Headscale automatic HTTPS Serve is future work.** Track upstream issue #2527 and PR #3300; canonical tailnet HTTP Serve remains acceptable over WireGuard.
 10. **Endpoint/control-plane compromise remains in scope.** WireGuard prevents ordinary on-path LAN/router/ISP interception, not compromise of clients, TrueNAS, Tailscale/Headscale control components, NPM, or trusted host workloads.
@@ -57,16 +59,16 @@ No commit, published artifact, production deployment, or public support claim is
 
 ## Next work
 
-1. Back up TrueNAS app settings, Headscale data/policy, and NPM database/configuration/certificate state.
-2. Import the production Compose definition so `velociportal-upstreams` exists, then attach Headscale and NPM through TrueNAS UI network settings with the exact aliases.
-3. Set Headscale port `8080` to None/Expose only, configure its external `server_url` to the trusted NPM HTTPS hostname, and configure the NPM proxy with WebSocket/upgrade support and the existing automated trusted certificate.
-4. Verify that endpoint from a pre-tailnet client. If it is not trusted, stop; do not disable verification.
-5. Perform exactly one short-lived local API-key bootstrap, then use HTTPS-only `headscale-ops` to create separate operator and Velociportal runtime keys and expire the bootstrap key.
-6. Configure the real legacy ACL policy and at least two meaningfully different users/nodes.
-7. Configure declarative Tailscale HTTP Serve `:8081 -> http://127.0.0.1:18080` through the TrueNAS Tailscale app UI.
-8. Deploy Velociportal with the direct internal upstream URLs and dedicated runtime key.
-9. Complete the two-identity, header-replacement, LAN-negative, restart, join, card-link, and actual Headscale reachability worksheet.
-10. Only after that evidence exists, decide whether `forward_host` is retained and whether a public support claim is justified.
+1. Publish and anonymously verify immutable RC.2 from the corrected production bundle.
+2. Preserve the RC.1 failure record, remove only the stopped stateless RC.1 Custom App, and reinstall the digest-pinned RC.2 bundle so `velociportal-upstreams` is recreated with `Internal=false`.
+3. Attach Headscale first through the TrueNAS UI with the exact alias while retaining host port `30210`; verify outbound DNS, DERP retrieval, and `/health`, or remove only the network entry immediately.
+4. Attach NPM only after Headscale passes; verify its existing listeners, outbound HTTPS/DNS, certificate operations, and management/API health.
+5. Configure Headscale's external `server_url` to the trusted NPM HTTPS hostname and the NPM proxy with WebSocket/upgrade support and the existing automated trusted certificate.
+6. Verify that endpoint from a pre-tailnet client. If it is not trusted, stop; do not disable verification.
+7. Perform exactly one short-lived local API-key bootstrap, then use HTTPS-only `headscale-ops` to create separate operator and Velociportal runtime keys and expire the bootstrap key.
+8. Configure the real legacy ACL policy, at least two meaningfully different users/nodes, and declarative Tailscale HTTP Serve `:8081 -> http://127.0.0.1:18080`.
+9. Deploy Velociportal with the direct private-alias upstream URLs and dedicated runtime key, then remove Headscale host port `30210` only after both private and trusted HTTPS paths pass.
+10. Complete the two-identity, header-replacement, LAN-negative, restart, join, card-link, and actual Headscale reachability worksheet before any public support claim.
 
 ## Verification discipline
 

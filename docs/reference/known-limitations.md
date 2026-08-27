@@ -21,14 +21,15 @@ This page describes the current implementation and approved deployment boundary,
 ## Runtime upstream transport
 
 - **Headscale HTTP is narrowly allowlisted.** Configuration accepts HTTP only for exact local/internal host forms implemented by the validator. The canonical production value is `http://headscale.velociportal.internal:8080`. Other locations require verified HTTPS.
-- **The allowlist does not prove confinement.** It cannot prove that `velociportal-upstreams` exists, that the alias identifies the intended container, that port `8080` is not published elsewhere, or that untrusted containers cannot join the network. Those are deployment acceptance requirements.
+- **The allowlist does not prove confinement.** It cannot prove that `velociportal-upstreams` exists, that the alias identifies the intended container, that port `8080` is not published elsewhere, that direct routing is absent, or that untrusted containers cannot join the bridge. Those are deployment acceptance requirements.
 - **NPM HTTP is narrowly allowlisted and topology-dependent.** Canonical runtime NPM traffic uses `http://npm.velociportal.internal:81`; only that exact alias and same-host/loopback compatibility routes may use HTTP. Every other NPM location requires verified HTTPS. The hostname check still cannot prove the deployed route is private.
 - **Credentialed clients refuse redirects and environment proxies.** Both transports bound response headers/bodies. HTTPS uses normal verification and TLS 1.2 or newer. There is no insecure TLS mode.
+- **The private bridge is egress-capable by design.** TrueNAS catalog apps replace their implicit default network when any UI-managed network is selected, so Headscale and NPM require `velociportal-upstreams` to provide outbound NAT and Docker DNS. A normal user-defined bridge does not publish ports to the LAN, but host or privileged workloads remain within the deployment trust boundary.
 - **The base production stack has no CA mount.** The optional private-CA overlay mounts only a readable public root for verified-HTTPS alternatives. Never mount a CA private key or leaf private key.
 
 ## NPM Headscale control proxy
 
-- **NPM is a trust and availability boundary.** Existing NPM terminates the trusted Headscale HTTPS origin required by brand-new clients and HTTPS-only `headscale-ops`, then forwards to internal Headscale HTTP.
+- **NPM is a trust and availability boundary.** Existing NPM terminates the trusted Headscale HTTPS origin required by brand-new clients and HTTPS-only `headscale-ops`, then forwards to privately addressed Headscale HTTP.
 - **NPM can observe control traffic and operator Bearer API keys.** Keep operator and Velociportal runtime keys separate. Runtime Velociportal bypasses NPM.
 - **Protocol preservation requires live proof.** WebSocket and HTTP upgrade behavior must be enabled and tested against the real Headscale version.
 - **Logging posture requires live proof.** Custom NPM logs must not record `Authorization` or full request headers.
@@ -48,7 +49,7 @@ This page describes the current implementation and approved deployment boundary,
 
 ## Deployment and operations
 
-- **Production requires Docker Compose 2.30+ and Docker Engine 28+.** Raw env-file parsing and safe localhost publication depend on those versions.
+- **Production requires Docker Compose 2.33.1+ and Docker Engine 28+.** Raw env-file parsing, explicit network gateway priority, and safe localhost publication depend on those versions.
 - **Production always consults the registry.** `pull_policy: always` prevents silent reuse of a tagged local image, but operators must still record the resolved digest and never use `latest`.
 - **Production and repository projects must remain distinct.** Use a production project name other than the repository workflow's `velociportal` project.
 - **No source build or recurring NAS shell is canonical.** The one normal Headscale app-shell action is the first short-lived API-key bootstrap. Routine administration is workstation-driven through HTTPS-only `headscale-ops`.
@@ -56,6 +57,6 @@ This page describes the current implementation and approved deployment boundary,
 
 ## Validation status
 
-Automated tests and fixtures do not prove the real NPM control path, Docker confinement, certificate lifecycle, identity injection, restart recovery, backup restore, join correctness, links, or per-user reachability. Velociportal has not passed end-to-end TrueNAS acceptance.
+Automated tests and fixtures do not prove the real NPM control path, Docker confinement, certificate lifecycle, identity injection, restart recovery, backup restore, join correctness, links, or per-user reachability. RC.1 failed the first live TrueNAS network-attachment gate and was rolled back safely; RC.2 corrects that topology but has not yet passed end-to-end TrueNAS acceptance.
 
 No public support claim is warranted until at least two real identities, trusted pre-tailnet NPM HTTPS, separate keys, WebSocket/upgrade behavior, authorization-header logging posture, LAN-negative Headscale/Velociportal ports, restart persistence, backup/restore, every NPM join, every card link, and actual Headscale reachability have been checked. Use the [real-deployment worksheet](../getting-started/validation.md).

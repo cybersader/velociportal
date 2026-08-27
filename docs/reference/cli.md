@@ -36,7 +36,7 @@ Command exit codes are stable:
 - **`2`** — command-line usage error.
 
 !!! note "Environment-file behavior"
-    Environment files are parsed as configuration data. Velociportal does not execute shell interpolation, variable expansion, or command substitution, and file-backed commands do not merge missing values from the process environment. Compose 2.30+ loads the file in raw mode, then the binary applies the same strict unquoted, single-quoted, or Go-style double-quoted value grammar used by file-backed commands. Credentials containing `$`, `${...}`, quotes, spaces, `#`, or backslashes therefore reach runtime unchanged, while malformed quoting fails startup instead of becoming a different credential.
+    Environment files are parsed as configuration data. Velociportal does not execute shell interpolation, variable expansion, or command substitution, and file-backed commands do not merge missing values from the process environment. Compose 2.33.1+ loads the file in raw mode, then the binary applies the same strict unquoted, single-quoted, or Go-style double-quoted value grammar used by file-backed commands. Credentials containing `$`, `${...}`, quotes, spaces, `#`, or backslashes therefore reach runtime unchanged, while malformed quoting fails startup instead of becoming a different credential.
 
 ## Setup
 
@@ -164,7 +164,7 @@ Use the full [local-source and diagnostic workflow](../getting-started/setup.md)
 | `make run` | Run from source with `serve --env-file`; requires Go |
 | `make docker` | Build the local production-shaped scratch image |
 | `make docker-run` | Run the local image read-only with loopback-only publication |
-| `make production-compose-check` | Render and assert the one-service, always-pull, no-build, loopback, raw-env, fixed ingress, named internal upstream network, no base CA mount, optional CA overlay, healthcheck, and hardening shape |
+| `make production-compose-check` | Render and assert the one-service, always-pull, no-build, loopback, raw-env, fixed ingress, named private upstream bridge with explicit gateway priority, no base CA mount, optional CA overlay, healthcheck, and hardening shape |
 | `make logs` | Follow repository Compose logs |
 | `make down` | Stop the repository Compose deployment |
 | `make verify` | Run Go, contributor and production Compose, image metadata, and in-image CLI checks; requires Go, Python 3, and Docker Compose |

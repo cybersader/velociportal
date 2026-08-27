@@ -17,9 +17,9 @@ The `validate` command turns one live upstream snapshot into an explainable, pri
 
 For the production one-service bundle, record these manual results before using the source-based report tools below:
 
-- The selected Compose interface/version is 2.30+ and Docker Engine is 28.0+.
+- The selected Compose interface/version is 2.33.1+ and Docker Engine is 28.0+.
 - The immutable Velociportal image tag and digest, plus evidence that deployment pulled it rather than reusing a cached tag.
-- `velociportal-upstreams` exists and Headscale/NPM use the exact internal aliases.
+- `velociportal-upstreams` exists as a normal private bridge (`Internal=false`), Headscale/NPM use the exact private aliases, and both retain outbound DNS/HTTPS plus normal application health.
 - Headscale port `8080` and the raw Velociportal host port are unreachable through the NAS LAN address.
 - The external NPM Headscale endpoint resolves through split-horizon/private DNS, has no public Headscale address record or exact-host certificate-transparency disclosure, and verifies normally for a brand-new client and HTTPS-only `headscale-ops`.
 - NPM preserves Headscale WebSocket/upgrade behavior and does not log authorization headers.
@@ -130,13 +130,15 @@ Record opaque labels and outcomes—not passwords, API tokens, raw response bodi
 
 - [ ] Velociportal version, Git revision, and clean/dirty source state recorded
 - [ ] Immutable image tag and digest recorded
-- [ ] Compose interface/version recorded and confirmed as 2.30+ (TrueNAS, Dockge, Dokploy, or CLI)
+- [ ] Compose interface/version recorded and confirmed as 2.33.1+ (TrueNAS, Dockge, Dokploy, or CLI)
 - [ ] Docker Engine version recorded and confirmed as 28.0+
 - [ ] Headscale, NPM, and Tailscale app versions recorded
-- [ ] `velociportal-upstreams` recorded with exact aliases `headscale.velociportal.internal` and `npm.velociportal.internal`
-- [ ] Runtime URLs recorded as the direct internal aliases; Velociportal runtime bypasses NPM
+- [ ] `velociportal-upstreams` recorded as `Internal=false` with exact aliases `headscale.velociportal.internal` and `npm.velociportal.internal`
+- [ ] Headscale retained outbound Docker DNS, DERP retrieval, and `/health` after attachment
+- [ ] NPM retained its existing listeners, outbound DNS/HTTPS, certificate operations, and management/API health after attachment
+- [ ] Runtime URLs recorded as the direct private aliases; Velociportal runtime bypasses NPM
 - [ ] Headscale container port `8080` confirmed `None`/`Expose` only, with no host mapping on any port; every current or previous mapped host port was tested from the LAN
-- [ ] Production subnet, gateway, and trusted proxy `/32` recorded
+- [ ] Production ingress subnet, gateway, trusted proxy `/32`, and Velociportal preferred gateway priority recorded
 - [ ] Raw Velociportal port confirmed unreachable on the NAS LAN address
 - [ ] Base deployment confirmed to have no CA mount; any private-CA overlay recorded as an optional alternative
 - [ ] Summary report retained with owner-only permissions when generated
@@ -202,4 +204,4 @@ The first real exercise should end with one explicit decision:
 
 Do not add ambient DNS guessing or a mapping database until the real report and worksheet show which relationship is actually missing.
 
-No public support claim is warranted until the full control-path, internal-network, identity, LAN-negative, restart, backup/restore, join, link, and reachability acceptance passes. Router replacement should require restoring ordinary DNS and routing only; no CA or durable application state belongs on the router.
+No public support claim is warranted until the full control-path, private-bridge, identity, LAN-negative, restart, backup/restore, join, link, and reachability acceptance passes. Router replacement should require restoring ordinary DNS and routing only; no CA or durable application state belongs on the router.

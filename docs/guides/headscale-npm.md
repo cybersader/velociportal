@@ -10,10 +10,10 @@ This is the only currently implemented adapter pair. Velociportal reads Headscal
 ```mermaid
 flowchart LR
     Client["Brand-new client"] -->|"trusted HTTPS"| NPMControl["NPM control proxy"]
-    NPMControl -->|"internal HTTP + upgrades"| HS["Headscale"]
+    NPMControl -->|"private HTTP + upgrades"| HS["Headscale"]
     Ops["headscale-ops"] -->|"HTTPS + operator key"| NPMControl
-    HS -->|"internal HTTP + runtime key"| VP["Velociportal"]
-    NPMAPI["NPM management API"] -->|"internal HTTP"| VP
+    HS -->|"private HTTP + runtime key"| VP["Velociportal"]
+    NPMAPI["NPM management API"] -->|"private HTTP"| VP
     Human["Tailnet human"] -->|"WireGuard"| Serve["Tailscale HTTP Serve"]
     Serve -->|"host loopback"| VP
     VP --> Browser["Filtered portal"]
@@ -24,7 +24,7 @@ flowchart LR
 2. **Velociportal runtime reads:** direct HTTP over the private named Docker network; runtime bypasses NPM.
 3. **Portal browser ingress:** Tailscale HTTP Serve over WireGuard; NPM does not assert portal identity.
 
-## Named internal network
+## Named private bridge with egress
 
 The production bundle creates:
 
@@ -39,22 +39,22 @@ Attach existing apps through TrueNAS-managed network settings:
 | Headscale | `headscale.velociportal.internal` | `8080` |
 | NPM | `npm.velociportal.internal` | `81` |
 
-Headscale port `8080` must use `None`/`Expose` only and must never be published on the LAN. Untrusted containers must not join this network.
+TrueNAS catalog apps render a selected UI-managed network as their only service network. The bridge therefore provides outbound NAT and Docker DNS as well as private alias traffic; a normal user-defined bridge does not publish container ports to the LAN. Attach Headscale first and verify DERP retrieval, external DNS, and `/health`, then attach NPM and verify its existing listeners, outbound HTTPS, and certificate operations. Headscale port `8080` must use `None`/`Expose` only in the accepted final topology and must never remain published on the LAN. Untrusted containers must not join this bridge.
 
 ## Runtime configuration
 
 | Variable | Canonical value | Notes |
 |---|---|---|
-| `HEADSCALE_URL` | `http://headscale.velociportal.internal:8080` | Exact internal alias; base URL without `/api/v1` |
+| `HEADSCALE_URL` | `http://headscale.velociportal.internal:8080` | Exact private Docker alias; base URL without `/api/v1` |
 | `HEADSCALE_API_KEY` | `...` | Dedicated Velociportal runtime key; unscoped administrator credential |
-| `NPM_URL` | `http://npm.velociportal.internal:81` | Exact internal alias |
+| `NPM_URL` | `http://npm.velociportal.internal:81` | Exact private Docker alias |
 | `NPM_EMAIL` | `velociportal@example.com` | Dedicated account that can list proxy hosts |
 | `NPM_PASSWORD` | `...` | Stored as a secret |
 | `LISTEN_ADDR` | `0.0.0.0:8080` | Container listener; host publication remains loopback-only |
 | `POLL_INTERVAL` | `30s` | Go duration from `5s` through `24h` |
 | `TRUSTED_PROXY_CIDR` | `<ingress-gateway>/32` | Exact immediate source for Tailscale Serve ingress |
 
-Headscale HTTP is accepted only for the implementation's exact local/internal allowlist. All other Headscale locations require verified HTTPS. The allowlist does not prove the deployed route is private; acceptance must prove network attachment, exact aliases, no LAN publication, and no untrusted network members.
+Headscale HTTP is accepted only for the implementation's exact local/internal allowlist. All other Headscale locations require verified HTTPS. The allowlist does not prove the deployed route is private; acceptance must prove network attachment, retained upstream egress, exact aliases, no LAN publication or direct routing, and no untrusted bridge members.
 
 Both credentialed clients ignore environment proxy variables, refuse redirects, and bound response headers and bodies. HTTPS uses normal certificate verification with TLS 1.2 or newer. There is no insecure TLS mode.
 

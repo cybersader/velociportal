@@ -30,7 +30,7 @@ After health succeeds, use `make validate` for join evidence and complete the re
 
 You need:
 
-- A local Git checkout, GNU Make, Go 1.22+, Docker Engine **28.0+**, and Docker Compose **2.30+**.
+- A local Git checkout, GNU Make, Go 1.22+, Docker Engine **28.0+**, and Docker Compose **2.33.1+**.
 - Reachable Headscale and NPM endpoints from the container network used by this local workflow.
 - A trusted Tailscale Serve or other supported proxy path that strips caller-supplied identity headers and injects `Tailscale-User-Login`.
 - A private path from that identity source to the loopback-published application port.
@@ -44,7 +44,7 @@ NPM_URL=http://npm.velociportal.internal:81
 
 Those aliases work only when the relevant containers are attached to `velociportal-upstreams`. A local source checkout may instead use verified HTTPS for Headscale and NPM endpoints reachable from its own Compose network.
 
-Headscale and NPM HTTP are accepted only for their exact canonical internal aliases or same-host/loopback compatibility routes. Every other location requires verified HTTPS.
+Headscale and NPM HTTP are accepted only for their exact canonical private Docker aliases or same-host/loopback compatibility routes. Every other location requires verified HTTPS.
 
 !!! danger "Do not start by exposing port 8080"
     The repository Compose deployment publishes `127.0.0.1:8080:8080`. Require Docker Engine 28+ and keep that loopback boundary. A raw LAN path lets callers attempt to forge identity headers.

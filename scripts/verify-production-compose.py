@@ -8,12 +8,13 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import tempfile
 
 
 ROOT = Path(__file__).resolve().parents[1]
 COMPOSE_FILE = Path("deploy/compose.yaml")
 PRIVATE_CA_COMPOSE_FILE = Path("deploy/compose.private-ca.yaml")
-INCLUDE_FIXTURE = Path("scripts/fixtures/production-include.yaml")
+RUNTIME_ENV_EXAMPLE = Path("deploy/velociportal.env.example")
 STACK_ENV_FILE = Path("deploy/stack.env.example")
 VERIFY_IMAGE = "ghcr.io/cybersader/velociportal:v0.0.0-verify"
 VERIFY_CA_FILE = ROOT / ".env.example"
@@ -63,13 +64,27 @@ def only_service(model: dict) -> dict:
     return service
 
 
-def validate_service_networks(service: dict) -> None:
+def validate_service_networks(service: dict, *, require_explicit_upstreams_priority: bool) -> None:
     attachments = service.get("networks")
     require(isinstance(attachments, dict), "service network attachments must be explicit")
     require(
         len(attachments) == 2 and set(attachments) == {"default", "upstreams"},
         "service must attach only to default ingress and upstreams networks",
     )
+    require(
+        attachments["default"].get("gw_priority") == 1,
+        "default ingress network must remain the preferred gateway",
+    )
+    if require_explicit_upstreams_priority:
+        require(
+            attachments["upstreams"].get("gw_priority") == 0 and "gw_priority" in attachments["upstreams"],
+            "upstreams network gateway priority must remain explicit",
+        )
+    else:
+        require(
+            attachments["upstreams"].get("gw_priority", 0) == 0,
+            "rendered upstreams network gateway priority changed unexpectedly",
+        )
 
 
 def validate_raw_networks(model: dict) -> None:
@@ -93,7 +108,10 @@ def validate_raw_networks(model: dict) -> None:
 
     upstreams = networks["upstreams"]
     require(upstreams.get("name") == "velociportal-upstreams", "upstreams network must have a stable Docker name")
-    require(upstreams.get("internal") is True, "upstreams network must remain internal")
+    require(
+        upstreams.get("internal") in (None, False),
+        "upstreams network must preserve Headscale and NPM egress",
+    )
 
 
 def validate_rendered_networks(model: dict) -> None:
@@ -112,7 +130,10 @@ def validate_rendered_networks(model: dict) -> None:
 
     upstreams = networks["upstreams"]
     require(upstreams.get("name") == "velociportal-upstreams", "rendered upstreams network name changed unexpectedly")
-    require(upstreams.get("internal") is True, "rendered upstreams network must remain internal")
+    require(
+        upstreams.get("internal") in (None, False),
+        "rendered upstreams network must preserve Headscale and NPM egress",
+    )
 
 
 def validate_raw_ca_mount(service: dict) -> None:
@@ -185,7 +206,7 @@ def validate_raw_model(model: dict, *, expect_private_ca: bool) -> None:
         "raw application port must remain 127.0.0.1:18080:8080",
     )
     require("extra_hosts" not in service, "production service must not depend on host gateway aliases")
-    validate_service_networks(service)
+    validate_service_networks(service, require_explicit_upstreams_priority=True)
 
     env_files = service.get("env_file")
     require(isinstance(env_files, list) and len(env_files) == 1, "service must use exactly one application env file")
@@ -230,7 +251,7 @@ def validate_rendered_model(model: dict, *, expect_private_ca: bool) -> None:
         "rendered service must enable no-new-privileges",
     )
     require("extra_hosts" not in service, "rendered service must not depend on host gateway aliases")
-    validate_service_networks(service)
+    validate_service_networks(service, require_explicit_upstreams_priority=False)
 
     ports = service.get("ports")
     require(isinstance(ports, list) and len(ports) == 1, "rendered service must expose exactly one port")
@@ -306,6 +327,59 @@ def verification_environment() -> dict[str, str]:
     return environment
 
 
+def short_include_model() -> dict:
+    with tempfile.TemporaryDirectory(prefix="velociportal-include-") as temporary_directory:
+        temporary_root = Path(temporary_directory)
+        bundle_directory = temporary_root / "bundle"
+        bundle_directory.mkdir()
+
+        (bundle_directory / "compose.yaml").write_text(
+            (ROOT / COMPOSE_FILE).read_text(encoding="utf-8"),
+            encoding="utf-8",
+        )
+        (bundle_directory / "velociportal.env").write_text(
+            (ROOT / RUNTIME_ENV_EXAMPLE).read_text(encoding="utf-8"),
+            encoding="utf-8",
+        )
+        (bundle_directory / ".env").write_text(
+            "\n".join(
+                (
+                    f"VELOCIPORTAL_IMAGE={VERIFY_IMAGE}",
+                    "VELOCIPORTAL_ENV_FILE=./velociportal.env",
+                    "VELOCIPORTAL_SUBNET=172.31.255.0/24",
+                    "VELOCIPORTAL_GATEWAY=172.31.255.1",
+                    "VELOCIPORTAL_TRUSTED_PROXY_CIDR=172.31.255.1/32",
+                    "",
+                )
+            ),
+            encoding="utf-8",
+        )
+
+        include_wrapper = temporary_root / "truenas-install.yaml"
+        include_wrapper.write_text(
+            "include:\n"
+            f"  - {json.dumps(str(bundle_directory / 'compose.yaml'))}\n"
+            "services: {}\n",
+            encoding="utf-8",
+        )
+
+        include_environment = os.environ.copy()
+        for name in (
+            "COMPOSE_PROJECT_NAME",
+            "VELOCIPORTAL_IMAGE",
+            "VELOCIPORTAL_ENV_FILE",
+            "VELOCIPORTAL_SUBNET",
+            "VELOCIPORTAL_GATEWAY",
+            "VELOCIPORTAL_TRUSTED_PROXY_CIDR",
+        ):
+            include_environment.pop(name, None)
+
+        return compose_json(
+            ["--project-name", "velociportal-production", "-f", str(include_wrapper), "config"],
+            include_environment,
+        )
+
+
 def main() -> int:
     base_environment = verification_environment()
 
@@ -315,7 +389,7 @@ def main() -> int:
     rendered_base = compose_json(rendered_config_arguments(COMPOSE_FILE), base_environment)
     validate_rendered_model(rendered_base, expect_private_ca=False)
 
-    included_base = compose_json(["-f", str(INCLUDE_FIXTURE), "config"], base_environment)
+    included_base = short_include_model()
     validate_rendered_model(included_base, expect_private_ca=False)
 
     raw_private_ca = compose_json(
