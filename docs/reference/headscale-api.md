@@ -31,9 +31,12 @@ Node tags are **not** promoted into human source identities.
 The canonical production runtime path is direct HTTP over the private named Docker network:
 
 ```text
+CONTROL_PLANE=headscale
 HEADSCALE_URL=http://headscale.velociportal.internal:8080
 HEADSCALE_API_KEY=...
 ```
+
+New files must set `CONTROL_PLANE=headscale` explicitly. Existing v0.2 files without the selector default to Headscale with a deprecation warning; v0.3 will require explicit selection.
 
 Configuration accepts Headscale HTTP only for the implementation's exact local/internal allowlist. Other hostnames and addresses require verified HTTPS. The URL is the Headscale base URL without `/api/v1`, a query, or a fragment.
 

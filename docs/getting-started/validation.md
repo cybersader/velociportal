@@ -1,6 +1,6 @@
 # Validate a real deployment
 
-Velociportal's automated tests prove its supported parser and matcher behavior. They do **not** prove that your real Headscale policy, NPM `forward_host` values, and identity-proxy route describe the same services.
+Velociportal's automated tests prove its supported parser and matcher behavior. They do **not** prove that your selected control plane, NPM `forward_host` values, and identity-proxy route describe the same services. Headscale is the supported implementation path; Tailscale SaaS remains a labeled preview.
 
 The `validate` command turns one live upstream snapshot into an explainable, privacy-controlled report. It compares at least two labeled identities and shows why supported ACL destinations did—or did not—join to NPM proxy hosts.
 
@@ -11,7 +11,7 @@ The `validate` command turns one live upstream snapshot into an explainable, pri
 </div>
 
 !!! warning "Visibility evidence, not authorization proof"
-    The report evaluates Velociportal's supported legacy ACL subset. It cannot impersonate a human tailnet identity, prove that Tailscale Serve injected a verified login, or establish that a visible service is reachable. Headscale, Serve, NPM, and the backend remain the enforcement boundaries.
+    The report evaluates `legacy_acl_visibility_v1`. It cannot impersonate a human tailnet identity, prove that Tailscale Serve injected a verified login, or establish that a visible service is reachable. The selected control plane, Serve, NPM, and the backend remain the enforcement boundaries.
 
 ## Quickstart acceptance comes first
 
@@ -19,22 +19,23 @@ For the production one-service bundle, record these manual results before using 
 
 - The selected Compose interface/version is 2.33.1+ and Docker Engine is 28.0+.
 - The immutable Velociportal image tag and digest, plus evidence that deployment pulled it rather than reusing a cached tag.
-- `velociportal-upstreams` exists as a normal private bridge (`Internal=false`), Headscale/NPM use the exact private aliases, and both retain outbound DNS/HTTPS plus normal application health.
-- Headscale port `8080` and the raw Velociportal host port are unreachable through the NAS LAN address.
-- The external NPM Headscale endpoint resolves through split-horizon/private DNS, has no public Headscale address record or exact-host certificate-transparency disclosure, and verifies normally for a brand-new client and HTTPS-only `headscale-ops`.
-- NPM preserves Headscale WebSocket/upgrade behavior and does not log authorization headers.
-- Separate operator and Velociportal runtime keys are active and the bootstrap key is expired.
-- Tailnet HTTP Serve returns after restarting Velociportal, Tailscale, NPM, Headscale, and the NAS.
+- `CONTROL_PLANE` is explicit and the schema-v2 report records the expected provider, `legacy_acl_visibility_v1`, support label, and `selection: explicit`.
+- `velociportal-upstreams` exists as a normal private bridge (`Internal=false`); NPM uses its exact alias. Headscale also uses its exact alias only in Headscale mode.
+- The raw Velociportal host port is unreachable through the NAS LAN address. In Headscale mode, every current or previous Headscale host publication is also unreachable.
+- In Headscale mode, the external NPM endpoint, WebSocket/upgrade behavior, authorization-header logging posture, separate keys, and expired bootstrap key all pass.
+- In Tailscale mode, the dedicated OAuth client has exactly the four documented scopes; live policy/users/devices reads, token refresh, revocation, replacement, and credential redaction pass.
+- Tailnet HTTP Serve returns after restarting Velociportal, Tailscale, NPM, the selected local control-plane components, and the NAS.
 - Two real human identities receive intentionally different card sets.
 - A caller-supplied `Tailscale-User-Login` sent through Serve does not change the authenticated identity.
-- Every card is compared with actual Headscale and NPM reachability.
+- Every card is compared with actual selected-control-plane and NPM reachability.
+- Tailscale preview acceptance proves unsupported Grants, posture, IP-set, and service policies fail closed.
 - NPM certificate/configuration and Headscale/policy backups have a tested restore path.
 
 The [TrueNAS Quickstart](../guides/truenas-scale.md) defines the canonical topology. The remaining sections use the local-source `make validate` workflow for deeper join evidence; they are advanced diagnostics rather than a prerequisite for importing the production Compose bundle. Tailnet HTTP over WireGuard prevents ordinary on-path LAN/router/ISP interception but does not remove endpoint, NPM, host, or control-plane compromise from scope.
 
 ## Generate the first report
 
-Choose two opaque labels for real identities with intentionally different Headscale policy membership. Read the logins into temporary shell variables so they are not written literally into shell history:
+Choose two opaque labels for real identities with intentionally different selected-control-plane policy membership. Read the logins into temporary shell variables so they are not written literally into shell history:
 
 ```bash
 read -r -s -p 'Login for user-a: ' VP_USER_A; printf '\n'
@@ -122,6 +123,21 @@ unset VP_USER_A VP_USER_B
 
 The file mode is controlled by your shell's `umask`. A dirty or unknown build deliberately produces `review_required`; tie evidence to a clean revision before treating it as source-traceable. Record the tested image digest separately because source metadata alone does not make the container byte-for-byte reproducible.
 
+Schema v2 adds this non-sensitive metadata:
+
+```json
+{
+  "control_plane": {
+    "provider": "headscale",
+    "policy_mode": "legacy_acl_visibility_v1",
+    "support_level": "supported",
+    "selection": "explicit"
+  }
+}
+```
+
+Tailscale reports use `provider: "tailscale"` and `support_level: "preview"`. Existing v0.2 Headscale configuration without `CONTROL_PLANE` records `selection: "implicit"`, emits a deprecation warning, and adds a non-failing finding; set the selector explicitly before retaining acceptance evidence.
+
 ## Complete the real validation worksheet
 
 Record opaque labels and outcomes—not passwords, API tokens, raw response bodies, or personal profile data.
@@ -132,8 +148,9 @@ Record opaque labels and outcomes—not passwords, API tokens, raw response bodi
 - [ ] Immutable image tag and digest recorded
 - [ ] Compose interface/version recorded and confirmed as 2.33.1+ (TrueNAS, Dockge, Dokploy, or CLI)
 - [ ] Docker Engine version recorded and confirmed as 28.0+
-- [ ] Headscale, NPM, and Tailscale app versions recorded
-- [ ] `velociportal-upstreams` recorded as `Internal=false` with exact aliases `headscale.velociportal.internal` and `npm.velociportal.internal`
+- [ ] Selected provider, provider/runtime versions, NPM version, and Tailscale app version recorded
+- [ ] Schema-v2 `provider`, `policy_mode`, `support_level`, and explicit selection recorded
+- [ ] `velociportal-upstreams` recorded as `Internal=false` with `npm.velociportal.internal`; Headscale alias recorded only for Headscale mode
 - [ ] Headscale retained outbound Docker DNS, DERP retrieval, and `/health` after attachment
 - [ ] NPM retained its existing listeners, outbound DNS/HTTPS, certificate operations, and management/API health after attachment
 - [ ] Runtime URLs recorded as the direct private aliases; Velociportal runtime bypasses NPM
@@ -156,6 +173,23 @@ Record opaque labels and outcomes—not passwords, API tokens, raw response bodi
 - [ ] Operator and Velociportal runtime keys are distinct
 - [ ] One-time bootstrap key is expired
 - [ ] NPM database/configuration/certificate backup and restore evidence recorded
+
+### Tailscale SaaS OAuth and policy preview
+
+Skip this section in Headscale mode.
+
+- [ ] Dedicated OAuth client ID recorded privately; no access token stored in configuration
+- [ ] Exact scopes recorded: `policy_file:read`, `devices:posture_attributes:read`, `devices:core:read`, `users:read`
+- [ ] Fixed origin `https://api.tailscale.com/api/v2` and `-` tailnet alias confirmed
+- [ ] Policy, users, and devices reads succeed with the deployed credential
+- [ ] Access-token refresh observed beyond the normal one-hour lifetime
+- [ ] Revocation fails closed and replacement credentials recover without restart-only assumptions
+- [ ] Doctor/errors contain no client ID, secret, rejected token, or replacement token
+- [ ] Two exact `loginName` values map unambiguously through real device owner references
+- [ ] Duplicate, blank, ambiguous, unresolved, paginated, or partial fixture cases remain fail-closed
+- [ ] Non-empty Grants, posture, IP-set, and service-selector policies fail the complete refresh
+- [ ] Cold-start failure, stale-snapshot retention, and recovery are recorded
+- [ ] Tailscale support remains labeled preview in retained evidence
 
 ### Identity path
 
@@ -184,21 +218,21 @@ For every enabled NPM proxy host:
 
 For representative visible **and hidden** service pairs, keep these observations separate:
 
-| Label | Service ID | Predicted visible | Headscale reachable | NPM frontend reachable | Notes |
+| Label | Service ID | Predicted visible | Control-plane reachable | NPM frontend reachable | Notes |
 |---|---|---:|---:|---:|---|
 | `user-a` | `service-___` |  |  |  |  |
 | `user-b` | `service-___` |  |  |  |  |
 
 Investigate both mismatch directions:
 
-- **visible but not Headscale-reachable** — possible ignored port/protocol, join, or infrastructure mismatch;
-- **hidden but Headscale-reachable** — possible unsupported policy construct, identity mismatch, or incomplete join.
+- **visible but not control-plane-reachable** — possible ignored port/protocol, join, or infrastructure mismatch;
+- **hidden but control-plane-reachable** — possible unsupported policy construct, identity mismatch, or incomplete join.
 
 ## Decide the next engineering step
 
 The first real exercise should end with one explicit decision:
 
-1. **Retain `forward_host`** — real values consistently match supported Headscale destination forms.
+1. **Retain `forward_host`** — real values consistently match supported selected-control-plane destination forms.
 2. **Replace the join in a follow-up sprint** — real NPM values are systematically Docker names or another incompatible form.
 3. **Resolve an upstream blocker first** — for example NPM 2FA authentication, a changed API response shape, Grants-only policy, or an identity proxy that cannot establish trusted `Tailscale-User-*` headers.
 

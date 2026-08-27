@@ -28,6 +28,7 @@ func TestRunSetupCommandCreatesValidatedLocalConfiguration(t *testing.T) {
 	directory := t.TempDir()
 	path := filepath.Join(directory, "velociportal.env")
 	stdin := strings.NewReader(strings.Join([]string{
+		"",
 		"https://headscale.example.com/control/",
 		"http://npm.velociportal.internal:81/",
 		"portal@example.com",
@@ -53,6 +54,7 @@ func TestRunSetupCommandCreatesValidatedLocalConfiguration(t *testing.T) {
 		t.Fatalf("readEnvFile() error = %v", err)
 	}
 	want := map[string]string{
+		"CONTROL_PLANE":      "headscale",
 		"HEADSCALE_URL":      "https://headscale.example.com/control",
 		"HEADSCALE_API_KEY":  "headscale-secret-key",
 		"NPM_URL":            "http://npm.velociportal.internal:81",
@@ -106,6 +108,7 @@ func TestRunSetupCommandCreatesValidatedLocalConfiguration(t *testing.T) {
 func TestRunSetupCommandWarnsForAcceptedHeadscaleHTTPWithoutLeakingRouteOrSecrets(t *testing.T) {
 	path := filepath.Join(t.TempDir(), ".env")
 	stdin := strings.NewReader(strings.Join([]string{
+		"",
 		"http://headscale.velociportal.internal:8080/control/",
 		"http://npm.velociportal.internal:81/",
 		"portal@example.com",
@@ -152,6 +155,7 @@ func TestRunSetupCommandPrefillsAndPreservesExistingValuesAndUnknownKeys(t *test
 	directory := t.TempDir()
 	path := filepath.Join(directory, ".env")
 	initial := map[string]string{
+		"CONTROL_PLANE":          "headscale",
 		"HEADSCALE_URL":          "https://headscale.example.com",
 		"HEADSCALE_API_KEY":      "existing-headscale-secret",
 		"NPM_URL":                "https://npm.example.com",
@@ -170,7 +174,7 @@ func TestRunSetupCommandPrefillsAndPreservesExistingValuesAndUnknownKeys(t *test
 
 	code := runSetupCommandWithDependencies(
 		[]string{"--env-file", path},
-		strings.NewReader("\n\n\n\n\n"),
+		strings.NewReader("\n\n\n\n\n\n"),
 		&stdout,
 		&stderr,
 		setupCommandDependencies{readSecret: secrets.read},
@@ -203,6 +207,7 @@ func TestRunSetupCommandValidatesEachAnswerImmediatelyWithoutLeakingRejectedSecr
 	directory := t.TempDir()
 	path := filepath.Join(directory, ".env")
 	stdin := strings.NewReader(strings.Join([]string{
+		"",
 		"ftp://headscale.example.com",
 		"http://headscale.example.com",
 		"https://headscale.example.com/",
@@ -262,7 +267,7 @@ func TestRunSetupCommandRefusesVisibleSecretInputOnNonTTY(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := runSetupCommand(
 		[]string{"--env-file", path},
-		strings.NewReader("https://headscale.example.com\nvisible-secret-that-must-not-be-read\n"),
+		strings.NewReader("\nhttps://headscale.example.com\nvisible-secret-that-must-not-be-read\n"),
 		&stdout,
 		&stderr,
 	)
@@ -340,7 +345,7 @@ func TestRunSetupCommandRejectsInvalidExistingTrustedProxyWithoutReplacingFile(t
 
 	code := runSetupCommandWithDependencies(
 		[]string{"--env-file", path},
-		strings.NewReader("\n\n\n\n\n"),
+		strings.NewReader("\n\n\n\n\n\n"),
 		&stdout,
 		&stderr,
 		setupCommandDependencies{readSecret: secrets.read},
@@ -357,6 +362,142 @@ func TestRunSetupCommandRejectsInvalidExistingTrustedProxyWithoutReplacingFile(t
 	}
 	if !bytes.Equal(before, after) {
 		t.Fatalf("invalid existing file was replaced: before=%q after=%q", before, after)
+	}
+}
+
+func TestRunSetupCommandCreatesTailscalePreviewConfiguration(t *testing.T) {
+	path := filepath.Join(t.TempDir(), ".env")
+	stdin := strings.NewReader(strings.Join([]string{
+		"tailscale",
+		"oauth-client-id",
+		"https://npm.example.com",
+		"portal@example.com",
+		"127.0.0.1:9090",
+		"45s",
+	}, "\n") + "\n")
+	secrets := &secretQueue{values: []string{"oauth-client-secret", "npm-secret"}}
+	var stdout, stderr bytes.Buffer
+
+	code := runSetupCommandWithDependencies(
+		[]string{"--env-file", path},
+		stdin,
+		&stdout,
+		&stderr,
+		setupCommandDependencies{readSecret: secrets.read},
+	)
+	if code != 0 {
+		t.Fatalf("exit code = %d, stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+	values, err := readEnvFile(path)
+	if err != nil {
+		t.Fatalf("readEnvFile() error = %v", err)
+	}
+	if values["CONTROL_PLANE"] != "tailscale" || values["TAILSCALE_OAUTH_CLIENT_ID"] != "oauth-client-id" || values["TAILSCALE_OAUTH_CLIENT_SECRET"] != "oauth-client-secret" {
+		t.Fatalf("Tailscale values = %#v", values)
+	}
+	for _, key := range headscaleRequiredConfigKeys {
+		if _, ok := values[key]; ok {
+			t.Fatalf("Tailscale setup retained inactive key %s", key)
+		}
+	}
+	if strings.Contains(stdout.String()+stderr.String(), "oauth-client-id") || strings.Contains(stdout.String()+stderr.String(), "oauth-client-secret") {
+		t.Fatalf("setup output exposed OAuth credential material: stdout=%q stderr=%q", stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "tailscale=preview") {
+		t.Fatalf("setup output did not label Tailscale preview: %q", stdout.String())
+	}
+}
+
+func TestRunSetupCommandProviderSwitchConfirmsRemovalAndPreservesUnknownKeys(t *testing.T) {
+	path := filepath.Join(t.TempDir(), ".env")
+	initial := validConfigValues()
+	initial["LISTEN_ADDR"] = "127.0.0.1:8080"
+	initial["POLL_INTERVAL"] = "30s"
+	initial["UNKNOWN_KEY"] = "preserve-me"
+	if err := writeEnvFile(path, initial); err != nil {
+		t.Fatalf("writeEnvFile() error = %v", err)
+	}
+	stdin := strings.NewReader(strings.Join([]string{
+		"tailscale",
+		"yes",
+		"oauth-client-id",
+		"",
+		"",
+		"",
+		"",
+	}, "\n") + "\n")
+	secrets := &secretQueue{values: []string{"oauth-client-secret", ""}}
+	var stdout, stderr bytes.Buffer
+
+	code := runSetupCommandWithDependencies(
+		[]string{"--env-file", path},
+		stdin,
+		&stdout,
+		&stderr,
+		setupCommandDependencies{readSecret: secrets.read},
+	)
+	if code != 0 {
+		t.Fatalf("exit code = %d, stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+	values, err := readEnvFile(path)
+	if err != nil {
+		t.Fatalf("readEnvFile() error = %v", err)
+	}
+	if values["CONTROL_PLANE"] != "tailscale" || values["UNKNOWN_KEY"] != "preserve-me" {
+		t.Fatalf("switched values = %#v", values)
+	}
+	for _, key := range headscaleRequiredConfigKeys {
+		if _, ok := values[key]; ok {
+			t.Fatalf("confirmed switch retained inactive key %s", key)
+		}
+	}
+	for _, key := range headscaleRequiredConfigKeys {
+		if !strings.Contains(stdout.String(), key) {
+			t.Errorf("switch confirmation did not list %s: %q", key, stdout.String())
+		}
+	}
+}
+
+func TestRunSetupCommandProviderSwitchRefusalAndAbortAreAtomic(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		stdin string
+	}{
+		{name: "refused", stdin: "tailscale\nno\n"},
+		{name: "aborted", stdin: "tailscale\n"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), ".env")
+			initial := validConfigValues()
+			initial["LISTEN_ADDR"] = "127.0.0.1:8080"
+			initial["POLL_INTERVAL"] = "30s"
+			initial["UNKNOWN_KEY"] = "preserve-me"
+			if err := writeEnvFile(path, initial); err != nil {
+				t.Fatalf("writeEnvFile() error = %v", err)
+			}
+			before, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatalf("ReadFile() error = %v", err)
+			}
+			var stdout, stderr bytes.Buffer
+			code := runSetupCommandWithDependencies(
+				[]string{"--env-file", path},
+				strings.NewReader(test.stdin),
+				&stdout,
+				&stderr,
+				setupCommandDependencies{readSecret: (&secretQueue{}).read},
+			)
+			if code != 1 {
+				t.Fatalf("exit code = %d, stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+			}
+			after, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatalf("ReadFile(after) error = %v", err)
+			}
+			if !bytes.Equal(before, after) {
+				t.Fatalf("file changed after %s switch: before=%q after=%q", test.name, before, after)
+			}
+		})
 	}
 }
 

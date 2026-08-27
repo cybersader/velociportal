@@ -46,10 +46,14 @@ velociportal setup --env-file .env
 
 The wizard:
 
-- prompts for Headscale and NPM connection details;
+- prompts first for Headscale (supported) or Tailscale SaaS (preview), then asks only for that provider's credentials plus common NPM settings;
+- always writes an explicit `CONTROL_PLANE` selector;
 - accepts Headscale HTTP only for the implementation's exact local/internal allowlist and otherwise requires verified HTTPS;
 - warns that an accepted Headscale HTTP hostname does not prove route confinement or external inaccessibility;
-- reads API keys and passwords through hidden terminal input;
+- uses OAuth client credentials only for Tailscale; there is no API-key, access-token, API-origin, or tailnet prompt;
+- lists inactive known credential key names during a provider switch and requires explicit confirmation before deleting them;
+- leaves the original file byte-for-byte unchanged when switch confirmation is refused or input aborts;
+- reads secrets through hidden terminal input;
 - preserves existing hidden secrets when Enter is pressed;
 - validates values before writing;
 - preserves unknown environment-file keys;
@@ -86,15 +90,17 @@ velociportal doctor --env-file .env \
 Doctor reports stable `PASS`, `WARN`, and `FAIL` stages for:
 
 - configuration and owner-only environment-file permissions;
+- explicit or implicit provider selection, plus variable-name-only warnings for inactive known credentials;
+- selected provider, `legacy_acl_visibility_v1` policy mode, and `supported` or `preview` support level;
 - trusted proxy CIDR narrowness;
-- a pre-contact warning when Headscale uses allowlisted HTTP, because the CLI cannot prove private route confinement;
-- Headscale policy and node retrieval;
+- a pre-contact warning only when Headscale uses allowlisted HTTP, because the CLI cannot prove private route confinement;
+- Headscale policy/node API progress or Tailscale OAuth/policy/users/devices progress;
 - NPM authentication and proxy-host retrieval;
 - complete snapshot construction;
 - supported ACL-to-`forward_host` join coverage; and
 - optional matcher-backed identity previews.
 
-Doctor sanitizes and bounds upstream errors. It does not print API keys, passwords, bearer tokens, or complete configuration structs. A passing run is a preflight result, not proof that rendered cards equal real network authorization.
+Doctor sanitizes and bounds upstream errors. It does not print Headscale keys, OAuth client IDs/secrets, current or rejected OAuth tokens, NPM credentials/JWTs, or complete configuration structs. A passing run is a preflight result, not proof that rendered cards equal real network authorization.
 
 ## Validate
 
@@ -106,9 +112,9 @@ velociportal validate --env-file .env \
 
 Validation loads one complete live snapshot, compares the supplied identity labels through the same matcher used by the portal, and explains supported destination kinds. Summary privacy is the default: it emits opaque service IDs and never emits identity logins, domains, IPs, forward hosts, or raw selectors. `--privacy private` adds internal topology for local diagnosis and prints a warning to stderr.
 
-Use `--format json` for deterministic, schema-versioned output. A complete report returns `1` when findings such as an unmatched forward host, a zero-card identity, identical card sets, or an unknown/dirty build require review. Notices about known limitations do not by themselves fail the report. GNU Make converts any failed recipe into Make exit code `2`, so automation that needs the application's exact `0`/`1`/`2` distinction should invoke `velociportal validate` directly; Make users should inspect the report status and findings.
+Use `--format json` for deterministic schema-v2 output. The report's `control_plane` object records `provider`, `policy_mode`, `support_level`, and whether selection was explicit or implicit, without including endpoints or credentials. A complete report returns `1` when findings such as an unmatched forward host, a zero-card identity, identical card sets, or an unknown/dirty build require review. Notices about known limitations do not by themselves fail the report. GNU Make converts any failed recipe into Make exit code `2`, so automation that needs the application's exact `0`/`1`/`2` distinction should invoke `velociportal validate` directly; Make users should inspect the report status and findings.
 
-Validation is still a visibility prediction. When Headscale uses allowlisted HTTP, validation emits a non-failing, redacted route-confinement notice and records the limitation in the report. Follow the [real-deployment worksheet](../getting-started/validation.md) to verify the private upstream network, NPM control proxy, final identity path, `401`/`403` behavior, LAN-negative ports, browser-facing links, and actual Headscale reachability.
+Validation is still a visibility prediction. An implicit Headscale selector emits a deprecation warning and a non-failing report notice. When Headscale uses allowlisted HTTP, validation also emits a redacted route-confinement notice. Tailscale reports remain labeled `preview` until live SaaS acceptance passes. Follow the [real-deployment worksheet](../getting-started/validation.md) to verify the private upstream network, NPM control proxy, final identity path, `401`/`403` behavior, LAN-negative ports, browser-facing links, and actual selected-control-plane reachability.
 
 ## Healthcheck
 
@@ -164,7 +170,7 @@ Use the full [local-source and diagnostic workflow](../getting-started/setup.md)
 | `make run` | Run from source with `serve --env-file`; requires Go |
 | `make docker` | Build the local production-shaped scratch image |
 | `make docker-run` | Run the local image read-only with loopback-only publication |
-| `make production-compose-check` | Render and assert the one-service, always-pull, no-build, loopback, raw-env, fixed ingress, named private upstream bridge with explicit gateway priority, no base CA mount, optional CA overlay, healthcheck, and hardening shape |
+| `make production-compose-check` | Render Headscale and Tailscale provider examples, short-form includes, and optional CA overlays while asserting the unchanged one-service/two-network, always-pull, no-build, loopback, raw-env, gateway-priority, healthcheck, and hardening shape |
 | `make logs` | Follow repository Compose logs |
 | `make down` | Stop the repository Compose deployment |
 | `make verify` | Run Go, contributor and production Compose, image metadata, and in-image CLI checks; requires Go, Python 3, and Docker Compose |
@@ -206,14 +212,19 @@ Do not commit a populated environment file. Registry names and image tags are no
 
 | Variable | Required | Notes |
 |---|---:|---|
-| `HEADSCALE_URL` | Yes | Exact allowlisted local/internal HTTP or verified HTTPS elsewhere; canonical production value is `http://headscale.velociportal.internal:8080` |
-| `HEADSCALE_API_KEY` | Yes | Dedicated Velociportal runtime key; Headscale v0.29.3 keys are unscoped administrator credentials |
+| `CONTROL_PLANE` | Yes for new files | `headscale` or `tailscale`; absence defaults to Headscale only through v0.2 with a deprecation warning |
+| `HEADSCALE_URL` | Headscale only | Exact allowlisted local/internal HTTP or verified HTTPS elsewhere; canonical production value is `http://headscale.velociportal.internal:8080` |
+| `HEADSCALE_API_KEY` | Headscale only | Dedicated Velociportal runtime key; Headscale v0.29.3 keys are unscoped administrator credentials |
+| `TAILSCALE_OAUTH_CLIENT_ID` | Tailscale only | Dedicated OAuth client ID; omitted from Doctor/validation output |
+| `TAILSCALE_OAUTH_CLIENT_SECRET` | Tailscale only | Dedicated OAuth client secret for the exact four documented read scopes |
 | `NPM_URL` | Yes | Canonical production value is `http://npm.velociportal.internal:81`; HTTP is limited to the exact internal/same-host allowlist and every other location requires verified HTTPS |
 | `NPM_EMAIL` | Yes | NPM account identity |
 | `NPM_PASSWORD` | Yes | NPM account password |
 | `LISTEN_ADDR` | No | Defaults to `127.0.0.1:8080`; Compose overrides it inside the container |
 | `POLL_INTERVAL` | No | Go duration from `5s` through `24h`; defaults to `30s` |
 | `TRUSTED_PROXY_CIDR` | Yes | Exact source `/32`, `/128`, or the smallest intentionally trusted proxy subnet |
+
+Tailscale production configuration has no `TAILSCALE_API_URL`, `TAILSCALE_API_KEY`, `TAILSCALE_ACCESS_TOKEN`, or `TAILSCALE_TAILNET`. It always uses `https://api.tailscale.com/api/v2` and the OAuth credential's `-` tailnet alias. Inactive known provider variables are ignored at runtime with key-name-only warnings.
 
 The container listener and host publication serve different roles:
 
@@ -245,7 +256,7 @@ The scratch image has no shell or separate HTTP utility. Its static binary conta
 | Startup rejects configuration | Missing required values, malformed URL/CIDR, or non-positive poll interval |
 | `403 untrusted source` | Actual immediate peer seen inside the container versus `TRUSTED_PROXY_CIDR` |
 | `401 no identity` | Whether the trusted proxy injected `Tailscale-User-Login` |
-| `503` from health | Headscale policy, Headscale nodes, and NPM proxy hosts must all refresh successfully |
+| `503` from health | The selected control-plane load and NPM proxy-host refresh must both complete successfully |
 | Empty portal with healthy snapshot | Identity/group spelling, legacy `acls`, NPM `forward_host`, and documented matcher limits |
 
 See [Known Limitations](known-limitations.md) before interpreting a healthy process as proof of policy parity.

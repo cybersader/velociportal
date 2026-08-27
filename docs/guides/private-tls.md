@@ -143,6 +143,7 @@ Configure workstation-only `headscale-ops` with the direct HTTPS URL, create sep
 Set:
 
 ```text
+CONTROL_PLANE="headscale"
 HEADSCALE_URL="https://headscale.home:30210"
 ```
 

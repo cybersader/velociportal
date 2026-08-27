@@ -19,7 +19,11 @@ func TestNewUpstreamClientsUseIsolatedHardenedTransports(t *testing.T) {
 		NPMEmail:        "admin@example.com",
 		NPMPassword:     "npm-password",
 	}
-	headscale, npm := newUpstreamClients(cfg)
+	controlPlane, npm := newUpstreamClients(cfg)
+	headscale, ok := controlPlane.(*HeadscaleClient)
+	if !ok {
+		t.Fatalf("control plane type = %T, want *HeadscaleClient", controlPlane)
+	}
 	if headscale.httpClient == npm.httpClient {
 		t.Fatal("Headscale and NPM share an HTTP client")
 	}
@@ -59,6 +63,28 @@ func TestNewUpstreamClientsUseIsolatedHardenedTransports(t *testing.T) {
 		if err := client.CheckRedirect(&http.Request{}, nil); !errors.Is(err, http.ErrUseLastResponse) {
 			t.Errorf("%s redirect policy error = %v", name, err)
 		}
+	}
+}
+
+func TestNewUpstreamClientsConstructsSelectedTailscaleProvider(t *testing.T) {
+	cfg := &Config{
+		ControlPlane:               controlPlaneTailscale,
+		TailscaleOAuthClientID:     "client-id",
+		TailscaleOAuthClientSecret: "client-secret",
+		NPMURL:                     "https://npm.example.com",
+		NPMEmail:                   "admin@example.com",
+		NPMPassword:                "npm-password",
+	}
+	controlPlane, npm := newUpstreamClients(cfg)
+	tailscale, ok := controlPlane.(*TailscaleClient)
+	if !ok {
+		t.Fatalf("control plane type = %T, want *TailscaleClient", controlPlane)
+	}
+	if tailscale.baseURL != tailscaleAPIOrigin {
+		t.Fatalf("Tailscale base URL = %q", tailscale.baseURL)
+	}
+	if tailscale.httpClient == npm.httpClient || tailscale.httpClient.Transport == npm.httpClient.Transport {
+		t.Fatal("Tailscale and NPM share an HTTP client or transport")
 	}
 }
 

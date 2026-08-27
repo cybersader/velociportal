@@ -38,6 +38,63 @@ func TestDeploymentPolicyExampleIncludesPortalAccess(t *testing.T) {
 	t.Fatal("policy example must allow group:vp-shared to reach vp-portal-host:8081")
 }
 
+func TestDeploymentProviderEnvironmentExamplesAreExclusiveAndValid(t *testing.T) {
+	tests := []struct {
+		name     string
+		path     string
+		provider controlPlaneProvider
+		wantKeys []string
+	}{
+		{
+			name:     "headscale",
+			path:     "deploy/velociportal.env.example",
+			provider: controlPlaneHeadscale,
+			wantKeys: []string{"CONTROL_PLANE", "HEADSCALE_API_KEY", "HEADSCALE_URL", "NPM_EMAIL", "NPM_PASSWORD", "NPM_URL", "POLL_INTERVAL"},
+		},
+		{
+			name:     "tailscale",
+			path:     "deploy/velociportal.tailscale.env.example",
+			provider: controlPlaneTailscale,
+			wantKeys: []string{"CONTROL_PLANE", "NPM_EMAIL", "NPM_PASSWORD", "NPM_URL", "POLL_INTERVAL", "TAILSCALE_OAUTH_CLIENT_ID", "TAILSCALE_OAUTH_CLIENT_SECRET"},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			contents, err := os.Open(test.path)
+			if err != nil {
+				t.Fatalf("open environment example: %v", err)
+			}
+			defer contents.Close()
+			values, err := parseEnvFile(contents)
+			if err != nil {
+				t.Fatalf("parse environment example: %v", err)
+			}
+			keys := make([]string, 0, len(values))
+			for key := range values {
+				keys = append(keys, key)
+			}
+			slices.Sort(keys)
+			if !slices.Equal(keys, test.wantKeys) {
+				t.Fatalf("keys = %v, want %v", keys, test.wantKeys)
+			}
+			values["TRUSTED_PROXY_CIDR"] = "172.31.255.1/32"
+			cfg, err := loadConfigFrom(mapConfigLookup(values))
+			if err != nil {
+				t.Fatalf("loadConfigFrom() error = %v", err)
+			}
+			if cfg.ControlPlane != test.provider || !cfg.ControlPlaneExplicit || len(cfg.InactiveControlPlaneKeys) != 0 {
+				t.Fatalf("control plane = %q explicit=%t inactive=%v", cfg.ControlPlane, cfg.ControlPlaneExplicit, cfg.InactiveControlPlaneKeys)
+			}
+			for _, forbidden := range []string{"TAILSCALE_API_URL", "TAILSCALE_API_KEY", "TAILSCALE_ACCESS_TOKEN", "TAILSCALE_TAILNET"} {
+				if _, ok := values[forbidden]; ok {
+					t.Fatalf("example defines forbidden key %s", forbidden)
+				}
+			}
+		})
+	}
+}
+
 func TestDeploymentServeExampleTargetsLoopback(t *testing.T) {
 	contents, err := os.ReadFile("deploy/tailscale-serve.json.example")
 	if err != nil {

@@ -39,7 +39,7 @@ var (
 type doctorIdentityFlags []string
 
 type doctorDependencies struct {
-	newClients func(*Config) (*HeadscaleClient, *NPMClient)
+	newClients func(*Config) (ControlPlane, *NPMClient)
 }
 
 func defaultDoctorDependencies() doctorDependencies {
@@ -147,8 +147,17 @@ func runDoctorCommandWithDependencies(args []string, stdout, stderr io.Writer, d
 		fmt.Fprintf(stdout, "FAIL config: %s\n", sanitizeDoctorError(err, secrets))
 		return 1
 	}
-	secrets = append(secrets, cfg.HeadscaleAPIKey, cfg.NPMPassword)
+	secrets = append(secrets, cfg.ControlPlaneRedactionValues...)
+	secrets = append(secrets, cfg.HeadscaleAPIKey, cfg.TailscaleOAuthClientID, cfg.TailscaleOAuthClientSecret, cfg.NPMPassword)
 	fmt.Fprintln(stdout, "PASS config: required values validated")
+	if cfg.ControlPlaneExplicit {
+		fmt.Fprintf(stdout, "PASS control plane selection: %s (explicit)\n", cfg.ControlPlane)
+	} else {
+		fmt.Fprintln(stdout, "WARN control plane selection: "+implicitHeadscaleDeprecationMessage)
+	}
+	if len(cfg.InactiveControlPlaneKeys) > 0 {
+		fmt.Fprintf(stdout, "WARN inactive control-plane configuration: ignoring %s\n", strings.Join(cfg.InactiveControlPlaneKeys, ", "))
+	}
 
 	ones, bits := cfg.TrustedProxyCIDR.Mask.Size()
 	if ones == bits {
@@ -156,14 +165,14 @@ func runDoctorCommandWithDependencies(args []string, stdout, stderr io.Writer, d
 	} else {
 		fmt.Fprintf(stdout, "WARN trusted proxy CIDR: %s contains multiple addresses; confirm every source may assert identity\n", cfg.TrustedProxyCIDR.String())
 	}
-	if classifyHeadscaleTransport(cfg.HeadscaleURL) == headscaleTransportRestrictedHTTP {
+	if cfg.ControlPlane == controlPlaneHeadscale && classifyHeadscaleTransport(cfg.HeadscaleURL) == headscaleTransportRestrictedHTTP {
 		fmt.Fprintln(stdout, headscaleHTTPDoctorWarning)
 	}
 
 	if dependencies.newClients == nil {
 		dependencies.newClients = newUpstreamClients
 	}
-	headscale, npm := dependencies.newClients(cfg)
+	controlPlane, npm := dependencies.newClients(cfg)
 
 	progress := func(stage snapshotLoadStage, count int) {
 		switch stage {
@@ -171,6 +180,14 @@ func runDoctorCommandWithDependencies(args []string, stdout, stderr io.Writer, d
 			fmt.Fprintf(stdout, "PASS Headscale policy: loaded %d ACL rules\n", count)
 		case snapshotStageHeadscaleNodes:
 			fmt.Fprintf(stdout, "PASS Headscale nodes: loaded %d nodes\n", count)
+		case snapshotStageTailscaleOAuth:
+			fmt.Fprintln(stdout, "PASS Tailscale OAuth: access token acquired")
+		case snapshotStageTailscalePolicy:
+			fmt.Fprintf(stdout, "PASS Tailscale policy: loaded %d ACL rules\n", count)
+		case snapshotStageTailscaleUsers:
+			fmt.Fprintf(stdout, "PASS Tailscale users: loaded %d users\n", count)
+		case snapshotStageTailscaleDevices:
+			fmt.Fprintf(stdout, "PASS Tailscale devices: loaded %d devices\n", count)
 		case snapshotStageNPMAuth:
 			fmt.Fprintln(stdout, "PASS NPM authentication: credentials accepted")
 		case snapshotStageNPMProxyHosts:
@@ -178,10 +195,10 @@ func runDoctorCommandWithDependencies(args []string, stdout, stderr io.Writer, d
 		}
 	}
 
-	snapshot, err := loadSnapshotWithProgress(context.Background(), headscale, npm, progress)
+	snapshot, err := loadSnapshotWithProgress(context.Background(), controlPlane, npm, progress)
 	if err != nil {
 		stage, cause := snapshotStageFailure(err)
-		secrets = append(secrets, doctorNPMToken(npm))
+		secrets = append(secrets, doctorControlPlaneToken(controlPlane), doctorNPMToken(npm))
 		fmt.Fprintf(stdout, "FAIL %s: %s\n", stage, sanitizeDoctorError(cause, secrets))
 		fmt.Fprintf(stdout, "FAIL snapshot: not created because %s failed\n", stage)
 		return 1
@@ -191,6 +208,16 @@ func runDoctorCommandWithDependencies(args []string, stdout, stderr io.Writer, d
 		return 1
 	}
 	fmt.Fprintf(stdout, "PASS snapshot: complete (%d ACL rules, %d nodes, %d proxy hosts)\n", len(snapshot.Policy.ACLs), len(snapshot.Nodes), len(snapshot.ProxyHosts))
+	fmt.Fprintf(
+		stdout,
+		"PASS control plane metadata: provider=%s policy_mode=%s support_level=%s\n",
+		snapshot.ControlPlane.Provider,
+		snapshot.ControlPlane.PolicyMode,
+		snapshot.ControlPlane.SupportLevel,
+	)
+	if snapshot.ControlPlane.SSHPresent {
+		fmt.Fprintln(stdout, "WARN policy support: SSH rules are present but are not card evidence")
+	}
 
 	reportDoctorJoinCoverage(stdout, snapshot)
 	reportDoctorIdentityPreviews(stdout, identities, snapshot)
@@ -211,13 +238,31 @@ func doctorSecretValues(lookup configLookup) []string {
 	if lookup == nil {
 		return nil
 	}
-	values := make([]string, 0, 2)
-	for _, key := range []string{"HEADSCALE_API_KEY", "NPM_PASSWORD"} {
+	values := make([]string, 0, 7)
+	for _, key := range []string{
+		"HEADSCALE_URL",
+		"HEADSCALE_API_KEY",
+		"TAILSCALE_OAUTH_CLIENT_ID",
+		"TAILSCALE_OAUTH_CLIENT_SECRET",
+		"NPM_URL",
+		"NPM_EMAIL",
+		"NPM_PASSWORD",
+	} {
 		if value, ok, err := lookup(key); err == nil && ok && value != "" {
 			values = append(values, value)
 		}
 	}
 	return values
+}
+
+func doctorControlPlaneToken(controlPlane ControlPlane) string {
+	client, ok := controlPlane.(*TailscaleClient)
+	if !ok || client == nil {
+		return ""
+	}
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	return client.accessToken
 }
 
 func doctorNPMToken(client *NPMClient) string {
@@ -298,9 +343,9 @@ func doctorJoinCoverage(snapshot *CacheData) (matched int, total int, unmatched 
 	tagIPs := make(map[string][]string)
 	var allNodeIPs []string
 	for _, node := range snapshot.Nodes {
-		allNodeIPs = append(allNodeIPs, node.IPAddresses...)
+		allNodeIPs = append(allNodeIPs, node.Addresses...)
 		for _, tag := range nodeTags(node) {
-			tagIPs[tag] = append(tagIPs[tag], node.IPAddresses...)
+			tagIPs[tag] = append(tagIPs[tag], node.Addresses...)
 		}
 	}
 	matchData := &matchContext{

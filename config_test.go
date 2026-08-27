@@ -12,6 +12,7 @@ import (
 
 func validConfigValues() map[string]string {
 	return map[string]string{
+		"CONTROL_PLANE":      "headscale",
 		"HEADSCALE_URL":      "https://headscale:8080",
 		"HEADSCALE_API_KEY":  "test-key",
 		"NPM_URL":            "http://npm.velociportal.internal:81",
@@ -218,11 +219,80 @@ func TestLoadConfigFromDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loadConfigFrom() error = %v", err)
 	}
+	if cfg.ControlPlane != controlPlaneHeadscale || !cfg.ControlPlaneExplicit {
+		t.Fatalf("control plane = %q explicit=%t", cfg.ControlPlane, cfg.ControlPlaneExplicit)
+	}
 	if cfg.ListenAddr != "127.0.0.1:8080" {
 		t.Errorf("ListenAddr = %q, want 127.0.0.1:8080", cfg.ListenAddr)
 	}
 	if cfg.PollInterval != 30*time.Second {
 		t.Errorf("PollInterval = %v, want 30s", cfg.PollInterval)
+	}
+}
+
+func TestLoadConfigFromDefaultsAbsentSelectorToHeadscale(t *testing.T) {
+	values := validConfigValues()
+	delete(values, "CONTROL_PLANE")
+	cfg, err := loadConfigFrom(mapConfigLookup(values))
+	if err != nil {
+		t.Fatalf("loadConfigFrom() error = %v", err)
+	}
+	if cfg.ControlPlane != controlPlaneHeadscale || cfg.ControlPlaneExplicit {
+		t.Fatalf("control plane = %q explicit=%t", cfg.ControlPlane, cfg.ControlPlaneExplicit)
+	}
+}
+
+func TestLoadConfigFromTailscaleRequiresOnlyOAuthCredentials(t *testing.T) {
+	values := validConfigValues()
+	values["CONTROL_PLANE"] = "tailscale"
+	delete(values, "HEADSCALE_URL")
+	delete(values, "HEADSCALE_API_KEY")
+	values["TAILSCALE_OAUTH_CLIENT_ID"] = "oauth-client"
+	values["TAILSCALE_OAUTH_CLIENT_SECRET"] = "oauth-secret"
+
+	cfg, err := loadConfigFrom(mapConfigLookup(values))
+	if err != nil {
+		t.Fatalf("loadConfigFrom() error = %v", err)
+	}
+	if cfg.ControlPlane != controlPlaneTailscale || !cfg.ControlPlaneExplicit {
+		t.Fatalf("control plane = %q explicit=%t", cfg.ControlPlane, cfg.ControlPlaneExplicit)
+	}
+	if cfg.TailscaleOAuthClientID != "oauth-client" || cfg.TailscaleOAuthClientSecret != "oauth-secret" {
+		t.Fatalf("OAuth credentials were not preserved")
+	}
+	if cfg.HeadscaleURL != "" || cfg.HeadscaleAPIKey != "" {
+		t.Fatalf("inactive Headscale credentials = %q / %q", cfg.HeadscaleURL, cfg.HeadscaleAPIKey)
+	}
+	if len(cfg.InactiveControlPlaneKeys) != 0 {
+		t.Fatalf("inactive keys = %v, want none", cfg.InactiveControlPlaneKeys)
+	}
+}
+
+func TestLoadConfigFromIgnoresMalformedInactiveCredentialsAndRecordsKeyNames(t *testing.T) {
+	values := validConfigValues()
+	lookup := func(key string) (string, bool, error) {
+		if key == "TAILSCALE_OAUTH_CLIENT_SECRET" {
+			return "", true, fmt.Errorf("invalid encoded environment value for %s", key)
+		}
+		value, ok := values[key]
+		return value, ok, nil
+	}
+
+	cfg, err := loadConfigFrom(lookup)
+	if err != nil {
+		t.Fatalf("loadConfigFrom() error = %v", err)
+	}
+	if !reflect.DeepEqual(cfg.InactiveControlPlaneKeys, []string{"TAILSCALE_OAUTH_CLIENT_SECRET"}) {
+		t.Fatalf("inactive keys = %v", cfg.InactiveControlPlaneKeys)
+	}
+}
+
+func TestLoadConfigFromRejectsInvalidControlPlane(t *testing.T) {
+	values := validConfigValues()
+	values["CONTROL_PLANE"] = "other"
+	_, err := loadConfigFrom(mapConfigLookup(values))
+	if err == nil || !strings.Contains(err.Error(), "CONTROL_PLANE") {
+		t.Fatalf("loadConfigFrom() error = %v", err)
 	}
 }
 
@@ -239,12 +309,15 @@ func TestLoadConfigFromUsesDeterministicLookupOrder(t *testing.T) {
 		t.Fatalf("loadConfigFrom() error = %v", err)
 	}
 	want := []string{
+		"CONTROL_PLANE",
 		"HEADSCALE_URL",
 		"HEADSCALE_API_KEY",
 		"NPM_URL",
 		"NPM_EMAIL",
 		"NPM_PASSWORD",
 		"TRUSTED_PROXY_CIDR",
+		"TAILSCALE_OAUTH_CLIENT_ID",
+		"TAILSCALE_OAUTH_CLIENT_SECRET",
 		"LISTEN_ADDR",
 		"POLL_INTERVAL",
 	}

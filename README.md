@@ -6,14 +6,14 @@
 
 ### Your network access policy *is* your dashboard policy.
 
-A self-hosted service portal that reads **Headscale legacy ACL rules** and **Nginx Proxy Manager proxy hosts**, then renders only the cards its current matcher can correlate with the trusted viewer identity.
+A self-hosted service portal that reads a selected **Headscale or Tailscale SaaS legacy ACL source** plus **Nginx Proxy Manager proxy hosts**, then renders only the cards its current matcher can correlate with the trusted viewer identity.
 
 **Visibility layer only — complements identity and enforcement systems; never replaces them.**
 
 [![CI](https://github.com/cybersader/velociportal/actions/workflows/ci.yml/badge.svg)](https://github.com/cybersader/velociportal/actions/workflows/ci.yml)
 [![Docs](https://github.com/cybersader/velociportal/actions/workflows/docs.yml/badge.svg)](https://github.com/cybersader/velociportal/actions/workflows/docs.yml)
 
-[TrueNAS Quickstart](https://cybersader.github.io/velociportal/guides/truenas-scale/) · [Documentation](https://cybersader.github.io/velociportal/) · [Optional private TLS](https://cybersader.github.io/velociportal/guides/private-tls/) · [Known limitations](https://cybersader.github.io/velociportal/reference/known-limitations/) · [Roadmap](#roadmap)
+[TrueNAS Quickstart](https://cybersader.github.io/velociportal/guides/truenas-scale/) · [Tailscale SaaS preview](https://cybersader.github.io/velociportal/guides/tailscale-saas-npm/) · [Documentation](https://cybersader.github.io/velociportal/) · [Optional private TLS](https://cybersader.github.io/velociportal/guides/private-tls/) · [Known limitations](https://cybersader.github.io/velociportal/reference/known-limitations/) · [Roadmap](#roadmap)
 
 </div>
 
@@ -21,12 +21,12 @@ A self-hosted service portal that reads **Headscale legacy ACL rules** and **Ngi
 
 ## Start here
 
-Follow the [TrueNAS Quickstart](https://cybersader.github.io/velociportal/guides/truenas-scale/). It is the single UI-managed path for:
+Follow the [TrueNAS Quickstart](https://cybersader.github.io/velociportal/guides/truenas-scale/). Choose exactly one control plane: Headscale is the supported implementation path, while Tailscale SaaS is an implemented OAuth preview pending live acceptance. The same UI-managed one-service bundle covers both modes:
 
 1. Importing the one-container Compose bundle so the named private upstream bridge exists.
-2. Attaching Headscale and NPM with exact private Docker aliases, preserved outbound DNS, and no LAN-published Headscale API port.
-3. Using the operator's existing trusted NPM HTTPS certificate lifecycle for pre-tailnet Headscale control and workstation administration.
-4. Bootstrapping one short-lived API key, then separating operator and Velociportal runtime keys.
+2. Attaching NPM with its exact private Docker alias; Headscale mode also attaches Headscale with preserved outbound DNS and no LAN-published API port.
+3. Preserving the existing NPM HTTPS Headscale control workflow in Headscale mode, or configuring a dedicated four-scope OAuth client in Tailscale preview mode.
+4. Keeping provider credentials separate, explicit, redacted, and safe to switch without deleting unknown settings.
 5. Configuring a real legacy ACL exercise and declarative Tailscale HTTP Serve.
 6. Deploying Velociportal without a source build or recurring NAS shell.
 7. Running two-identity, header-replacement, restart, join, reachability, and LAN-negative acceptance.
@@ -36,6 +36,9 @@ The production bundle lives under [`deploy/`](./deploy/). It requires Docker Com
 > [!IMPORTANT]
 > No usable public image, `headscale-ops` release, or support claim is implied until tagged artifacts are actually published, anonymously verified, and the real TrueNAS acceptance matrix passes.
 
+> [!NOTE]
+> Tailscale SaaS support is fixture-tested but remains labeled **preview** until live OAuth scopes, token refresh/revocation, owner mapping, unsupported-policy failures, two identities, and actual reachability pass acceptance.
+
 > [!WARNING]
 > The canonical browser route is tailnet-only HTTP Serve over WireGuard: `:8081 -> http://127.0.0.1:18080`. NPM is not portal identity. Official Tailscale can automate `*.ts.net` certificates, but Headscale automatic HTTPS Serve remains future upstream work tracked by [issue #2527](https://github.com/juanfont/headscale/issues/2527) and [PR #3300](https://github.com/juanfont/headscale/pull/3300). Tailnet HTTP Serve is not a release blocker.
 
@@ -43,9 +46,10 @@ The production bundle lives under [`deploy/`](./deploy/). It requires Docker Com
 
 ```mermaid
 flowchart LR
-    Client["New or existing client"] -->|"trusted HTTPS"| NPMControl["Existing NPM<br/>Headscale control proxy"]
-    NPMControl -->|"private HTTP<br/>WebSocket/upgrade preserved"| HS["Headscale"]
-    HS -->|"runtime API<br/>private HTTP"| VP["Velociportal<br/>snapshot + matcher"]
+    Client["New Headscale client"] -->|"trusted HTTPS"| NPMControl["Existing NPM<br/>Headscale control proxy"]
+    NPMControl -->|"private HTTP + upgrades"| HS["Headscale"]
+    HS -->|"private runtime API"| VP["Velociportal<br/>snapshot + matcher"]
+    SaaS["Tailscale SaaS API<br/>preview alternative"] -->|"verified HTTPS + OAuth"| VP
     NPM["NPM proxy-host API"] -->|"private HTTP"| VP
     Human["Human tailnet user"] -->|"WireGuard"| Serve["Tailscale HTTP Serve<br/>human identity headers"]
     Serve -->|"host loopback"| VP
@@ -56,34 +60,35 @@ flowchart LR
 The named private Docker bridge is `velociportal-upstreams`:
 
 ```text
+CONTROL_PLANE=headscale
 HEADSCALE_URL=http://headscale.velociportal.internal:8080
 NPM_URL=http://npm.velociportal.internal:81
 ```
 
-Headscale and NPM HTTP are accepted only for their exact canonical private aliases or same-host/loopback compatibility routes. Every other location requires verified HTTPS. Credentialed clients refuse redirects, ignore environment proxy variables, and bound response sizes. There is no insecure TLS mode.
+Tailscale preview deployments set `CONTROL_PLANE=tailscale`, use dedicated OAuth client credentials against the fixed verified SaaS origin, omit all Headscale keys, and keep the same NPM alias. Headscale and NPM HTTP are accepted only for their exact canonical private aliases or same-host/loopback compatibility routes. Every other location requires verified HTTPS. Credentialed clients refuse redirects, ignore environment proxy variables, and bound response sizes. There is no insecure TLS mode.
 
 Existing NPM provides the trusted HTTPS endpoint that brand-new clients need before they can join the tailnet. The canonical privacy-preserving form uses split-horizon/private DNS and an existing publicly trusted wildcard certificate obtained with DNS-01, without a public Headscale hostname/address record or exact-host certificate-transparency disclosure. This project does not prescribe manual CA creation as the canonical path. If that endpoint is not already trusted by a client, stop rather than disabling verification.
 
-NPM is therefore an explicit trust and availability boundary. It can observe Headscale control traffic and workstation operator Bearer API keys. Preserve WebSocket/upgrade behavior, avoid authorization-header logging, back up NPM state, and use separate Headscale operator and Velociportal runtime keys. Runtime Velociportal bypasses NPM and uses the private bridge directly. `headscale-ops` remains workstation-only and HTTPS-only.
+In Headscale mode, NPM is therefore an explicit trust and availability boundary. It can observe Headscale control traffic and workstation operator Bearer API keys. Preserve WebSocket/upgrade behavior, avoid authorization-header logging, back up NPM state, and use separate Headscale operator and Velociportal runtime keys. Runtime Velociportal bypasses the NPM control proxy and uses the private bridge directly. `headscale-ops` remains workstation-only and HTTPS-only. Tailscale SaaS mode needs neither Headscale nor this control proxy; NPM remains service discovery only.
 
 ## How the portal works
 
-Velociportal polls three current inputs on one ticker:
+Velociportal polls one selected control-plane result plus NPM on one ticker:
 
-1. **Headscale** `GET /api/v1/policy` — `groups`, `tagOwners`, legacy `acls`, and `hosts`
-2. **Headscale** `GET /api/v1/node` — node owners, IPs, and tags for destination resolution
-3. **NPM** `GET /api/nginx/proxy-hosts` — domains, forward targets, enabled state, and online metadata
+1. **Headscale mode:** `GET /api/v1/policy` and `GET /api/v1/node`
+2. **Tailscale preview mode:** OAuth, then `GET /tailnet/-/acl`, `/users`, and `/devices`
+3. **Both modes:** NPM `GET /api/nginx/proxy-hosts`
 
-A refresh replaces the cache only after all three calls succeed. Requests use the last complete in-process snapshot and never wait on an upstream API.
+A refresh replaces the cache only after the complete selected-provider load and NPM call succeed. Requests use the last complete in-process snapshot and never wait on an upstream API.
 
-On each request, Velociportal accepts `Tailscale-User-Login` only from `TRUSTED_PROXY_CIDR`, resolves supported identity and group forms, evaluates supported legacy ACL `accept` rules against enabled NPM proxy hosts, and renders matching cards server-side. Headscale ACLs, Tailscale Serve, NPM, and backends still enforce access.
+On each request, Velociportal accepts `Tailscale-User-Login` only from `TRUSTED_PROXY_CIDR`, resolves supported identity and group forms, evaluates supported legacy ACL `accept` rules against enabled NPM proxy hosts, and renders matching cards server-side. The selected control plane, Tailscale Serve, NPM, and backends still enforce access.
 
 ## What it is — and is not
 
 | Velociportal is | Velociportal is not |
 |---|---|
-| A visibility layer derived from a supported Headscale policy subset | A login, SSO, OIDC, SAML, or MFA provider |
-| A read-only Headscale and NPM API consumer | A reverse proxy or request enforcement point |
+| A visibility layer derived from a shared legacy ACL subset | A login, SSO, OIDC, SAML, or MFA provider |
+| A read-only selected-control-plane and NPM API consumer | A reverse proxy or request enforcement point |
 | One static Go binary in one minimal container | An ACL editor or service configuration database |
 | An in-memory, all-or-nothing polling snapshot | A complete Tailscale policy engine |
 
@@ -91,9 +96,12 @@ On each request, Velociportal accepts `Tailscale-User-Login` only from `TRUSTED_
 
 **Implemented**
 
+- Explicit `CONTROL_PLANE=headscale|tailscale`; implicit Headscale compatibility warns through v0.2
+- Headscale adapter labeled supported and Tailscale OAuth adapter labeled preview
 - Exact allowlisted local Headscale HTTP plus verified HTTPS elsewhere
-- Separate hardened Headscale and NPM transports with no redirects or environment proxies and bounded responses
-- Named private production bridge and exact Headscale/NPM aliases
+- Fixed verified Tailscale API origin, in-memory token lifecycle, strict owner mapping, and exact read scopes
+- Separate hardened provider and NPM transports with no redirects or environment proxies and bounded responses
+- Named private production bridge, exact NPM alias, and exact Headscale alias when selected
 - Optional private-CA public-root overlay with no CA mount in the base stack
 - NPM credential JWT and proxy-host client
 - All-or-nothing background snapshot refresh with atomic swap
@@ -102,12 +110,12 @@ On each request, Velociportal accepts `Tailscale-User-Login` only from `TRUSTED_
 - Server-rendered responsive portal, embedded htmx refresh, and NPM status indicators
 - Non-root `FROM scratch` image and Engine-28+-gated loopback-only publication
 - Portable one-service production bundle and declarative Tailscale HTTP Serve template
-- Explainable, privacy-controlled multi-identity validation reports with build provenance
+- Provider-aware setup/doctor UX with atomic confirmed credential switching and complete credential redaction
+- Explainable schema-v2 validation reports with provider, policy-mode, support-level, selection, and build provenance
 
 **Not implemented**
 
-- Tailscale SaaS API support
-- Grants, SSH, posture, capabilities, port, or protocol evaluation
+- Grants, SSH-as-card-evidence, posture, capabilities, port, or protocol evaluation
 - Caddy or Traefik service discovery
 - Direct Authentik, Authelia, `Remote-User`, or `X-Webauth-*` adapters
 - NPM access-list-driven visibility
@@ -115,13 +123,14 @@ On each request, Velociportal accepts `Tailscale-User-Login` only from `TRUSTED_
 
 **Still requires real deployment validation**
 
+- Tailscale SaaS OAuth scopes, token refresh/revocation, owner mapping, policy negatives, and live reachability before preview can become supported
 - The NPM HTTPS-to-Headscale control path, including WebSocket/upgrade behavior and trusted certificate use by brand-new clients
 - The private Docker network and proof that Headscale port `8080` is not reachable from the LAN
 - Separate operator/runtime key handling and NPM header-logging posture
 - Declarative Serve identity injection, header replacement, and restart persistence
 - The NPM `forward_host` join against real tailnet-routable destinations
 - At least two human identities with intentionally different card sets
-- Every generated link compared with actual Headscale and NPM reachability
+- Every generated link compared with actual selected-control-plane and NPM reachability
 
 Tailnet HTTP over WireGuard prevents ordinary on-path LAN/router/ISP interception. It does not protect against compromised clients, TrueNAS, NPM, Tailscale/Headscale control components, or trusted host workloads.
 
@@ -148,7 +157,8 @@ No CA state lives on pfSense/the router. Router replacement restores ordinary DN
 | Goal | Page | Status |
 |---|---|---|
 | Install the full private stack | [TrueNAS Quickstart](https://cybersader.github.io/velociportal/guides/truenas-scale/) | Canonical release-candidate journey |
-| Understand control and runtime paths | [Headscale + NPM](https://cybersader.github.io/velociportal/guides/headscale-npm/) | Implemented architecture; live acceptance pending |
+| Understand Headscale control and runtime paths | [Headscale + NPM](https://cybersader.github.io/velociportal/guides/headscale-npm/) | Implemented architecture; live acceptance pending |
+| Use Tailscale SaaS OAuth | [Tailscale SaaS + NPM](https://cybersader.github.io/velociportal/guides/tailscale-saas-npm/) | Implemented preview; live SaaS acceptance pending |
 | Compare identities and joins | [Real deployment validation](https://cybersader.github.io/velociportal/getting-started/validation/) | Tooling implemented; live worksheet pending |
 | Use native private Headscale TLS | [Optional private TLS](https://cybersader.github.io/velociportal/guides/private-tls/) | Alternative only |
 | Build and diagnose from source | [Local-source workflow](https://cybersader.github.io/velociportal/getting-started/setup/) | Contributor/advanced diagnostics only |
@@ -163,19 +173,23 @@ No CA state lives on pfSense/the router. Router replacement restores ordinary DN
 - [x] Legacy ACL matcher and server-side visibility filtering
 - [x] Responsive portal with embedded htmx
 - [x] Minimal non-root container and loopback-only Compose examples
-- [x] Explainable multi-identity validation reports
+- [x] Explainable schema-v2 multi-identity validation reports
+- [x] Provider-neutral control-plane core and Headscale regression adapter
+- [x] Tailscale SaaS OAuth adapter with fixture-tested policy/users/devices conversion
+- [x] Provider-aware setup, Doctor, redaction, and atomic credential switching
 - [x] Hardened isolated upstream transports and exact Headscale HTTP allowlist
 - [x] Named private upstream bridge with direct runtime aliases and required egress
 - [x] Optional private-CA Compose overlay without a base-stack CA mount
 - [x] Canonical NPM Headscale control-proxy and Tailscale Serve architecture documented
 - [x] Publish and anonymously verify immutable Velociportal and `headscale-ops` release-candidate artifacts
 - [ ] Complete real NPM control-proxy, bootstrap, key-separation, and backup acceptance
-- [ ] Complete two-identity, LAN-negative, restart, join, link, and reachability acceptance
+- [ ] Complete Headscale two-identity, LAN-negative, restart, join, link, and reachability acceptance
+- [ ] Complete Tailscale OAuth refresh/revocation, policy-negative, owner-mapping, identity, and reachability acceptance; retain preview until then
 - [ ] Refine or replace the `forward_host` join
 - [ ] Model ports, protocols, and Grants safely
 - [ ] Derive browser-facing URLs from NPM frontend fields
 - [ ] Add custom service metadata
-- [ ] Add Tailscale SaaS, Caddy, and Traefik adapters
+- [ ] Add Caddy and Traefik service-discovery adapters
 
 ## License
 

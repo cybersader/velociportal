@@ -1,13 +1,26 @@
 # TrueNAS Quickstart
 
-This is the canonical, linear path for a private **Headscale + Nginx Proxy Manager (NPM) + Velociportal** deployment on TrueNAS SCALE. It is UI-managed: no source build on the NAS and no recurring NAS shell. The only normal app-shell action is the one-time first Headscale API-key bootstrap.
+This is the canonical, UI-managed TrueNAS SCALE path for one Velociportal container plus Nginx Proxy Manager (NPM) and one selected control plane. **Headscale is the supported implementation path. Tailscale SaaS is an implemented preview until live acceptance passes.** There is no source build on the NAS and no recurring NAS shell.
 
-Velociportal remains one read-only container. Headscale, NPM, and the existing Tailscale app remain separate security boundaries. Workstation administration uses HTTPS-only `headscale-ops`.
+Velociportal remains one read-only container. The selected control plane, NPM, and the existing Tailscale app remain separate security boundaries. Headscale mode retains the one-time first API-key bootstrap and HTTPS-only workstation `headscale-ops`; Tailscale mode uses a dedicated externally managed OAuth client and needs neither Headscale nor `headscale-ops`.
 
 !!! warning "Release-candidate path"
     The architecture and templates are implemented, but the real TrueNAS acceptance matrix has not passed. No public image, `headscale-ops` release, or support claim is implied until immutable artifacts are published and verified and the full two-identity, NPM-control, restart, reachability, and LAN-negative worksheet succeeds.
 
+## Choose the control plane
+
+| Mode | Status | Runtime credentials | Local apps required |
+|---|---|---|---|
+| `CONTROL_PLANE=headscale` | Supported implementation path; live TrueNAS acceptance pending | `HEADSCALE_URL` + dedicated runtime API key | Headscale + NPM + Tailscale app |
+| `CONTROL_PLANE=tailscale` | Labeled preview; live SaaS acceptance pending | Dedicated OAuth client ID/secret with four read scopes | NPM + Tailscale app; Headscale is not required |
+
+One process selects one provider. Do not combine both tailnets or both credential families in one deployment file. Use `deploy/velociportal.env.example` for Headscale or `deploy/velociportal.tailscale.env.example` for Tailscale SaaS.
+
+The full linear procedure below preserves the existing Headscale workflow. Tailscale operators follow the explicit preview branches and skip Headscale-only control-proxy, bootstrap, and `headscale-ops` steps.
+
 ## Target architecture
+
+### Headscale supported path
 
 ```mermaid
 flowchart LR
@@ -20,11 +33,21 @@ flowchart LR
     Serve -->|"127.0.0.1:18080"| VP
 ```
 
+### Tailscale SaaS preview path
+
+```mermaid
+flowchart LR
+    SaaS["Tailscale SaaS API"] -->|"verified HTTPS + OAuth"| VP["Velociportal"]
+    Catalog["NPM proxy-host API"] -->|"private HTTP"| VP
+    Human["Human tailnet client"] -->|"WireGuard + HTTP :8081"| Serve["Existing Tailscale app"]
+    Serve -->|"127.0.0.1:18080"| VP
+```
+
 Three paths stay distinct:
 
 1. **Browser ingress:** Tailscale HTTP Serve on tailnet port `8081` forwards to `http://127.0.0.1:18080`. WireGuard protects transport and Serve injects human identity headers. NPM is not portal identity.
-2. **Runtime upstreams:** Velociportal reaches Headscale and NPM directly over the named private Docker bridge `velociportal-upstreams`.
-3. **Pre-tailnet control and operations:** existing NPM provides trusted HTTPS for Headscale clients and HTTPS-only `headscale-ops`, then proxies to Headscale over the private bridge.
+2. **Runtime upstreams:** NPM stays on `velociportal-upstreams`. Headscale mode also reaches Headscale there; Tailscale mode reaches the fixed SaaS API over the preferred default network.
+3. **Pre-tailnet control and operations:** in Headscale mode, existing NPM provides trusted HTTPS for Headscale clients and HTTPS-only `headscale-ops`. Tailscale mode uses the hosted control plane and skips this Headscale-only path.
 
 Tailnet HTTP prevents ordinary on-path LAN/router/ISP interception because the traffic is inside WireGuard. It does not protect against compromised clients, TrueNAS, NPM, Tailscale/Headscale control components, or trusted host workloads.
 
@@ -43,11 +66,12 @@ Tailnet HTTP prevents ordinary on-path LAN/router/ISP interception because the t
 
 You need:
 
-- TrueNAS SCALE with Headscale, NPM, and the official Tailscale app already installed.
+- TrueNAS SCALE with NPM and the official Tailscale app installed. Headscale is additionally required only for Headscale mode.
 - Docker Engine **28.0 or newer** and Docker Compose **2.33.1 or newer** in the selected deployment interface.
 - A published, immutable, anonymously verified Velociportal image. If it does not exist yet, stop; do not substitute `latest` or a NAS source build.
-- A published, checksum-verified `headscale-ops` release on the administration workstation. If it does not exist yet, stop; the canonical NAS journey does not fall back to a source build.
-- An existing NPM hostname and automated certificate lifecycle that brand-new clients already trust before joining the tailnet. The canonical privacy-preserving form uses split-horizon/private DNS plus an existing publicly trusted wildcard certificate obtained with DNS-01; do not publish the Headscale hostname or address in public DNS.
+- In Headscale mode, a published checksum-verified `headscale-ops` release on the administration workstation. If it does not exist yet, stop; the canonical NAS journey does not fall back to a source build.
+- In Headscale mode, an existing NPM hostname and automated certificate lifecycle that brand-new clients already trust before joining the tailnet. The canonical privacy-preserving form uses split-horizon/private DNS plus an existing publicly trusted wildcard certificate obtained with DNS-01; do not publish the Headscale hostname or address in public DNS.
+- In Tailscale mode, a dedicated OAuth client with exactly `policy_file:read`, `devices:posture_attributes:read`, `devices:core:read`, and `users:read`; no API key or pre-created access token.
 - Two real human test identities and two services with intentionally different visibility.
 - Authenticated backup and file-transfer paths, such as TrueNAS-managed snapshots plus SMB for policy and Serve configuration.
 
@@ -86,7 +110,7 @@ Prepare the files from `deploy/` on an administration workstation and transfer t
 
 - `compose.yaml`
 - `stack.env` based on `stack.env.example`
-- `velociportal.env` based on `velociportal.env.example`
+- `velociportal.env` based on `velociportal.env.example` for Headscale **or** `velociportal.tailscale.env.example` for the Tailscale preview
 - `tailscale-serve.json.example`
 - `policy.hujson.example`
 
@@ -111,7 +135,7 @@ velociportal-upstreams
 
 Headscale and NPM require outbound DNS and HTTPS. The bridge is therefore a normal user-defined Docker bridge rather than `internal: true`; this does not publish attached container ports to the LAN. Velociportal's fixed ingress bridge remains its preferred route through explicit Compose gateway priority.
 
-At this stage the intentionally blank `HEADSCALE_API_KEY`, `NPM_EMAIL`, and `NPM_PASSWORD` fail startup validation. After confirming that the networks were created, stop only the Velociportal app to prevent a restart loop. Do not expose a temporary port, add fake credentials, or weaken validation to make it healthy early.
+At this stage the intentionally blank selected-provider secret (`HEADSCALE_API_KEY` or `TAILSCALE_OAUTH_CLIENT_SECRET`), `NPM_EMAIL`, and `NPM_PASSWORD` fail startup validation. After confirming that the networks were created, stop only the Velociportal app to prevent a restart loop. Do not expose a temporary port, add fake credentials, or weaken validation to make it healthy early.
 
 For TrueNAS Custom App YAML, place a `.env` file beside `compose.yaml` and use the proven short-form include wrapper. Set the project identity with the TrueNAS **Application Name** field:
 
@@ -121,15 +145,17 @@ include:
 services: {}
 ```
 
-## 3. Attach Headscale and NPM to the private bridge
+## 3. Attach the required local upstreams to the private bridge
 
 **Use: TrueNAS app network settings**
 
-Edit each existing app through the TrueNAS UI. Do not use recurring `docker network connect` shell commands.
+Always attach NPM through the TrueNAS UI. Attach Headscale only in Headscale mode. Do not use recurring `docker network connect` shell commands.
 
 TrueNAS catalog renderer library 2.3.4 replaces an app's implicit default network whenever any UI-managed network is selected. The selected bridge must therefore provide the app's outbound NAT and Docker DNS as well as private service traffic. RC.1 incorrectly made this bridge internal; live acceptance showed Headscale losing DERP-map DNS and restart-looping. RC.2 corrects that failure.
 
-Attach **Headscale first** to:
+In **Tailscale mode**, skip the Headscale attachment and attach only NPM with alias `npm.velociportal.internal`. Verify its management/API health, existing listeners, outbound DNS/HTTPS, certificate operations, and representative proxy hosts. Keep untrusted containers off the bridge, then continue at the Tailscale OAuth preview step below.
+
+In **Headscale mode**, attach **Headscale first** to:
 
 ```text
 velociportal-upstreams
@@ -149,6 +175,9 @@ Only after Headscale passes, attach NPM and verify its management/API health, ex
 Set Headscale's host bind mode to **None/Expose** only after its private alias and the trusted NPM HTTPS control path both pass. Container port `8080` must never remain published on the TrueNAS LAN address in the accepted final topology. Do not publish the private aliases in DNS.
 
 ## 4. Set the external Headscale URL to existing NPM HTTPS
+
+!!! note "Headscale mode only"
+    Tailscale SaaS operators skip steps 4 through 8 and continue at the OAuth preview step.
 
 **Use: DNS/router UI and Headscale app UI**
 
@@ -279,6 +308,25 @@ A brand-new client must validate NPM HTTPS before it can join. If it cannot, sto
 
 For each NPM application host used in validation, ensure `forward_host` aligns with a supported Headscale destination and is actually reachable through the tailnet or an approved subnet route. String equality alone is not reachability.
 
+## Tailscale SaaS preview: configure OAuth and policy
+
+Skip this section in Headscale mode.
+
+Create a dedicated OAuth client outside Velociportal with exactly:
+
+```text
+policy_file:read
+devices:posture_attributes:read
+devices:core:read
+users:read
+```
+
+Do not create an API key or paste an access token into the environment file. Velociportal always uses `https://api.tailscale.com/api/v2`, requests the credential's `-` tailnet alias, keeps tokens in memory, refreshes early, and retries once after `401`.
+
+Review the real tailnet policy before deployment. The preview supports only `legacy_acl_visibility_v1`. Non-empty Grants, posture, IP sets, service selectors, and unknown access-control constructs reject the entire refresh. SSH is not card evidence. Ports and protocols remain unmodeled for visibility.
+
+Ensure the two test users' exact Tailscale `loginName` values match the `Tailscale-User-Login` values supplied by Serve, and ensure NPM `forward_host` values align with supported policy destinations. Complete token refresh, revocation, owner-mapping, unsupported-policy, and reachability acceptance before changing the preview label.
+
 ## 9. Configure declarative Tailscale HTTP Serve
 
 **Use: TrueNAS Tailscale app UI**
@@ -305,18 +353,35 @@ Apply the Tailscale app update. Confirm the route returns after a Tailscale app 
 
 **Use: Compose UI**
 
-Set `velociportal.env` to the direct private-alias runtime paths:
+Set `velociportal.env` from exactly one provider example.
 
-```text
-HEADSCALE_URL="http://headscale.velociportal.internal:8080"
-HEADSCALE_API_KEY="<dedicated-runtime-key>"
-NPM_URL="http://npm.velociportal.internal:81"
-NPM_EMAIL="velociportal@example.com"
-NPM_PASSWORD="<dedicated-npm-password>"
-POLL_INTERVAL="30s"
-```
+=== "Headscale supported path"
 
-The canonical base stack mounts no CA file. Headscale HTTP is accepted because the hostname is the exact private Docker alias. The alias suffix does not prove network confinement; the acceptance checks below must prove that no raw LAN publication or unintended direct route exists.
+    ```text
+    CONTROL_PLANE="headscale"
+    HEADSCALE_URL="http://headscale.velociportal.internal:8080"
+    HEADSCALE_API_KEY="<dedicated-runtime-key>"
+    NPM_URL="http://npm.velociportal.internal:81"
+    NPM_EMAIL="velociportal@example.com"
+    NPM_PASSWORD="<dedicated-npm-password>"
+    POLL_INTERVAL="30s"
+    ```
+
+=== "Tailscale SaaS preview"
+
+    ```text
+    CONTROL_PLANE="tailscale"
+    TAILSCALE_OAUTH_CLIENT_ID="<dedicated-oauth-client-id>"
+    TAILSCALE_OAUTH_CLIENT_SECRET="<dedicated-oauth-client-secret>"
+    NPM_URL="http://npm.velociportal.internal:81"
+    NPM_EMAIL="velociportal@example.com"
+    NPM_PASSWORD="<dedicated-npm-password>"
+    POLL_INTERVAL="30s"
+    ```
+
+    Do not add a Tailscale API URL, API key, access token, or explicit tailnet variable.
+
+The canonical base stack mounts no CA file. In Headscale mode, HTTP is accepted because the hostname is the exact private Docker alias. The alias suffix does not prove network confinement; the acceptance checks below must prove that no raw LAN publication or unintended direct route exists.
 
 Redeploy the imported Compose project. Require:
 
@@ -332,7 +397,16 @@ Securely remove the temporary runtime-key file from the workstation after storin
 
 ## 11. Run required acceptance
 
+### Provider metadata and credentials
+
+- [ ] `CONTROL_PLANE` is explicit.
+- [ ] Schema-v2 validation records the expected provider, `legacy_acl_visibility_v1`, support level, and `selection: explicit`.
+- [ ] Inactive known provider credentials are absent from the selected environment file.
+- [ ] Doctor and validation expose no API key, OAuth client ID/secret, access token, NPM password, or JWT.
+
 ### Trusted Headscale control path
+
+Skip this section in Tailscale mode.
 
 - [ ] `https://headscale.example.net/health` verifies without an insecure flag.
 - [ ] A brand-new required client can enroll and reconnect through that URL.
@@ -341,9 +415,21 @@ Securely remove the temporary runtime-key file from the workstation after storin
 - [ ] NPM custom logs do not record authorization headers.
 - [ ] Separate operator and Velociportal runtime keys are active; the bootstrap key is expired.
 
+### Tailscale SaaS preview
+
+Skip this section in Headscale mode.
+
+- [ ] Exact four OAuth scopes and fixed API origin recorded.
+- [ ] Policy, users, and devices reads succeed through the `-` alias.
+- [ ] Token refresh beyond normal expiry, revocation failure, and replacement recovery recorded.
+- [ ] Two real `loginName` values map unambiguously through device owner references.
+- [ ] Non-empty Grants, posture, IP-set, and service-selector policies fail the complete refresh.
+- [ ] Cold-start failure and stale-snapshot retention/recovery recorded.
+- [ ] Support remains labeled preview.
+
 ### Private upstream isolation
 
-First inspect the Headscale app's TrueNAS port settings and record every current or previous host port mapped to container port `8080`; the secure configuration has no such mapping. Do not assume the host port would also be `8080`.
+Always test the raw Velociportal port. In Headscale mode, also inspect the Headscale app's TrueNAS port settings and record every current or previous host port mapped to container port `8080`; the secure configuration has no such mapping. Do not assume the host port would also be `8080`.
 
 From another LAN system, the raw Velociportal port and every recorded Headscale host port must fail to connect. For example, if `8080` or an older `30210` mapping ever existed:
 
@@ -368,7 +454,7 @@ Require intentionally different card sets. Send a caller-supplied `Tailscale-Use
 For every enabled NPM proxy host:
 
 - Record `forward_host` and the supported Headscale destination it joins, or mark it unmatched.
-- Confirm each visible and hidden service against actual Headscale reachability for both users.
+- Confirm each visible and hidden service against actual selected-control-plane reachability for both users.
 - Open every generated card and verify the browser-facing URL.
 - Confirm RFC1918 destinations have an advertised, approved, and client-accepted subnet route.
 
@@ -379,7 +465,7 @@ Restart, one at a time:
 1. Velociportal
 2. Tailscale app
 3. NPM
-4. Headscale
+4. Headscale, only in Headscale mode
 5. TrueNAS
 
 After each restart, repeat health, Headscale HTTPS, Serve, identity, and representative reachability checks. Test restoring NPM configuration/certificate state and Headscale/policy state from backups in a controlled procedure.
@@ -396,8 +482,8 @@ For later updates that do not change immutable Docker-network properties, change
 
 To roll back, restore the prior image reference and redeploy. Preserve:
 
-- `stack.env` and `velociportal.env`;
-- Headscale database/configuration/policy;
+- `stack.env` and the matching provider-specific `velociportal.env`;
+- Headscale database/configuration/policy in Headscale mode, or externally managed OAuth-client records in Tailscale mode;
 - NPM database/configuration/certificates;
 - TrueNAS network aliases and app settings;
 - Tailscale Serve configuration;
@@ -421,6 +507,8 @@ Stop rather than weakening the design when:
 - The policy does not permit intended users to reach Serve port `8081`.
 - A service destination is not tailnet-routable or lacks required subnet-route approval.
 - The policy uses only Grants or the NPM join does not align with supported destinations.
+- Tailscale mode requires an API key, stored access token, configurable API origin, broader OAuth scopes, or a policy construct outside `legacy_acl_visibility_v1`.
+- A provider switch would delete inactive known keys without explicit confirmation or preserve both credential families in the active file.
 
 Never substitute disabled certificate verification, plaintext pre-tailnet Headscale access, a public raw app port, an NPM-only portal identity route, caller-supplied identity headers, a recurring NAS shell workflow, or a source build on the NAS.
 
@@ -431,6 +519,8 @@ If direct native Headscale HTTPS is preferred, follow [Optional native Headscale
 ## Detailed references
 
 - [Headscale + NPM architecture](headscale-npm.md)
+- [Tailscale SaaS + NPM preview](tailscale-saas-npm.md)
+- [Tailscale API reference](../reference/tailscale-api.md)
 - [Tailscale identity headers](../reference/tailscale-headers.md)
 - [Real-deployment validation](../getting-started/validation.md)
 - [Known limitations](../reference/known-limitations.md)
