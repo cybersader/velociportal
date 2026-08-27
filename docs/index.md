@@ -35,9 +35,9 @@
 ```mermaid
 flowchart LR
     Client["New client"] -->|"trusted HTTPS"| NPMControl["Existing NPM<br/>Headscale control proxy"]
-    NPMControl -->|"internal HTTP + upgrades"| HS["Headscale"]
-    HS -->|"internal runtime API"| VP["Velociportal"]
-    NPM["NPM proxy-host API"] -->|"internal API"| VP
+    NPMControl -->|"private HTTP + upgrades"| HS["Headscale"]
+    HS -->|"private runtime API"| VP["Velociportal"]
+    NPM["NPM proxy-host API"] -->|"private API"| VP
     Human["Tailnet human"] -->|"WireGuard"| Serve["Tailscale HTTP Serve"]
     Serve -->|"127.0.0.1:18080"| VP
     VP --> Portal["Filtered portal"]
@@ -60,7 +60,7 @@ Existing NPM provides the trusted HTTPS endpoint needed before a client joins th
 
 -   :material-server-network: **Start with the TrueNAS Quickstart**
 
-    Create the internal network, attach Headscale and NPM through TrueNAS UI settings, configure the trusted NPM control proxy, bootstrap separate keys, configure policy and Serve, deploy one container, and run acceptance.
+    Create the private bridge, attach Headscale and NPM one at a time through TrueNAS UI settings while verifying egress and health, configure the trusted NPM control proxy, bootstrap separate keys, configure policy and Serve, deploy one container, and run acceptance.
 
     [Open the Quickstart →](guides/truenas-scale.md)
 
@@ -102,14 +102,14 @@ Existing NPM provides the trusted HTTPS endpoint needed before a client joins th
 
     - Exact local/internal Headscale HTTP allowlist plus verified HTTPS elsewhere
     - Separate hardened Headscale and NPM transports
-    - Named internal production network and direct runtime aliases
+    - Named private production bridge, required egress, and direct runtime aliases
     - Optional private-CA overlay; no base-stack CA mount
     - NPM credential login and proxy-host discovery
     - Legacy ACL `accept` matching for supported identity and destination forms
     - Trusted `Tailscale-User-*` identity headers
     - Responsive server-rendered portal with embedded htmx
     - Single non-root `FROM scratch` container
-    - Portable one-service production bundle for Compose 2.30+ and Engine 28+
+    - Portable one-service production bundle for Compose 2.33.1+ and Engine 28+
 
 === "Not implemented"
 

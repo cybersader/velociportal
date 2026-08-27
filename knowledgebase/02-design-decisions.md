@@ -47,9 +47,11 @@ Locked exclusions:
 - NPM access lists are not visibility inputs.
 - The `forward_host` join remains subject to real-deployment validation.
 
-## D7 — Named internal upstream network
+## D7 — Named private upstream bridge with egress
 
-The canonical production bundle creates the Docker network `velociportal-upstreams`. Existing apps attach through TrueNAS-managed network settings with these exact aliases:
+The canonical production bundle creates the normal user-defined Docker bridge `velociportal-upstreams`. TrueNAS catalog renderer library 2.3.4 replaces an app's implicit default network whenever any UI-managed network is selected. The RC.1 `internal: true` bridge therefore became Headscale's only network, removed outbound DNS/NAT, and caused mandatory DERP-map retrieval to fail. Live acceptance rolled that attachment back and established the RC.2 correction.
+
+Existing apps attach through TrueNAS-managed network settings with these exact aliases:
 
 - Headscale: `headscale.velociportal.internal`
 - NPM: `npm.velociportal.internal`
@@ -61,11 +63,11 @@ HEADSCALE_URL=http://headscale.velociportal.internal:8080
 NPM_URL=http://npm.velociportal.internal:81
 ```
 
-Headscale port `8080` is container-exposed only (`None`/`Expose` in the TrueNAS app), never LAN-published. Untrusted containers must not join this network. Plain NPM HTTP is accepted only for the exact canonical alias or same-host/loopback compatibility routes; every other NPM location requires verified HTTPS. The base Compose bundle mounts no CA certificate.
+The bridge is egress-capable but does not publish attached container ports to the LAN. Velociportal explicitly prefers its fixed ingress bridge as the default route. Headscale port `8080` is container-exposed only (`None`/`Expose` in the accepted final TrueNAS configuration), never LAN-published. Untrusted containers must not join this bridge, and LAN-negative acceptance must rule out explicit publication or direct routing. Plain NPM HTTP is accepted only for the exact canonical alias or same-host/loopback compatibility routes; every other NPM location requires verified HTTPS. The base Compose bundle mounts no CA certificate.
 
 ## D8 — Exact Headscale HTTP allowlist; verified HTTPS everywhere else
 
-Configuration validation accepts Headscale HTTP only for the exact local/internal host forms encoded in the implementation. The named internal alias is the canonical production case. Headscale URLs outside that allowlist require normal verified HTTPS.
+Configuration validation accepts Headscale HTTP only for the exact local/internal host forms encoded in the implementation. The named private Docker alias is the canonical production case. Headscale URLs outside that allowlist require normal verified HTTPS.
 
 Credentialed transports remain isolated, ignore environment proxies, refuse redirects, require bounded responses, and have no certificate-verification bypass. HTTP acceptance is not proof that the Docker/host route is actually private; setup, doctor, validation, and acceptance documentation must retain that caveat.
 
@@ -81,7 +83,7 @@ This makes NPM an explicit trust and availability boundary:
 - Back up and restore NPM configuration and certificate state with the rest of the application state.
 - If the NPM certificate is not already trusted by a joining client, stop rather than disabling verification.
 
-Use separate Headscale API keys for workstation operators and Velociportal runtime. Runtime Velociportal bypasses NPM and reaches Headscale directly over the internal network. `headscale-ops` remains workstation-only and HTTPS-only.
+Use separate Headscale API keys for workstation operators and Velociportal runtime. Runtime Velociportal bypasses NPM and reaches Headscale directly over the private bridge. `headscale-ops` remains workstation-only and HTTPS-only.
 
 ## D10 — Native Headscale HTTPS/private CA is optional
 

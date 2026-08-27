@@ -28,11 +28,14 @@ services:
       # reaches this socket from the TrueNAS host network namespace.
       - "127.0.0.1:18080:8080"
 
-    # The fixed default bridge carries host-loopback ingress. The stable,
-    # internal upstream network carries only direct Headscale and NPM API calls.
+    # The fixed default bridge carries host-loopback ingress and remains the
+    # preferred default route. The stable private bridge carries direct Headscale
+    # and NPM API calls while preserving the egress those upstreams require.
     networks:
-      default: {}
-      upstreams: {}
+      default:
+        gw_priority: 1
+      upstreams:
+        gw_priority: 0
 
     read_only: true
     cap_drop:
@@ -56,4 +59,3 @@ networks:
           gateway: ${VELOCIPORTAL_GATEWAY:-172.31.255.1}
   upstreams:
     name: velociportal-upstreams
-    internal: true

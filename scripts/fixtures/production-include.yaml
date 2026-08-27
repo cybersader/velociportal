@@ -1,8 +1,0 @@
-name: velociportal-production
-
-# Verification fixture for the TrueNAS root-include shape documented in the
-# Quickstart. Real TrueNAS paths are absolute dataset paths.
-include:
-  - path: ../../deploy/compose.yaml
-    project_directory: ../../deploy
-    env_file: ../../deploy/stack.env.example

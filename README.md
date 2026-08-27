@@ -23,15 +23,15 @@ A self-hosted service portal that reads **Headscale legacy ACL rules** and **Ngi
 
 Follow the [TrueNAS Quickstart](https://cybersader.github.io/velociportal/guides/truenas-scale/). It is the single UI-managed path for:
 
-1. Importing the one-container Compose bundle so the named internal upstream network exists.
-2. Attaching Headscale and NPM with exact private Docker aliases and no LAN-published Headscale API port.
+1. Importing the one-container Compose bundle so the named private upstream bridge exists.
+2. Attaching Headscale and NPM with exact private Docker aliases, preserved outbound DNS, and no LAN-published Headscale API port.
 3. Using the operator's existing trusted NPM HTTPS certificate lifecycle for pre-tailnet Headscale control and workstation administration.
 4. Bootstrapping one short-lived API key, then separating operator and Velociportal runtime keys.
 5. Configuring a real legacy ACL exercise and declarative Tailscale HTTP Serve.
 6. Deploying Velociportal without a source build or recurring NAS shell.
 7. Running two-identity, header-replacement, restart, join, reachability, and LAN-negative acceptance.
 
-The production bundle lives under [`deploy/`](./deploy/). It requires Docker Compose 2.30+ and Docker Engine 28+, pulls one immutable published image, creates `velociportal-upstreams`, runs exactly one Velociportal container, and never builds source on the deployment host. The base stack mounts no CA certificate; the private-CA overlay is optional.
+The production bundle lives under [`deploy/`](./deploy/). It requires Docker Compose 2.33.1+ and Docker Engine 28+, pulls one immutable published image, creates `velociportal-upstreams`, runs exactly one Velociportal container, and never builds source on the deployment host. The base stack mounts no CA certificate; the private-CA overlay is optional.
 
 > [!IMPORTANT]
 > No usable public image, `headscale-ops` release, or support claim is implied until tagged artifacts are actually published, anonymously verified, and the real TrueNAS acceptance matrix passes.
@@ -44,27 +44,27 @@ The production bundle lives under [`deploy/`](./deploy/). It requires Docker Com
 ```mermaid
 flowchart LR
     Client["New or existing client"] -->|"trusted HTTPS"| NPMControl["Existing NPM<br/>Headscale control proxy"]
-    NPMControl -->|"internal HTTP<br/>WebSocket/upgrade preserved"| HS["Headscale"]
-    HS -->|"runtime API<br/>internal HTTP"| VP["Velociportal<br/>snapshot + matcher"]
-    NPM["NPM proxy-host API"] -->|"internal HTTP"| VP
+    NPMControl -->|"private HTTP<br/>WebSocket/upgrade preserved"| HS["Headscale"]
+    HS -->|"runtime API<br/>private HTTP"| VP["Velociportal<br/>snapshot + matcher"]
+    NPM["NPM proxy-host API"] -->|"private HTTP"| VP
     Human["Human tailnet user"] -->|"WireGuard"| Serve["Tailscale HTTP Serve<br/>human identity headers"]
     Serve -->|"host loopback"| VP
     VP --> Portal["Per-user portal"]
     Portal -. "service traffic" .-> NPM
 ```
 
-The named internal Docker network is `velociportal-upstreams`:
+The named private Docker bridge is `velociportal-upstreams`:
 
 ```text
 HEADSCALE_URL=http://headscale.velociportal.internal:8080
 NPM_URL=http://npm.velociportal.internal:81
 ```
 
-Headscale and NPM HTTP are accepted only for their exact canonical internal aliases or same-host/loopback compatibility routes. Every other location requires verified HTTPS. Credentialed clients refuse redirects, ignore environment proxy variables, and bound response sizes. There is no insecure TLS mode.
+Headscale and NPM HTTP are accepted only for their exact canonical private aliases or same-host/loopback compatibility routes. Every other location requires verified HTTPS. Credentialed clients refuse redirects, ignore environment proxy variables, and bound response sizes. There is no insecure TLS mode.
 
 Existing NPM provides the trusted HTTPS endpoint that brand-new clients need before they can join the tailnet. The canonical privacy-preserving form uses split-horizon/private DNS and an existing publicly trusted wildcard certificate obtained with DNS-01, without a public Headscale hostname/address record or exact-host certificate-transparency disclosure. This project does not prescribe manual CA creation as the canonical path. If that endpoint is not already trusted by a client, stop rather than disabling verification.
 
-NPM is therefore an explicit trust and availability boundary. It can observe Headscale control traffic and workstation operator Bearer API keys. Preserve WebSocket/upgrade behavior, avoid authorization-header logging, back up NPM state, and use separate Headscale operator and Velociportal runtime keys. Runtime Velociportal bypasses NPM and uses the internal network directly. `headscale-ops` remains workstation-only and HTTPS-only.
+NPM is therefore an explicit trust and availability boundary. It can observe Headscale control traffic and workstation operator Bearer API keys. Preserve WebSocket/upgrade behavior, avoid authorization-header logging, back up NPM state, and use separate Headscale operator and Velociportal runtime keys. Runtime Velociportal bypasses NPM and uses the private bridge directly. `headscale-ops` remains workstation-only and HTTPS-only.
 
 ## How the portal works
 
@@ -93,7 +93,7 @@ On each request, Velociportal accepts `Tailscale-User-Login` only from `TRUSTED_
 
 - Exact allowlisted local Headscale HTTP plus verified HTTPS elsewhere
 - Separate hardened Headscale and NPM transports with no redirects or environment proxies and bounded responses
-- Named internal production network and exact Headscale/NPM aliases
+- Named private production bridge and exact Headscale/NPM aliases
 - Optional private-CA public-root overlay with no CA mount in the base stack
 - NPM credential JWT and proxy-host client
 - All-or-nothing background snapshot refresh with atomic swap
@@ -141,7 +141,7 @@ No CA state lives on pfSense/the router. Router replacement restores ordinary DN
 | Identity | `Tailscale-User-*` headers from trusted Tailscale Serve |
 | State | Atomic in-memory snapshot; no application database |
 | Container | Multi-stage build to a non-root `FROM scratch` image |
-| Target | TrueNAS SCALE or another Docker host with Compose 2.30+ and Engine 28+ |
+| Target | TrueNAS SCALE or another Docker host with Compose 2.33.1+ and Engine 28+ |
 
 ## Documentation paths
 
@@ -165,10 +165,10 @@ No CA state lives on pfSense/the router. Router replacement restores ordinary DN
 - [x] Minimal non-root container and loopback-only Compose examples
 - [x] Explainable multi-identity validation reports
 - [x] Hardened isolated upstream transports and exact Headscale HTTP allowlist
-- [x] Named internal upstream network with direct runtime aliases
+- [x] Named private upstream bridge with direct runtime aliases and required egress
 - [x] Optional private-CA Compose overlay without a base-stack CA mount
 - [x] Canonical NPM Headscale control-proxy and Tailscale Serve architecture documented
-- [ ] Publish and anonymously verify immutable Velociportal and `headscale-ops` release artifacts
+- [x] Publish and anonymously verify immutable Velociportal and `headscale-ops` release-candidate artifacts
 - [ ] Complete real NPM control-proxy, bootstrap, key-separation, and backup acceptance
 - [ ] Complete two-identity, LAN-negative, restart, join, link, and reachability acceptance
 - [ ] Refine or replace the `forward_host` join

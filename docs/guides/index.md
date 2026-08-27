@@ -3,7 +3,7 @@
 Start with the only implemented adapter pair. Velociportal is a **visibility layer**: it reads policy and service metadata, renders a filtered dashboard, and stays out of backend service traffic.
 
 !!! note "Current support boundary"
-    **Headscale + Nginx Proxy Manager (NPM)** is implemented and fixture-tested. The approved TrueNAS architecture uses Tailscale HTTP Serve for browser identity, existing NPM HTTPS for the pre-tailnet Headscale control path, and a named internal Docker network for runtime upstream calls. Real acceptance is still pending.
+    **Headscale + Nginx Proxy Manager (NPM)** is implemented and fixture-tested. The approved TrueNAS architecture uses Tailscale HTTP Serve for browser identity, existing NPM HTTPS for the pre-tailnet Headscale control path, and a named private Docker bridge with required egress for runtime upstream calls. Real acceptance is still pending.
 
 ## Architecture cards
 

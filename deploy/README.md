@@ -6,10 +6,10 @@ It runs exactly one Velociportal container from a published immutable image and 
 
 Requirements:
 
-- Docker Compose **2.30 or newer** for `env_file.format: raw`.
+- Docker Compose **2.33.1 or newer** for `env_file.format: raw` and service-network `gw_priority`.
 - Docker Engine **28.0 or newer** for localhost-published ports to remain unreachable from hosts on the same L2 network segment.
 - An immutable image tag or digest that has actually been published and verified.
-- A root/UI project name distinct from the repository workflow's `velociportal` project; direct use defaults to `velociportal-production`, while include wrappers must set their own root `name`.
+- A root/UI project name distinct from the repository workflow's `velociportal` project; direct use defaults to `velociportal-production`, while TrueNAS uses the Application Name field with a short-form include wrapper.
 - Existing Headscale and NPM apps attached through UI-managed settings to `velociportal-upstreams` with exact aliases `headscale.velociportal.internal` and `npm.velociportal.internal`.
 - Headscale port `8080` exposed only to attached containers and never LAN-published.
 - Existing NPM trusted HTTPS for pre-tailnet Headscale clients and HTTPS-only `headscale-ops`, with WebSocket/upgrade preservation, separate operator/runtime keys, safe header logging, and tested NPM backups.
@@ -28,10 +28,12 @@ Files:
 
 The base service attaches to exactly two networks:
 
-- `default` is the fixed-subnet ingress bridge. Its gateway is the expected trusted source for host-loopback Tailscale Serve traffic, and the application remains published only as `127.0.0.1:18080:8080`.
-- `upstreams` has the stable Docker name `velociportal-upstreams` and is `internal: true`. It carries direct credentialed API traffic without a host-gateway alias or host-published management port.
+- `default` is the fixed-subnet ingress bridge. Its gateway is the expected trusted source for host-loopback Tailscale Serve traffic, and the application remains published only as `127.0.0.1:18080:8080`. Its `gw_priority: 1` keeps it as Velociportal's preferred default route.
+- `upstreams` has the stable Docker name `velociportal-upstreams`. It is a normal private user-defined bridge with `gw_priority: 0`, so Headscale and NPM retain the outbound NAT and Docker DNS they require when TrueNAS selects it as their only rendered service network.
 
-Attach the existing Headscale and NPM containers to `velociportal-upstreams` through their TrueNAS/UI-managed network settings. Give them the aliases `headscale.velociportal.internal` and `npm.velociportal.internal`, respectively. Those aliases are private Docker DNS names; do not publish them in DNS, attach untrusted containers, or use recurring `docker network connect` shell commands. Set Headscale's host port mode to None/Expose so container port `8080` is never LAN-published.
+A normal bridge does not publish container ports to the LAN. It permits attached containers to communicate and provides outbound NAT; LAN reachability still requires an explicit host publication or separately configured direct routing. Keep untrusted containers off the bridge and confirm the final LAN-negative checks.
+
+TrueNAS catalog renderer library 2.3.4 replaces a service's implicit app-default network when any UI-managed network is selected. Attach the existing Headscale and NPM containers to `velociportal-upstreams` one at a time through their UI-managed settings, then verify outbound DNS and application health before continuing. Give them the aliases `headscale.velociportal.internal` and `npm.velociportal.internal`, respectively. Those aliases are private Docker DNS names; do not publish them in DNS or use recurring `docker network connect` shell commands. Set Headscale's host port mode to None/Expose only after its private alias and NPM HTTPS control path both pass, so container port `8080` is never LAN-published in the accepted final state.
 
 A separately managed Compose stack can join the network with an external declaration such as:
 

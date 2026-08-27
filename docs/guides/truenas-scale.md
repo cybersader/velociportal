@@ -12,10 +12,10 @@ Velociportal remains one read-only container. Headscale, NPM, and the existing T
 ```mermaid
 flowchart LR
     NewClient["Brand-new client"] -->|"trusted HTTPS"| NPMControl["Existing NPM<br/>Headscale control proxy"]
-    NPMControl -->|"internal HTTP<br/>WebSocket/upgrade"| HS["Headscale"]
+    NPMControl -->|"private HTTP<br/>WebSocket/upgrade"| HS["Headscale"]
     Ops["Workstation<br/>headscale-ops"] -->|"trusted HTTPS + operator key"| NPMControl
-    HS -->|"internal HTTP + runtime key"| VP["Velociportal"]
-    Catalog["NPM proxy-host API"] -->|"internal HTTP"| VP
+    HS -->|"private HTTP + runtime key"| VP["Velociportal"]
+    Catalog["NPM proxy-host API"] -->|"private HTTP"| VP
     Human["Human tailnet client"] -->|"WireGuard + HTTP :8081"| Serve["Existing Tailscale app<br/>host network + Serve"]
     Serve -->|"127.0.0.1:18080"| VP
 ```
@@ -23,8 +23,8 @@ flowchart LR
 Three paths stay distinct:
 
 1. **Browser ingress:** Tailscale HTTP Serve on tailnet port `8081` forwards to `http://127.0.0.1:18080`. WireGuard protects transport and Serve injects human identity headers. NPM is not portal identity.
-2. **Runtime upstreams:** Velociportal reaches Headscale and NPM directly over the named internal Docker network `velociportal-upstreams`.
-3. **Pre-tailnet control and operations:** existing NPM provides trusted HTTPS for Headscale clients and HTTPS-only `headscale-ops`, then proxies to Headscale over the internal network.
+2. **Runtime upstreams:** Velociportal reaches Headscale and NPM directly over the named private Docker bridge `velociportal-upstreams`.
+3. **Pre-tailnet control and operations:** existing NPM provides trusted HTTPS for Headscale clients and HTTPS-only `headscale-ops`, then proxies to Headscale over the private bridge.
 
 Tailnet HTTP prevents ordinary on-path LAN/router/ISP interception because the traffic is inside WireGuard. It does not protect against compromised clients, TrueNAS, NPM, Tailscale/Headscale control components, or trusted host workloads.
 
@@ -33,7 +33,7 @@ Tailnet HTTP prevents ordinary on-path LAN/router/ISP interception because the t
 | Location | Responsibility |
 |---|---|
 | **TrueNAS UI** | Import Compose, attach app networks/aliases, configure Headscale/NPM/Tailscale, manage datasets, and deploy Velociportal |
-| **Existing NPM** | Trusted Headscale HTTPS endpoint and certificate lifecycle; control/API proxy to internal Headscale |
+| **Existing NPM** | Trusted Headscale HTTPS endpoint and certificate lifecycle; control/API proxy to privately addressed Headscale |
 | **One-time Headscale app shell** | Create the first short-lived Headscale API key |
 | **Administration workstation** | HTTPS-only `headscale-ops`, policy preparation, client enrollment, and validation |
 | **Client devices** | Trust the existing NPM HTTPS endpoint, join Headscale, and browse the portal through Serve |
@@ -44,7 +44,7 @@ Tailnet HTTP prevents ordinary on-path LAN/router/ISP interception because the t
 You need:
 
 - TrueNAS SCALE with Headscale, NPM, and the official Tailscale app already installed.
-- Docker Engine **28.0 or newer** and Docker Compose **2.30 or newer** in the selected deployment interface.
+- Docker Engine **28.0 or newer** and Docker Compose **2.33.1 or newer** in the selected deployment interface.
 - A published, immutable, anonymously verified Velociportal image. If it does not exist yet, stop; do not substitute `latest` or a NAS source build.
 - A published, checksum-verified `headscale-ops` release on the administration workstation. If it does not exist yet, stop; the canonical NAS journey does not fall back to a source build.
 - An existing NPM hostname and automated certificate lifecycle that brand-new clients already trust before joining the tailnet. The canonical privacy-preserving form uses split-horizon/private DNS plus an existing publicly trusted wildcard certificate obtained with DNS-01; do not publish the Headscale hostname or address in public DNS.
@@ -92,6 +92,9 @@ Prepare the files from `deploy/` on an administration workstation and transfer t
 
 Do not include `compose.private-ca.yaml` in the canonical path. The base stack has no CA mount.
 
+!!! danger "RC.1 requires network recreation"
+    Docker cannot change an existing network's `Internal` property. Before installing RC.2 over an RC.1 attempt, keep Headscale and NPM detached, delete only the stopped stateless Velociportal Custom App through the TrueNAS UI, and verify that `velociportal-upstreams` disappeared. If it remains, confirm it has zero endpoints and stop for explicit approval before any manual removal. Re-importing RC.2 while the old network remains can reproduce the Headscale DNS failure.
+
 Set an immutable published image in `stack.env`. Keep the fixed subnet, gateway, and trusted proxy values together unless they conflict:
 
 ```text
@@ -100,32 +103,33 @@ VELOCIPORTAL_GATEWAY=172.31.255.1
 VELOCIPORTAL_TRUSTED_PROXY_CIDR=172.31.255.1/32
 ```
 
-Import the Compose definition with a project name distinct from the repository workflow, such as `velociportal-production`. The import creates the named internal network:
+Import the Compose definition with a TrueNAS Application Name distinct from the repository workflow, such as `velociportal-production`. The import creates the named private bridge:
 
 ```text
 velociportal-upstreams
 ```
 
-At this stage Velociportal may remain stopped or unhealthy because real upstream aliases and credentials are not configured yet. Do not expose a temporary port or weaken configuration to make it healthy early.
+Headscale and NPM require outbound DNS and HTTPS. The bridge is therefore a normal user-defined Docker bridge rather than `internal: true`; this does not publish attached container ports to the LAN. Velociportal's fixed ingress bridge remains its preferred route through explicit Compose gateway priority.
 
-For TrueNAS Custom App YAML, use an include wrapper whose root sets the project name:
+At this stage the intentionally blank `HEADSCALE_API_KEY`, `NPM_EMAIL`, and `NPM_PASSWORD` fail startup validation. After confirming that the networks were created, stop only the Velociportal app to prevent a restart loop. Do not expose a temporary port, add fake credentials, or weaken validation to make it healthy early.
+
+For TrueNAS Custom App YAML, place a `.env` file beside `compose.yaml` and use the proven short-form include wrapper. Set the project identity with the TrueNAS **Application Name** field:
 
 ```yaml
-name: velociportal-production
-
 include:
-  - path: /mnt/<pool>/app-config/velociportal/compose.yaml
-    project_directory: /mnt/<pool>/app-config/velociportal
-    env_file: /mnt/<pool>/app-config/velociportal/stack.env
+  - /mnt/<pool>/app-config/velociportal/compose.yaml
+services: {}
 ```
 
-## 3. Attach Headscale and NPM to the internal network
+## 3. Attach Headscale and NPM to the private bridge
 
 **Use: TrueNAS app network settings**
 
 Edit each existing app through the TrueNAS UI. Do not use recurring `docker network connect` shell commands.
 
-Attach both apps to:
+TrueNAS catalog renderer library 2.3.4 replaces an app's implicit default network whenever any UI-managed network is selected. The selected bridge must therefore provide the app's outbound NAT and Docker DNS as well as private service traffic. RC.1 incorrectly made this bridge internal; live acceptance showed Headscale losing DERP-map DNS and restart-looping. RC.2 corrects that failure.
+
+Attach **Headscale first** to:
 
 ```text
 velociportal-upstreams
@@ -133,16 +137,16 @@ velociportal-upstreams
 
 Assign exact aliases:
 
-| App | Alias | Internal port |
+| App | Alias | Container port |
 |---|---|---:|
 | Headscale | `headscale.velociportal.internal` | `8080` |
 | NPM | `npm.velociportal.internal` | `81` |
 
-Keep untrusted containers off this network.
+Keep Headscale's existing host publication temporarily during this checkpoint. After the update, require Headscale to remain running, fetch its external DERP map, resolve external DNS, and pass `/health`. If any check fails, remove only the added network entry and confirm recovery before continuing.
 
-For Headscale's API/listener port, set the host bind mode to **None/Expose** or the equivalent UI option. Container port `8080` must be reachable only by attached containers. It must never be published on the TrueNAS LAN address.
+Only after Headscale passes, attach NPM and verify its management/API health, existing listeners, outbound DNS/HTTPS, certificate operations, and representative proxy hosts. If any check fails, remove only NPM's added network entry. Keep untrusted containers off the bridge.
 
-Apply each app update and confirm both apps remain running. The external Headscale hostname is configured next; do not publish internal aliases in DNS.
+Set Headscale's host bind mode to **None/Expose** only after its private alias and the trusted NPM HTTPS control path both pass. Container port `8080` must never remain published on the TrueNAS LAN address in the accepted final topology. Do not publish the private aliases in DNS.
 
 ## 4. Set the external Headscale URL to existing NPM HTTPS
 
@@ -186,7 +190,7 @@ NPM is now an explicit trust and availability boundary:
 - Custom access/error logging must not record `Authorization` or full request headers.
 - NPM database, configuration, and certificate state must be included in backup and restore tests.
 
-Do not route runtime Velociportal through this proxy; its dedicated key uses the internal Headscale alias directly.
+Do not route runtime Velociportal through this proxy; its dedicated key uses the private Headscale alias directly.
 
 From the administration workstation, before creating any API key:
 
@@ -219,7 +223,7 @@ headscale-ops configure --server-url https://headscale.example.net
 headscale-ops status
 ```
 
-`headscale-ops` remains HTTPS-only in this architecture. It must not connect to the internal HTTP alias or disable verification.
+`headscale-ops` remains HTTPS-only in this architecture. It must not connect to the private HTTP alias or disable verification.
 
 List keys and record the bootstrap key ID:
 
@@ -301,7 +305,7 @@ Apply the Tailscale app update. Confirm the route returns after a Tailscale app 
 
 **Use: Compose UI**
 
-Set `velociportal.env` to the direct internal runtime paths:
+Set `velociportal.env` to the direct private-alias runtime paths:
 
 ```text
 HEADSCALE_URL="http://headscale.velociportal.internal:8080"
@@ -312,7 +316,7 @@ NPM_PASSWORD="<dedicated-npm-password>"
 POLL_INTERVAL="30s"
 ```
 
-The canonical base stack mounts no CA file. Headscale HTTP is accepted because the hostname is the exact internal alias. The implementation's allowlist does not prove network confinement; the acceptance checks below do.
+The canonical base stack mounts no CA file. Headscale HTTP is accepted because the hostname is the exact private Docker alias. The alias suffix does not prove network confinement; the acceptance checks below must prove that no raw LAN publication or unintended direct route exists.
 
 Redeploy the imported Compose project. Require:
 
@@ -337,7 +341,7 @@ Securely remove the temporary runtime-key file from the workstation after storin
 - [ ] NPM custom logs do not record authorization headers.
 - [ ] Separate operator and Velociportal runtime keys are active; the bootstrap key is expired.
 
-### Internal upstream isolation
+### Private upstream isolation
 
 First inspect the Headscale app's TrueNAS port settings and record every current or previous host port mapped to container port `8080`; the secure configuration has no such mapping. Do not assume the host port would also be `8080`.
 
@@ -386,7 +390,9 @@ Use the complete [real-deployment validation worksheet](../getting-started/valid
 
 Never deploy `latest`.
 
-To update Velociportal, change only the immutable image reference, redeploy through the same UI, and repeat acceptance. Velociportal has no database or persistent application volume.
+The RC.1-to-RC.2 correction is not an ordinary image update: remove only the stopped stateless RC.1 Custom App, verify the old `velociportal-upstreams` network disappeared, and then install RC.2 so Docker creates it with `Internal=false`. Do not attach Headscale or NPM while the old `Internal=true` network exists.
+
+For later updates that do not change immutable Docker-network properties, change only the immutable image reference, redeploy through the same UI, and repeat acceptance. Velociportal has no database or persistent application volume.
 
 To roll back, restore the prior image reference and redeploy. Preserve:
 
@@ -408,7 +414,7 @@ Stop rather than weakening the design when:
 - NPM does not preserve Headscale WebSocket/upgrade behavior.
 - NPM authorization-header logging cannot be disabled or ruled out.
 - Headscale port `8080` or Velociportal port `18080` is reachable through the LAN address.
-- Headscale or NPM cannot attach to `velociportal-upstreams` with the exact aliases.
+- Headscale or NPM cannot attach to `velociportal-upstreams` with the exact aliases while retaining outbound DNS/HTTPS and normal application health.
 - An untrusted container must share the upstream network.
 - The Tailscale app cannot use host networking or declarative Serve.
 - Serve does not replace caller-supplied identity headers.

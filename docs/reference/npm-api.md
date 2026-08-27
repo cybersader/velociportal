@@ -39,7 +39,7 @@ The client still contains a `GET /api/nginx/access-lists` helper, but the runtim
 
 ## Transport security
 
-NPM authentication sends a reusable password. Plain HTTP is accepted only for the exact canonical internal alias or same-host/loopback compatibility routes; production uses `http://npm.velociportal.internal:81` on `velociportal-upstreams`. Use HTTPS with a valid certificate for every other location.
+NPM authentication sends a reusable password. Plain HTTP is accepted only for the exact canonical private Docker alias or same-host/loopback compatibility routes; production uses `http://npm.velociportal.internal:81` on `velociportal-upstreams`. Use HTTPS with a valid certificate for every other location.
 
 !!! warning "No scoped Velociportal token"
     NPM uses user credential login rather than a purpose-built read-only API key. Use a dedicated account with the least permissions that still permit proxy-host listing, protect the password, and verify its effective privileges in your NPM version.
