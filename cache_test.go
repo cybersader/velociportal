@@ -236,6 +236,43 @@ func TestCache_PartialFailure(t *testing.T) {
 	}
 }
 
+type fakeControlPlane struct {
+	provider controlPlaneProvider
+	result   *ControlPlaneResult
+	err      error
+}
+
+func (f *fakeControlPlane) Provider() controlPlaneProvider { return f.provider }
+func (f *fakeControlPlane) Load(context.Context, controlPlaneProgress) (*ControlPlaneResult, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.result, nil
+}
+
+func TestCache_ControlPlaneFailureRetainsExactSnapshot(t *testing.T) {
+	u := newTestUpstreams(t)
+	provider := &fakeControlPlane{
+		provider: controlPlaneTailscale,
+		result: &ControlPlaneResult{
+			Policy:   &Policy{ACLs: []ACLRule{{Action: "accept", Src: []string{"*"}, Dst: []string{"*:*"}}}},
+			Metadata: ControlPlaneMetadata{Provider: controlPlaneTailscale, PolicyMode: legacyACLVisibilityV1, SupportLevel: controlPlanePreview},
+		},
+	}
+	cache := NewCache(provider, u.npm, time.Hour, discardLogger())
+	if err := cache.refresh(context.Background()); err != nil {
+		t.Fatalf("initial refresh error = %v", err)
+	}
+	good := cache.Get()
+	provider.err = &controlPlaneLoadError{Provider: controlPlaneTailscale, Stage: controlPlaneStageUsers, Err: errors.New("users unavailable")}
+	if err := cache.refresh(context.Background()); err == nil {
+		t.Fatal("refresh error = nil")
+	}
+	if cache.Get() != good {
+		t.Fatal("cache pointer changed after control-plane failure")
+	}
+}
+
 func TestCache_GetReturnsNilBeforeStart(t *testing.T) {
 	u := newTestUpstreams(t)
 	c := NewCache(u.hs, u.npm, time.Hour, discardLogger())

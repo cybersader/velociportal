@@ -23,9 +23,10 @@ Options:
   --env-file FILE  Read and atomically update FILE (default ".env")
   -h, --help       Show this help
 
-The setup wizard stores upstream credentials locally with mode 0600. It does not
-choose TRUSTED_PROXY_CIDR; use "setup observe-proxy" to observe and explicitly
-confirm the exact proxy source.
+The setup wizard selects Headscale (supported) or Tailscale SaaS (preview), prompts
+only for the selected provider's credentials, stores the file with mode 0600, and does not choose
+TRUSTED_PROXY_CIDR. Use "setup observe-proxy" to observe and explicitly confirm
+the exact proxy source.
 `
 
 type setupSecretReader func(prompt string) ([]byte, error)
@@ -142,16 +143,63 @@ func runSetupWizard(envFile string, stdin io.Reader, stdout, stderr io.Writer, r
 	}
 
 	reader := bufio.NewReader(stdin)
-	values["HEADSCALE_URL"], err = promptSetupValue(reader, stdout, stderr, "Headscale base URL", values["HEADSCALE_URL"], "", normalizeHeadscaleBaseURL)
+	existingProvider, existingProviderKnown := setupExistingControlPlane(values)
+	if exists && strings.TrimSpace(values["CONTROL_PLANE"]) == "" {
+		fmt.Fprintln(stderr, implicitHeadscaleDeprecationWarning)
+	}
+	providerValue, err := promptSetupValue(
+		reader,
+		stdout,
+		stderr,
+		"Control plane (headscale=supported, tailscale=preview)",
+		string(existingProvider),
+		string(controlPlaneHeadscale),
+		validateSetupControlPlane,
+	)
 	if err != nil {
 		return err
 	}
-	if classifyHeadscaleTransport(values["HEADSCALE_URL"]) == headscaleTransportRestrictedHTTP {
-		fmt.Fprintln(stderr, headscaleHTTPSetupWarning)
+	provider := controlPlaneProvider(providerValue)
+	if existingProviderKnown && provider != existingProvider {
+		inactiveKeys := setupPresentKeys(values, inactiveControlPlaneConfigKeys(provider))
+		if len(inactiveKeys) > 0 {
+			fmt.Fprintf(stdout, "Switching to %s removes these inactive credential keys: %s\n", provider, strings.Join(inactiveKeys, ", "))
+			confirmed, confirmErr := promptSetupConfirmation(reader, stdout, "Remove these keys and continue? [y/N]: ")
+			if confirmErr != nil {
+				return fmt.Errorf("confirm provider switch: %w", confirmErr)
+			}
+			if !confirmed {
+				return errors.New("provider switch cancelled; environment file was not changed")
+			}
+			for _, key := range inactiveKeys {
+				delete(values, key)
+			}
+		}
 	}
-	values["HEADSCALE_API_KEY"], err = promptSetupSecret("Headscale API key", values["HEADSCALE_API_KEY"], readSecret, stdout, stderr)
-	if err != nil {
-		return err
+	values["CONTROL_PLANE"] = string(provider)
+
+	switch provider {
+	case controlPlaneHeadscale:
+		values["HEADSCALE_URL"], err = promptSetupValue(reader, stdout, stderr, "Headscale base URL", values["HEADSCALE_URL"], "", normalizeHeadscaleBaseURL)
+		if err != nil {
+			return err
+		}
+		if classifyHeadscaleTransport(values["HEADSCALE_URL"]) == headscaleTransportRestrictedHTTP {
+			fmt.Fprintln(stderr, headscaleHTTPSetupWarning)
+		}
+		values["HEADSCALE_API_KEY"], err = promptSetupSecret("Headscale API key", values["HEADSCALE_API_KEY"], readSecret, stdout, stderr)
+		if err != nil {
+			return err
+		}
+	case controlPlaneTailscale:
+		values["TAILSCALE_OAUTH_CLIENT_ID"], err = promptSetupValue(reader, stdout, stderr, "Tailscale OAuth client ID", values["TAILSCALE_OAUTH_CLIENT_ID"], "", validateRequiredTrimmedSetupValue("TAILSCALE_OAUTH_CLIENT_ID"))
+		if err != nil {
+			return err
+		}
+		values["TAILSCALE_OAUTH_CLIENT_SECRET"], err = promptSetupSecret("Tailscale OAuth client secret", values["TAILSCALE_OAUTH_CLIENT_SECRET"], readSecret, stdout, stderr)
+		if err != nil {
+			return err
+		}
 	}
 	values["NPM_URL"], err = promptSetupValue(reader, stdout, stderr, "Nginx Proxy Manager base URL", values["NPM_URL"], "", normalizeNPMBaseURL)
 	if err != nil {
@@ -210,6 +258,61 @@ func readSetupValues(path string) (map[string]string, bool, error) {
 		return make(map[string]string), false, nil
 	}
 	return nil, false, err
+}
+
+func setupExistingControlPlane(values map[string]string) (controlPlaneProvider, bool) {
+	selector := controlPlaneProvider(strings.ToLower(strings.TrimSpace(values["CONTROL_PLANE"])))
+	if selector == controlPlaneHeadscale || selector == controlPlaneTailscale {
+		return selector, true
+	}
+	if setupHasAnyKey(values, headscaleRequiredConfigKeys) {
+		return controlPlaneHeadscale, true
+	}
+	if setupHasAnyKey(values, tailscaleRequiredConfigKeys) {
+		return controlPlaneTailscale, true
+	}
+	return controlPlaneHeadscale, false
+}
+
+func setupHasAnyKey(values map[string]string, keys []string) bool {
+	for _, key := range keys {
+		if _, ok := values[key]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+func setupPresentKeys(values map[string]string, keys []string) []string {
+	present := make([]string, 0, len(keys))
+	for _, key := range keys {
+		if _, ok := values[key]; ok {
+			present = append(present, key)
+		}
+	}
+	return present
+}
+
+func validateSetupControlPlane(value string) (string, error) {
+	provider := controlPlaneProvider(strings.ToLower(strings.TrimSpace(value)))
+	if provider != controlPlaneHeadscale && provider != controlPlaneTailscale {
+		return "", errors.New("CONTROL_PLANE must be headscale or tailscale")
+	}
+	return string(provider), nil
+}
+
+func promptSetupConfirmation(reader *bufio.Reader, stdout io.Writer, prompt string) (bool, error) {
+	fmt.Fprint(stdout, prompt)
+	line, err := readSetupLine(reader)
+	if err != nil {
+		return false, err
+	}
+	switch strings.ToLower(strings.TrimSpace(line)) {
+	case "y", "yes":
+		return true, nil
+	default:
+		return false, nil
+	}
 }
 
 func promptSetupValue(reader *bufio.Reader, stdout, stderr io.Writer, label, existing, fallback string, validate func(string) (string, error)) (string, error) {

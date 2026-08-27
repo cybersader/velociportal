@@ -1,14 +1,14 @@
 # Known Limitations
 
-This page describes the current implementation and approved deployment boundary, not the long-term design.
+This page describes the current implementation and approved deployment boundary, not the long-term design. One process selects either Headscale or Tailscale SaaS. Headscale is the supported implementation path; Tailscale SaaS is a labeled preview until live acceptance passes.
 
 ## Policy support
 
-- **Legacy ACL rules only.** Velociportal evaluates `acls` entries with `action: "accept"`. Grants, SSH, posture, application capabilities, and other newer policy constructs are not evaluated.
-- **Ports and protocols are ignored for visibility.** Destination ports are stripped and protocol fields are not modeled. A card may appear even when the real rule permits only another port or protocol. Headscale remains the enforcement boundary.
+- **Legacy ACL rules only.** Both providers use `legacy_acl_visibility_v1` and evaluate `acls` entries with `action: "accept"`. Non-empty Grants, posture, IP-set, service-selector, and unknown access-control constructs fail the entire refresh rather than broadening visibility. SSH is reported but is never card evidence.
+- **Ports and protocols are ignored for visibility.** Destination ports are stripped and protocol fields are not modeled. A card may appear even when the real rule permits only another port or protocol. The selected control plane remains the enforcement boundary.
 - **`autogroup:internet` fails closed.** It is not treated as a wildcard.
 - **No human source-tag inference.** `tagOwners` and tags on owned nodes do not make a human a `tag:*` source. Tags resolve destinations only.
-- **Empty or unsupported policy means no cards.** Velociportal requires a supported matching ACL rule even if Headscale has broader defaults.
+- **Empty policy means zero cards; unsupported policy blocks refresh.** An empty policy or empty `acls` section is a complete zero-card snapshot. A non-empty unsupported access-control construct rejects the new snapshot; a warm process retains the exact previous snapshot and a cold process remains without one.
 
 ## Service matching
 
@@ -18,16 +18,28 @@ This page describes the current implementation and approved deployment boundary,
 - **Card URLs reuse NPM's backend scheme.** An HTTPS frontend with an HTTP backend can produce an incorrect `http://` card. Validate every link.
 - **Only the first NPM domain becomes the card.** Additional domains are not rendered separately.
 
+## Provider selection and credentials
+
+- **One provider per process.** `CONTROL_PLANE=headscale|tailscale` selects one tailnet source. Multi-tailnet aggregation is not implemented.
+- **Implicit Headscale is temporary compatibility.** An absent selector defaults to Headscale only for the v0.2 line and emits a value-free warning. Explicit selection becomes mandatory in v0.3.
+- **Inactive known credentials are ignored.** Runtime warns only by variable name. Doctor and validation include active and inactive known credential material in redaction inputs. The setup wizard requires confirmation before deleting inactive known keys during a provider switch and leaves the file byte-for-byte unchanged on refusal or input abort.
+- **Tailscale is OAuth-only.** There is no API-key fallback, access-token variable, configurable API origin, or explicit tailnet variable. The OAuth credential's `-` alias selects the tailnet.
+- **Tailscale remains preview.** Fixture coverage is not live proof of scopes, token refresh/revocation, owner mapping, policy shape, or reachability.
+
 ## Runtime upstream transport
 
 - **Headscale HTTP is narrowly allowlisted.** Configuration accepts HTTP only for exact local/internal host forms implemented by the validator. The canonical production value is `http://headscale.velociportal.internal:8080`. Other locations require verified HTTPS.
 - **The allowlist does not prove confinement.** It cannot prove that `velociportal-upstreams` exists, that the alias identifies the intended container, that port `8080` is not published elsewhere, that direct routing is absent, or that untrusted containers cannot join the bridge. Those are deployment acceptance requirements.
 - **NPM HTTP is narrowly allowlisted and topology-dependent.** Canonical runtime NPM traffic uses `http://npm.velociportal.internal:81`; only that exact alias and same-host/loopback compatibility routes may use HTTP. Every other NPM location requires verified HTTPS. The hostname check still cannot prove the deployed route is private.
-- **Credentialed clients refuse redirects and environment proxies.** Both transports bound response headers/bodies. HTTPS uses normal verification and TLS 1.2 or newer. There is no insecure TLS mode.
-- **The private bridge is egress-capable by design.** TrueNAS catalog apps replace their implicit default network when any UI-managed network is selected, so Headscale and NPM require `velociportal-upstreams` to provide outbound NAT and Docker DNS. A normal user-defined bridge does not publish ports to the LAN, but host or privileged workloads remain within the deployment trust boundary.
+- **Credentialed clients refuse redirects and environment proxies.** All provider and NPM transports bound response headers/bodies. HTTPS uses normal verification and TLS 1.2 or newer. There is no insecure TLS mode.
+- **Tailscale uses one fixed origin.** Production calls only `https://api.tailscale.com/api/v2`, keeps OAuth access tokens in memory, refreshes early, and retries once after `401`. The adapter rejects responses that advertise pagination or partial users/devices data.
+- **Tailscale owner mapping is intentionally strict.** Blank, duplicate, ambiguous, or unresolved users/device owners reject the refresh. Tagged devices may omit a human owner; untagged devices may not.
+- **The private bridge is egress-capable by design.** TrueNAS catalog apps replace their implicit default network when any UI-managed network is selected, so NPM and, in Headscale mode, Headscale require `velociportal-upstreams` to provide outbound NAT and Docker DNS. Tailscale SaaS API traffic uses the preferred default network. A normal user-defined bridge does not publish ports to the LAN, but host or privileged workloads remain within the deployment trust boundary.
 - **The base production stack has no CA mount.** The optional private-CA overlay mounts only a readable public root for verified-HTTPS alternatives. Never mount a CA private key or leaf private key.
 
 ## NPM Headscale control proxy
+
+This section applies only when `CONTROL_PLANE=headscale`. Tailscale SaaS mode still reads NPM proxy hosts but does not require Headscale, `headscale-ops`, or the NPM Headscale control proxy.
 
 - **NPM is a trust and availability boundary.** Existing NPM terminates the trusted Headscale HTTPS origin required by brand-new clients and HTTPS-only `headscale-ops`, then forwards to privately addressed Headscale HTTP.
 - **NPM can observe control traffic and operator Bearer API keys.** Keep operator and Velociportal runtime keys separate. Runtime Velociportal bypasses NPM.
@@ -52,11 +64,13 @@ This page describes the current implementation and approved deployment boundary,
 - **Production requires Docker Compose 2.33.1+ and Docker Engine 28+.** Raw env-file parsing, explicit network gateway priority, and safe localhost publication depend on those versions.
 - **Production always consults the registry.** `pull_policy: always` prevents silent reuse of a tagged local image, but operators must still record the resolved digest and never use `latest`.
 - **Production and repository projects must remain distinct.** Use a production project name other than the repository workflow's `velociportal` project.
-- **No source build or recurring NAS shell is canonical.** The one normal Headscale app-shell action is the first short-lived API-key bootstrap. Routine administration is workstation-driven through HTTPS-only `headscale-ops`.
+- **No source build or recurring NAS shell is canonical.** In Headscale mode, the one normal app-shell action is the first short-lived API-key bootstrap and routine administration is workstation-driven through HTTPS-only `headscale-ops`. Tailscale mode uses externally managed OAuth credentials and requires no Headscale shell.
 - **No CA or durable application state belongs on the router.** Router replacement restores ordinary DNS and routing only. Durable Headscale, NPM, policy, Serve, network, and Velociportal state stays on TrueNAS and backups.
 
 ## Validation status
 
-Automated tests and fixtures do not prove the real NPM control path, Docker confinement, certificate lifecycle, identity injection, restart recovery, backup restore, join correctness, links, or per-user reachability. RC.1 failed the first live TrueNAS network-attachment gate and was rolled back safely; RC.2 corrects that topology but has not yet passed end-to-end TrueNAS acceptance.
+Schema-v2 validation reports record non-sensitive provider, policy-mode, support-level, and explicit/implicit selection metadata. They do not prove Docker confinement, identity injection, restart recovery, backup restore, join correctness, links, or per-user reachability.
 
-No public support claim is warranted until at least two real identities, trusted pre-tailnet NPM HTTPS, separate keys, WebSocket/upgrade behavior, authorization-header logging posture, LAN-negative Headscale/Velociportal ports, restart persistence, backup/restore, every NPM join, every card link, and actual Headscale reachability have been checked. Use the [real-deployment worksheet](../getting-started/validation.md).
+For Headscale, RC.1 failed the first live TrueNAS network-attachment gate and was rolled back safely; RC.2 corrects that topology but has not yet passed end-to-end acceptance. For Tailscale SaaS, live OAuth scopes, token refresh/revocation, API response shapes, owner mapping, unsupported-policy failures, and reachability have not yet been accepted.
+
+No public support claim is warranted until the selected provider's live checklist plus at least two real identities, LAN-negative Velociportal access, restart persistence, every NPM join, every card link, and actual control-plane reachability have been checked. Use the [real-deployment worksheet](../getting-started/validation.md).

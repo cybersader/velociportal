@@ -45,6 +45,7 @@ TrueNAS catalog apps render a selected UI-managed network as their only service 
 
 | Variable | Canonical value | Notes |
 |---|---|---|
+| `CONTROL_PLANE` | `headscale` | Explicit supported provider selection; v0.3 will require it |
 | `HEADSCALE_URL` | `http://headscale.velociportal.internal:8080` | Exact private Docker alias; base URL without `/api/v1` |
 | `HEADSCALE_API_KEY` | `...` | Dedicated Velociportal runtime key; unscoped administrator credential |
 | `NPM_URL` | `http://npm.velociportal.internal:81` | Exact private Docker alias |

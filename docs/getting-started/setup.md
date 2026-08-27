@@ -31,18 +31,28 @@ After health succeeds, use `make validate` for join evidence and complete the re
 You need:
 
 - A local Git checkout, GNU Make, Go 1.22+, Docker Engine **28.0+**, and Docker Compose **2.33.1+**.
-- Reachable Headscale and NPM endpoints from the container network used by this local workflow.
+- One selected control plane: reachable Headscale plus NPM, or a dedicated Tailscale OAuth client plus reachable NPM.
 - A trusted Tailscale Serve or other supported proxy path that strips caller-supplied identity headers and injects `Tailscale-User-Login`.
 - A private path from that identity source to the loopback-published application port.
 
-The canonical production runtime values are:
+The supported Headscale production values are:
 
 ```text
+CONTROL_PLANE=headscale
 HEADSCALE_URL=http://headscale.velociportal.internal:8080
 NPM_URL=http://npm.velociportal.internal:81
 ```
 
-Those aliases work only when the relevant containers are attached to `velociportal-upstreams`. A local source checkout may instead use verified HTTPS for Headscale and NPM endpoints reachable from its own Compose network.
+The Tailscale SaaS preview instead uses:
+
+```text
+CONTROL_PLANE=tailscale
+TAILSCALE_OAUTH_CLIENT_ID=...
+TAILSCALE_OAUTH_CLIENT_SECRET=...
+NPM_URL=http://npm.velociportal.internal:81
+```
+
+The private aliases work only when the relevant local containers are attached to `velociportal-upstreams`. Tailscale API traffic always uses the fixed verified SaaS origin over the preferred default network. A local source checkout may instead use verified HTTPS for Headscale and NPM endpoints reachable from its own Compose network.
 
 Headscale and NPM HTTP are accepted only for their exact canonical private Docker aliases or same-host/loopback compatibility routes. Every other location requires verified HTTPS.
 
@@ -60,12 +70,17 @@ Run:
 make setup
 ```
 
-The wizard reads API keys and passwords through hidden terminal input, atomically writes an owner-only environment file, preserves unknown keys, and intentionally leaves `TRUSTED_PROXY_CIDR` unset until observation.
+The wizard selects the provider first, prompts only for that credential family plus NPM, reads secrets through hidden terminal input, writes `CONTROL_PLANE` explicitly, atomically writes an owner-only environment file, preserves unknown keys, and intentionally leaves `TRUSTED_PROXY_CIDR` unset until observation.
+
+When switching providers, the wizard lists the inactive known key names and requires explicit confirmation before deleting them. Refusal or EOF leaves the original file byte-for-byte unchanged. It creates no plaintext credential backup.
 
 | Variable | Purpose | Safe guidance |
 |---|---|---|
-| `HEADSCALE_URL` | Headscale base URL | Exact allowlisted local/internal HTTP or verified HTTPS elsewhere; no `/api/v1` |
-| `HEADSCALE_API_KEY` | Runtime Bearer key | Use a key distinct from the workstation operator key |
+| `CONTROL_PLANE` | Select one provider | `headscale` (supported) or `tailscale` (preview); always explicit in new files |
+| `HEADSCALE_URL` | Headscale-only base URL | Exact allowlisted local/internal HTTP or verified HTTPS elsewhere; no `/api/v1` |
+| `HEADSCALE_API_KEY` | Headscale-only runtime Bearer key | Use a key distinct from the workstation operator key |
+| `TAILSCALE_OAUTH_CLIENT_ID` | Tailscale-only OAuth identity | Dedicated least-privilege client; diagnostics do not print it |
+| `TAILSCALE_OAUTH_CLIENT_SECRET` | Tailscale-only OAuth secret | Exact four read scopes; never commit it or pre-create an access-token variable |
 | `NPM_URL` | NPM base URL | Exact internal/same-host HTTP allowlist; verified HTTPS elsewhere |
 | `NPM_EMAIL` | NPM login identity | Prefer a dedicated account that can list proxy hosts |
 | `NPM_PASSWORD` | NPM login secret | Never commit it |
@@ -81,7 +96,7 @@ export PRIVATE_CA_FILE="$HOME/.local/share/velociportal/certs/rootCA.pem"
 
 The base Compose file has no CA mount. Never set `PRIVATE_CA_FILE` to a CA private key, leaf private key, directory, or combined private-key bundle.
 
-The setup wizard warns when an allowlisted Headscale HTTP URL is selected because configuration validation cannot prove Docker/host route confinement or external inaccessibility.
+The setup wizard warns when an allowlisted Headscale HTTP URL is selected because configuration validation cannot prove Docker/host route confinement or external inaccessibility. Tailscale mode has no API URL, API-key, access-token, or tailnet prompt: production always uses `https://api.tailscale.com/api/v2` and the OAuth credential's `-` alias.
 
 ## 2. Observe the trusted proxy source
 
@@ -107,7 +122,7 @@ Optional identity previews:
 make doctor DOCTOR_ARGS='--identity alice@example.com --identity bob@example.com'
 ```
 
-Doctor verifies configuration, environment-file mode, upstream calls, complete snapshot construction, and join coverage. For allowlisted Headscale HTTP it emits a warning **before** contacting the upstream because it cannot prove the route is private.
+Doctor verifies configuration, explicit/implicit provider selection, support label, environment-file mode, provider-specific progress, NPM calls, complete snapshot construction, and join coverage. Tailscale mode reports OAuth, policy, users, and devices stages and remains labeled preview. For allowlisted Headscale HTTP it emits a warning **before** contacting the upstream because it cannot prove the route is private.
 
 Resolve every failed check and review every warning. In particular:
 
@@ -127,7 +142,7 @@ make up
 
 This contributor workflow deliberately builds the current source tree. The production TrueNAS journey does not. The resulting container is non-root, read-only, and `FROM scratch`.
 
-If startup fails, confirm Headscale policy, Headscale nodes, and NPM proxy hosts can all be fetched. The cache publishes only after all three succeed.
+If startup fails, confirm the selected provider's complete load and NPM proxy hosts can all be fetched. Headscale loads policy and nodes; Tailscale loads OAuth, policy, users, and devices. The cache publishes only after the entire provider result plus NPM succeeds.
 
 ## 5. Check snapshot health
 
@@ -153,7 +168,7 @@ make validate VALIDATE_ARGS="--identity user-a=${VP_USER_A} --identity user-b=${
 unset VP_USER_A VP_USER_B
 ```
 
-For allowlisted Headscale HTTP, validation emits a non-failing route-confinement notice and includes the limitation in the report without printing the URL or credential.
+Schema-v2 validation records non-sensitive provider, policy-mode, support-level, and explicit/implicit selection metadata. For allowlisted Headscale HTTP, it emits a non-failing route-confinement notice without printing the URL or credential. Tailscale reports retain `support_level: preview` until live SaaS acceptance passes.
 
 Summary reports remain topology-minimized, not anonymous. Private reports can expose internal hostnames, forward targets, and policy relationships and must not be published.
 
@@ -163,13 +178,15 @@ The local workflow cannot replace the canonical acceptance matrix. Before any su
 
 | Test | Expected result |
 |---|---|
-| Trusted NPM Headscale HTTPS | Brand-new client and HTTPS-only `headscale-ops` succeed without insecure flags |
-| NPM protocol behavior | Headscale WebSocket/upgrade behavior works and auth headers are not logged |
+| Headscale-only trusted NPM HTTPS | Brand-new client and HTTPS-only `headscale-ops` succeed without insecure flags |
+| Headscale-only NPM protocol behavior | Headscale WebSocket/upgrade behavior works and auth headers are not logged |
+| Tailscale-only OAuth | Exact scopes, token refresh/revocation, users/devices reads, and credential redaction pass live checks |
+| Tailscale-only policy negatives | Unsupported Grants, posture, IP-set, and service policies fail closed |
 | Runtime upstream isolation | Headscale `8080` and Velociportal raw port are unreachable on the LAN address |
 | User A through Serve | Only User A's supported matches appear |
 | User B through Serve | A meaningfully different card set appears |
 | Caller-supplied identity header | Serve strips or replaces it |
-| Every card | Browser URL and actual Headscale/NPM reachability agree |
+| Every card | Browser URL and actual selected-control-plane/NPM reachability agree |
 | Restart sequence | Velociportal, Tailscale, NPM, Headscale, and TrueNAS recover |
 | Backup/restore | NPM certificate/config and Headscale/policy state can be restored |
 

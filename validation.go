@@ -27,14 +27,16 @@ Options:
 `
 
 const (
-	validationSchemaVersion             = "1"
-	maxValidationIdentities             = 20
-	maxValidationLabelBytes             = 64
-	validationScopeNotice               = "Matcher evidence only: this report does not prove Headscale authorization, proxy identity injection, service reachability, or link correctness."
-	headscaleHTTPValidationScopeNotice  = "For Headscale HTTP, this report does not prove private Docker/host route confinement or external inaccessibility."
-	headscaleHTTPValidationWarning      = "WARNING: Headscale HTTP route confinement and external inaccessibility are not proven."
-	headscaleHTTPRouteUnverifiedCode    = "headscale-http-route-unverified"
-	headscaleHTTPRouteUnverifiedMessage = "The restricted Headscale HTTP path is configured; private Docker/host route confinement and external inaccessibility remain unverified."
+	validationSchemaVersion              = "2"
+	maxValidationIdentities              = 20
+	maxValidationLabelBytes              = 64
+	validationScopeNotice                = "Matcher evidence only: this report does not prove selected control-plane authorization, proxy identity injection, service reachability, or link correctness."
+	headscaleHTTPValidationScopeNotice   = "For Headscale HTTP, this report does not prove private Docker/host route confinement or external inaccessibility."
+	headscaleHTTPValidationWarning       = "WARNING: Headscale HTTP route confinement and external inaccessibility are not proven."
+	headscaleHTTPRouteUnverifiedCode     = "headscale-http-route-unverified"
+	headscaleHTTPRouteUnverifiedMessage  = "The restricted Headscale HTTP path is configured; private Docker/host route confinement and external inaccessibility remain unverified."
+	implicitControlPlaneSelectionCode    = "implicit-control-plane-selection"
+	implicitControlPlaneSelectionMessage = "CONTROL_PLANE is implicit Headscale compatibility behavior for v0.2; set CONTROL_PLANE=headscale before v0.3."
 )
 
 type validationFormat string
@@ -125,12 +127,20 @@ type ValidationReport struct {
 	Scope          string                     `json:"scope"`
 	Privacy        string                     `json:"privacy"`
 	ConfigSource   string                     `json:"config_source"`
+	ControlPlane   ValidationControlPlane     `json:"control_plane"`
 	Build          BuildInfo                  `json:"build"`
 	Snapshot       ValidationSnapshot         `json:"snapshot"`
 	Services       []ValidationService        `json:"services"`
 	Identities     []ValidationIdentityReport `json:"identities"`
 	CommonServices []string                   `json:"common_services"`
 	Findings       []ValidationFinding        `json:"findings"`
+}
+
+type ValidationControlPlane struct {
+	Provider     controlPlaneProvider     `json:"provider"`
+	PolicyMode   string                   `json:"policy_mode"`
+	SupportLevel controlPlaneSupportLevel `json:"support_level"`
+	Selection    string                   `json:"selection"`
 }
 
 type ValidationSnapshot struct {
@@ -188,14 +198,14 @@ type ValidationFinding struct {
 
 type validationDependencies struct {
 	now          func() time.Time
-	loadSnapshot func(context.Context, *HeadscaleClient, *NPMClient) (*CacheData, error)
+	loadSnapshot func(context.Context, ControlPlane, *NPMClient) (*CacheData, error)
 }
 
 func defaultValidationDependencies() validationDependencies {
 	return validationDependencies{
 		now: time.Now,
-		loadSnapshot: func(ctx context.Context, headscale *HeadscaleClient, npm *NPMClient) (*CacheData, error) {
-			return loadSnapshot(ctx, headscale, npm)
+		loadSnapshot: func(ctx context.Context, controlPlane ControlPlane, npm *NPMClient) (*CacheData, error) {
+			return loadSnapshot(ctx, controlPlane, npm)
 		},
 	}
 }
@@ -272,8 +282,15 @@ func runValidationCommandWithDependencies(args []string, stdout, stderr io.Write
 		fmt.Fprintf(stderr, "velociportal: validate: %s\n", sanitizeDoctorError(err, secrets))
 		return 1
 	}
-	secrets = append(secrets, cfg.HeadscaleAPIKey, cfg.NPMPassword)
-	headscaleHTTP := classifyHeadscaleTransport(cfg.HeadscaleURL) == headscaleTransportRestrictedHTTP
+	secrets = append(secrets, cfg.ControlPlaneRedactionValues...)
+	secrets = append(secrets, cfg.HeadscaleAPIKey, cfg.TailscaleOAuthClientID, cfg.TailscaleOAuthClientSecret, cfg.NPMPassword)
+	if !cfg.ControlPlaneExplicit {
+		fmt.Fprintln(stderr, implicitHeadscaleDeprecationWarning)
+	}
+	if len(cfg.InactiveControlPlaneKeys) > 0 {
+		fmt.Fprintf(stderr, "WARNING: inactive control-plane configuration is ignored: %s\n", strings.Join(cfg.InactiveControlPlaneKeys, ", "))
+	}
+	headscaleHTTP := cfg.ControlPlane == controlPlaneHeadscale && classifyHeadscaleTransport(cfg.HeadscaleURL) == headscaleTransportRestrictedHTTP
 	if headscaleHTTP {
 		fmt.Fprintln(stderr, headscaleHTTPValidationWarning)
 	}
@@ -284,15 +301,21 @@ func runValidationCommandWithDependencies(args []string, stdout, stderr io.Write
 		dependencies.loadSnapshot = defaultValidationDependencies().loadSnapshot
 	}
 
-	headscale, npm := newUpstreamClients(cfg)
-	snapshot, err := dependencies.loadSnapshot(context.Background(), headscale, npm)
+	controlPlane, npm := newUpstreamClients(cfg)
+	snapshot, err := dependencies.loadSnapshot(context.Background(), controlPlane, npm)
 	if err != nil {
-		secrets = append(secrets, doctorNPMToken(npm))
-		fmt.Fprintf(stderr, "velociportal: validate: %s\n", sanitizeDoctorError(err, secrets))
+		secrets = append(secrets, doctorControlPlaneToken(controlPlane), doctorNPMToken(npm))
+		fmt.Fprintf(stderr, "velociportal: validate: %s\n", sanitizeValidationRuntimeError(err, privacy, secrets))
 		return 1
 	}
 
 	report := buildValidationReport(snapshot, identities, privacy, configSource, dependencies.now().UTC())
+	report.ControlPlane.Selection = "explicit"
+	if !cfg.ControlPlaneExplicit {
+		report.ControlPlane.Selection = "implicit"
+		addValidationFinding(&report, "notice", implicitControlPlaneSelectionCode, "", implicitControlPlaneSelectionMessage)
+		sortValidationFindings(&report)
+	}
 	if headscaleHTTP {
 		addHeadscaleHTTPValidationNotice(&report)
 	}
@@ -307,6 +330,19 @@ func runValidationCommandWithDependencies(args []string, stdout, stderr io.Write
 		return 1
 	}
 	return 0
+}
+
+func sanitizeValidationRuntimeError(err error, privacy validationPrivacy, secrets []string) string {
+	if privacy == validationPrivacySummary {
+		var unsupported *unsupportedPolicyError
+		if errors.As(err, &unsupported) {
+			if unsupported.Section == "" {
+				return "selected control-plane policy uses unsupported access-control semantics"
+			}
+			return fmt.Sprintf("selected control-plane policy section %q uses unsupported access-control semantics", unsupported.Section)
+		}
+	}
+	return sanitizeDoctorError(err, secrets)
 }
 
 func safeValidationFlagError(err error) string {
@@ -344,17 +380,25 @@ func validationConfigLookup(envFile string) (configLookup, string, []string, err
 
 func buildValidationReport(snapshot *CacheData, identities []validationIdentityInput, privacy validationPrivacy, configSource string, generatedAt time.Time) ValidationReport {
 	report := ValidationReport{
-		SchemaVersion:  validationSchemaVersion,
-		GeneratedAt:    generatedAt,
-		Status:         "pass",
-		Scope:          validationScopeNotice,
-		Privacy:        string(privacy),
-		ConfigSource:   configSource,
+		SchemaVersion: validationSchemaVersion,
+		GeneratedAt:   generatedAt,
+		Status:        "pass",
+		Scope:         validationScopeNotice,
+		Privacy:       string(privacy),
+		ConfigSource:  configSource,
+		ControlPlane: ValidationControlPlane{
+			Selection: "unknown",
+		},
 		Build:          currentBuildInfo(),
 		Services:       []ValidationService{},
 		Identities:     []ValidationIdentityReport{},
 		CommonServices: []string{},
 		Findings:       []ValidationFinding{},
+	}
+	if snapshot != nil {
+		report.ControlPlane.Provider = snapshot.ControlPlane.Provider
+		report.ControlPlane.PolicyMode = snapshot.ControlPlane.PolicyMode
+		report.ControlPlane.SupportLevel = snapshot.ControlPlane.SupportLevel
 	}
 	if snapshot == nil || snapshot.Policy == nil {
 		report.Status = "review_required"
@@ -507,7 +551,7 @@ func structuralValidationMatches(proxyHost ProxyHost, snapshot *CacheData) ([]de
 	tagIPs := make(map[string][]string)
 	for _, node := range snapshot.Nodes {
 		for _, tag := range nodeTags(node) {
-			tagIPs[tag] = append(tagIPs[tag], node.IPAddresses...)
+			tagIPs[tag] = append(tagIPs[tag], node.Addresses...)
 		}
 	}
 	context := &matchContext{hosts: snapshot.Policy.Hosts, tagIPs: tagIPs}
@@ -696,6 +740,14 @@ func renderValidationText(writer io.Writer, report ValidationReport) error {
 	fmt.Fprintf(&output, "Velociportal validation report %s\n", report.SchemaVersion)
 	fmt.Fprintf(&output, "STATUS %s\n", strings.ToUpper(report.Status))
 	fmt.Fprintf(&output, "Generated: %s\n", report.GeneratedAt.Format(time.RFC3339))
+	fmt.Fprintf(
+		&output,
+		"Control plane: provider=%s policy_mode=%s support_level=%s selection=%s\n",
+		report.ControlPlane.Provider,
+		report.ControlPlane.PolicyMode,
+		report.ControlPlane.SupportLevel,
+		report.ControlPlane.Selection,
+	)
 	fmt.Fprintf(&output, "Build: version=%s revision=%s source_state=%s\n", report.Build.Version, report.Build.Revision, report.Build.SourceState)
 	fmt.Fprintf(&output, "Snapshot: %d ACL rules, %d nodes, %d proxy hosts, %d evaluated services\n", report.Snapshot.ACLRules, report.Snapshot.Nodes, report.Snapshot.ProxyHosts, report.Snapshot.EvaluatedServices)
 	fmt.Fprintln(&output)

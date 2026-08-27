@@ -1,13 +1,12 @@
 # 01 — API Research
 
-> What we know about the two upstream APIs Velociportal reads. Confirm exact schema
+> What we know about the selectable control-plane APIs and NPM service-discovery API Velociportal reads. Confirm exact schema
 > against your own server's OpenAPI docs — response fields evolve between versions.
 
 ## Headscale API (self-hosted control plane)
 
 **Auth:** HTTP **Bearer** token. Create a key with `headscale apikeys create`, then
-send `Authorization: Bearer <API_KEY>` on every request. (Distinct from Tailscale
-SaaS, which uses HTTP Basic.)
+send `Authorization: Bearer <API_KEY>` on every request. The Tailscale adapter instead uses OAuth client credentials and an in-memory bearer token.
 
 **Modern API (v0.26+/v0.28+):** native REST replacing the old gRPC-gateway. Serves
 an OpenAPI 3.1 spec at `/api/v1/openapi` and interactive docs at `/api/v1/docs`
@@ -50,18 +49,27 @@ curl -H "Authorization: Bearer $HS_API_KEY" \
 - Server ships generated Go gRPC/REST types under `gen/go`.
 - Community: Python wrappers; JS/TS admin UIs (Headplane, headscale-admin).
 
-## Tailscale SaaS API (fallback target, if not self-hosting Headscale)
+## Tailscale SaaS API (implemented preview provider)
 
-**Auth:** API key via HTTP **Basic** (`-u tskey-api-xxx:`) OR OAuth2
-client-credentials from `POST /api/v2/oauth/token` (token expires after **1 hour** —
-cache and refresh). Base: `https://api.tailscale.com/api/v2`.
+**Locked production auth:** OAuth2 client credentials only. Velociportal does not expose an API-key fallback, access-token variable, configurable API origin, or explicit tailnet setting. Production base is fixed at `https://api.tailscale.com/api/v2`; the OAuth credential's `-` alias selects its tailnet.
+
+Exact requested scopes:
+
+- `policy_file:read`
+- `devices:posture_attributes:read`
+- `devices:core:read`
+- `users:read`
 
 | Method | Path | Purpose |
 |--------|------|---------|
-| GET | `/tailnet/{tailnet}/acl` | Get ACL (HuJSON, or JSON with `Accept: application/json`). Contains groups + tagOwners. |
-| GET | `/tailnet/{tailnet}/devices` | List devices, each with a `tags` array. |
-| GET | `/tailnet/{tailnet}/users` | List tailnet users. |
-| POST | `/oauth/token` | OAuth2 client-credentials → 1-hour bearer token. |
+| POST | `/oauth/token` | Acquire a bearer token; retain only in memory, coalesce refreshes, refresh about five minutes early, retry one request after `401`. |
+| GET | `/tailnet/-/acl` | Read policy and validate it through `legacy_acl_visibility_v1`. |
+| GET | `/tailnet/-/users` | Read exact IDs and `loginName` values used for owner resolution. |
+| GET | `/tailnet/-/devices` | Read device IDs, owner references, addresses, names, and tags. |
+
+Owner mapping must resolve each untagged device to exactly one user login matching `Tailscale-User-Login`. Blank, duplicate, ambiguous, or unresolved identities reject the entire refresh. Tagged devices may omit a human owner. Users/devices responses that advertise pagination or partial data are rejected rather than published incompletely.
+
+The adapter is fixture-tested for paths, OAuth lifecycle, concurrency, one `401` retry, redaction, conversion, partial-response rejection, and hardened transport. It remains labeled preview until live scopes, token lifetime/refresh/revocation, response shapes, owner mapping, policy negatives, and reachability pass.
 
 ## Nginx Proxy Manager (NPM) API — the service registry
 

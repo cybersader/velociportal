@@ -273,22 +273,19 @@ func isPortLike(s string) bool {
 }
 
 func nodeTags(n Node) []string {
-	tags := append([]string(nil), n.Tags...)
-	tags = append(tags, n.ForcedTags...)
-	tags = append(tags, n.ValidTags...)
-	return tags
+	return n.Tags
 }
 
 func buildMatchContext(login string, data *CacheData) *matchContext {
 	tagIPs := map[string][]string{}
 	var selfIPs []string
 	for _, node := range data.Nodes {
-		owned := loginMatches(login, node.User.Name)
+		owned := loginMatches(login, node.OwnerLogin)
 		for _, tag := range nodeTags(node) {
-			tagIPs[tag] = append(tagIPs[tag], node.IPAddresses...)
+			tagIPs[tag] = append(tagIPs[tag], node.Addresses...)
 		}
 		if owned {
-			selfIPs = append(selfIPs, node.IPAddresses...)
+			selfIPs = append(selfIPs, node.Addresses...)
 		}
 	}
 	return &matchContext{

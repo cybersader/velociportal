@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -17,6 +18,23 @@ const (
 	doctorTestPassword = "fixture-npm-password"
 	doctorTestToken    = "fixture-jwt-secret"
 )
+
+type doctorScriptedControlPlane struct {
+	provider controlPlaneProvider
+	result   *ControlPlaneResult
+}
+
+func (d *doctorScriptedControlPlane) Provider() controlPlaneProvider { return d.provider }
+
+func (d *doctorScriptedControlPlane) Load(_ context.Context, progress controlPlaneProgress) (*ControlPlaneResult, error) {
+	if d.provider == controlPlaneTailscale {
+		reportControlPlaneProgress(progress, controlPlaneStageAuth, 0)
+		reportControlPlaneProgress(progress, controlPlaneStagePolicy, len(d.result.Policy.ACLs))
+		reportControlPlaneProgress(progress, controlPlaneStageUsers, 2)
+		reportControlPlaneProgress(progress, controlPlaneStageDevices, len(d.result.Nodes))
+	}
+	return d.result, nil
+}
 
 type doctorHTTPFixture struct {
 	headscale *httptest.Server
@@ -102,6 +120,7 @@ func writeDoctorFixtureResponse(w http.ResponseWriter, status int, body string) 
 
 func doctorFixtureConfig(fixture *doctorHTTPFixture) map[string]string {
 	return map[string]string{
+		"CONTROL_PLANE":      "headscale",
 		"HEADSCALE_URL":      fixture.headscale.URL,
 		"HEADSCALE_API_KEY":  doctorTestAPIKey,
 		"NPM_URL":            fixture.npm.URL,
@@ -116,13 +135,16 @@ func doctorFixtureConfig(fixture *doctorHTTPFixture) map[string]string {
 func setDoctorProcessConfig(t *testing.T, values map[string]string) {
 	t.Helper()
 	t.Setenv(processEnvEncodingKey, "")
-	for _, key := range append(append([]string(nil), requiredConfigKeys...), "LISTEN_ADDR", "POLL_INTERVAL") {
+	t.Setenv("CONTROL_PLANE", values["CONTROL_PLANE"])
+	keys := append(append([]string(nil), requiredConfigKeys...), tailscaleRequiredConfigKeys...)
+	keys = append(keys, "LISTEN_ADDR", "POLL_INTERVAL")
+	for _, key := range keys {
 		t.Setenv(key, values[key])
 	}
 }
 
 func doctorFixtureDependencies(fixture *doctorHTTPFixture) doctorDependencies {
-	return doctorDependencies{newClients: func(cfg *Config) (*HeadscaleClient, *NPMClient) {
+	return doctorDependencies{newClients: func(cfg *Config) (ControlPlane, *NPMClient) {
 		return NewHeadscaleClient(cfg.HeadscaleURL, cfg.HeadscaleAPIKey, fixture.headscale.Client()),
 			NewNPMClient(cfg.NPMURL, cfg.NPMEmail, cfg.NPMPassword, fixture.npm.Client())
 	}}
@@ -162,12 +184,14 @@ func TestRunDoctorCommandWarningsAndIdentityPreviews(t *testing.T) {
 		"PASS config source: process environment",
 		"PASS env file mode: not applicable",
 		"PASS config: required values validated",
+		"PASS control plane selection: headscale (explicit)",
 		"WARN trusted proxy CIDR: 10.0.0.0/8",
 		"PASS Headscale policy: loaded 2 ACL rules",
 		"PASS Headscale nodes: loaded 0 nodes",
 		"PASS NPM authentication: credentials accepted",
 		"PASS NPM proxy hosts: loaded 3 proxy hosts",
 		"PASS snapshot: complete (2 ACL rules, 0 nodes, 3 proxy hosts)",
+		"PASS control plane metadata: provider=headscale policy_mode=legacy_acl_visibility_v1 support_level=supported",
 		"WARN supported join coverage: 2/3 enabled proxy hosts",
 		`WARN unmatched join: "orphan.example.com" -> "docker-orphan"`,
 		`PASS identity preview "alice@example.com": 1 card`,
@@ -188,12 +212,63 @@ func TestRunDoctorCommandWarningsAndIdentityPreviews(t *testing.T) {
 	}
 }
 
+func TestRunDoctorCommandReportsTailscalePreviewWithoutCredentialDisclosure(t *testing.T) {
+	fixture := newDoctorHTTPFixture(t)
+	values := doctorFixtureConfig(fixture)
+	values["CONTROL_PLANE"] = "tailscale"
+	delete(values, "HEADSCALE_URL")
+	delete(values, "HEADSCALE_API_KEY")
+	values["TAILSCALE_OAUTH_CLIENT_ID"] = "private-oauth-client-id"
+	values["TAILSCALE_OAUTH_CLIENT_SECRET"] = "private-oauth-client-secret"
+	setDoctorProcessConfig(t, values)
+
+	controlPlane := &doctorScriptedControlPlane{
+		provider: controlPlaneTailscale,
+		result: &ControlPlaneResult{
+			Policy: &Policy{ACLs: []ACLRule{{Action: "accept", Src: []string{"*"}, Dst: []string{"10.0.0.1:*"}}}},
+			Metadata: ControlPlaneMetadata{
+				Provider:     controlPlaneTailscale,
+				PolicyMode:   legacyACLVisibilityV1,
+				SupportLevel: controlPlanePreview,
+			},
+		},
+	}
+	dependencies := doctorDependencies{newClients: func(cfg *Config) (ControlPlane, *NPMClient) {
+		return controlPlane, NewNPMClient(cfg.NPMURL, cfg.NPMEmail, cfg.NPMPassword, fixture.npm.Client())
+	}}
+	var stdout, stderr bytes.Buffer
+	code := runDoctorCommandWithDependencies(nil, &stdout, &stderr, dependencies)
+	if code != 0 {
+		t.Fatalf("exit code = %d, stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+	for _, want := range []string{
+		"PASS control plane selection: tailscale (explicit)",
+		"PASS Tailscale OAuth: access token acquired",
+		"PASS Tailscale policy: loaded 1 ACL rules",
+		"PASS Tailscale users: loaded 2 users",
+		"PASS Tailscale devices: loaded 0 devices",
+		"provider=tailscale policy_mode=legacy_acl_visibility_v1 support_level=preview",
+	} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Errorf("stdout missing %q:\n%s", want, stdout.String())
+		}
+	}
+	if strings.Contains(stdout.String(), headscaleHTTPDoctorWarning) {
+		t.Fatalf("Tailscale doctor emitted Headscale route warning: %q", stdout.String())
+	}
+	for _, forbidden := range []string{"private-oauth-client-id", "private-oauth-client-secret"} {
+		if strings.Contains(stdout.String()+stderr.String(), forbidden) {
+			t.Fatalf("doctor exposed %q", forbidden)
+		}
+	}
+}
+
 func TestRunDoctorCommandWarnsBeforeCallingHeadscaleOverHTTP(t *testing.T) {
 	fixture := newDoctorHTTPFixtureWithHeadscaleTLS(t, false)
 	setDoctorProcessConfig(t, doctorFixtureConfig(fixture))
 	baseDependencies := doctorFixtureDependencies(fixture)
 	var stdout, stderr bytes.Buffer
-	dependencies := doctorDependencies{newClients: func(cfg *Config) (*HeadscaleClient, *NPMClient) {
+	dependencies := doctorDependencies{newClients: func(cfg *Config) (ControlPlane, *NPMClient) {
 		if !strings.Contains(stdout.String(), headscaleHTTPDoctorWarning) {
 			t.Error("Headscale HTTP warning was not written before upstream clients were created")
 		}
@@ -243,6 +318,33 @@ func TestRunDoctorCommandRejectsMalformedRawComposeSecret(t *testing.T) {
 	}
 	if fixture.policyHits.Load() != 0 || fixture.nodesHits.Load() != 0 || fixture.authHits.Load() != 0 || fixture.proxyHits.Load() != 0 {
 		t.Fatal("doctor contacted upstreams after configuration decoding failed")
+	}
+}
+
+func TestRunDoctorCommandWarnsForImplicitHeadscaleAndInactiveCredentials(t *testing.T) {
+	fixture := newDoctorHTTPFixture(t)
+	values := doctorFixtureConfig(fixture)
+	delete(values, "CONTROL_PLANE")
+	values["TAILSCALE_OAUTH_CLIENT_ID"] = "inactive-client-id"
+	values["TAILSCALE_OAUTH_CLIENT_SECRET"] = "inactive-client-secret"
+	setDoctorProcessConfig(t, values)
+
+	code, stdout, stderr := runDoctorForTest(nil, fixture)
+	if code != 0 || stderr != "" {
+		t.Fatalf("exit=%d stdout=%q stderr=%q", code, stdout, stderr)
+	}
+	for _, want := range []string{
+		"WARN control plane selection: " + implicitHeadscaleDeprecationMessage,
+		"WARN inactive control-plane configuration: ignoring TAILSCALE_OAUTH_CLIENT_ID, TAILSCALE_OAUTH_CLIENT_SECRET",
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("stdout missing %q:\n%s", want, stdout)
+		}
+	}
+	for _, secret := range []string{"inactive-client-id", "inactive-client-secret"} {
+		if strings.Contains(stdout+stderr, secret) {
+			t.Fatalf("doctor exposed inactive credential %q", secret)
+		}
 	}
 }
 

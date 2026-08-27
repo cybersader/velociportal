@@ -10,14 +10,15 @@ Velociportal decides **what shows on the dashboard**, nothing more. Authenticati
 
 Velociportal is one static non-root binary in one minimal container, with no application database and no persisted cache. Secrets come from administrator-managed environment files or secret facilities and are never baked into the image.
 
-## D3 — Headscale and NPM remain the data sources
+## D3 — One selected control plane plus NPM
 
-The runtime reads:
+`CONTROL_PLANE=headscale|tailscale` selects exactly one provider per process:
 
-- Headscale `GET /api/v1/policy` and `GET /api/v1/node`.
-- NPM `POST /api/tokens` and `GET /api/nginx/proxy-hosts`.
+- Headscale loads `GET /api/v1/policy` and `GET /api/v1/node`.
+- Tailscale SaaS loads OAuth plus `/tailnet/-/acl`, `/users`, and `/devices`.
+- NPM remains outside the control-plane interface and supplies `POST /api/tokens` plus `GET /api/nginx/proxy-hosts`.
 
-A single polling loop builds a complete in-memory snapshot. It publishes only when policy, nodes, and proxy hosts all succeed. Metadata added later must not become a second authorization model.
+A single polling loop publishes only after one complete neutral control-plane result plus NPM succeeds. Multi-tailnet aggregation, an application database, and persisted cache remain deferred. Metadata must not become a second authorization model.
 
 ## D4 — Human identity comes from Tailscale HTTP Serve
 
@@ -37,7 +38,7 @@ Use Go 1.22+, standard-library HTTP/JSON primitives, embedded server-rendered HT
 
 ## D6 — Legacy ACL matching only
 
-Velociportal evaluates legacy `acls` entries with `action: "accept"`. It resolves supported user/group sources and destination hosts, CIDRs, policy aliases, destination tags, wildcard, and `autogroup:self` against NPM `forward_host`.
+Both providers use `legacy_acl_visibility_v1`. Velociportal evaluates legacy `acls` entries with `action: "accept"` and resolves supported user/group sources and destination hosts, CIDRs, policy aliases, destination tags, wildcard, and `autogroup:self` against NPM `forward_host`. Non-empty Grants, posture, IP sets, service selectors, unknown access-control sections/actions, and unsafe selectors reject the complete refresh. SSH is reported separately and never becomes card evidence.
 
 Locked exclusions:
 
@@ -51,10 +52,7 @@ Locked exclusions:
 
 The canonical production bundle creates the normal user-defined Docker bridge `velociportal-upstreams`. TrueNAS catalog renderer library 2.3.4 replaces an app's implicit default network whenever any UI-managed network is selected. The RC.1 `internal: true` bridge therefore became Headscale's only network, removed outbound DNS/NAT, and caused mandatory DERP-map retrieval to fail. Live acceptance rolled that attachment back and established the RC.2 correction.
 
-Existing apps attach through TrueNAS-managed network settings with these exact aliases:
-
-- Headscale: `headscale.velociportal.internal`
-- NPM: `npm.velociportal.internal`
+NPM always attaches through TrueNAS-managed settings with alias `npm.velociportal.internal`. Headscale mode additionally attaches Headscale with alias `headscale.velociportal.internal`; Tailscale SaaS mode needs no Headscale attachment and uses the preferred default network for fixed-origin HTTPS egress.
 
 Velociportal uses:
 
@@ -71,9 +69,9 @@ Configuration validation accepts Headscale HTTP only for the exact local/interna
 
 Credentialed transports remain isolated, ignore environment proxies, refuse redirects, require bounded responses, and have no certificate-verification bypass. HTTP acceptance is not proof that the Docker/host route is actually private; setup, doctor, validation, and acceptance documentation must retain that caveat.
 
-## D9 — Existing NPM is the pre-tailnet Headscale HTTPS boundary
+## D9 — Existing NPM is the Headscale-mode pre-tailnet HTTPS boundary
 
-Brand-new clients need a trusted HTTPS Headscale control URL before they can join the tailnet. Existing NPM provides that endpoint using split-horizon/private DNS plus the operator's existing automated DNS-01 wildcard-certificate lifecycle, then proxies to Headscale over `velociportal-upstreams`. Do not publish the exact Headscale hostname/address in public DNS or issue an exact-host public leaf certificate that discloses it through certificate-transparency logs.
+When Headscale is selected, brand-new clients need a trusted HTTPS Headscale control URL before they can join the tailnet. Existing NPM provides that endpoint using split-horizon/private DNS plus the operator's existing automated DNS-01 wildcard-certificate lifecycle, then proxies to Headscale over `velociportal-upstreams`. Do not publish the exact Headscale hostname/address in public DNS or issue an exact-host public leaf certificate that discloses it through certificate-transparency logs.
 
 This makes NPM an explicit trust and availability boundary:
 
@@ -99,4 +97,20 @@ No CA private key, certificate lifecycle, application database, policy file, or 
 
 ## D13 — No public support claim before real acceptance
 
-Unit tests, fixtures, Compose rendering, and documentation builds are not production acceptance. Public support requires the canonical TrueNAS path to pass trusted NPM HTTPS checks, bootstrap/key separation, two distinct human identities, header replacement, LAN-negative raw-port tests, restart recovery, NPM join review, and comparison with actual Headscale reachability.
+Unit tests, fixtures, Compose rendering, and documentation builds are not production acceptance. Headscale support requires the canonical TrueNAS path to pass trusted NPM HTTPS checks, bootstrap/key separation, two distinct human identities, header replacement, LAN-negative raw-port tests, restart recovery, NPM join review, and comparison with actual reachability. Tailscale SaaS must remain preview until live OAuth scopes, token refresh/revocation, owner mapping, unsupported-policy negatives, two identities, and actual reachability also pass.
+
+## D14 — Tailscale SaaS is fixed-origin OAuth-only preview
+
+Production uses `https://api.tailscale.com/api/v2`, the credential's `-` alias, and exactly `policy_file:read`, `devices:posture_attributes:read`, `devices:core:read`, and `users:read`. Add no API-key fallback, access-token environment variable, configurable API origin, explicit tailnet, insecure TLS, redirect following, or environment-proxy behavior.
+
+Access tokens remain in memory, refresh about five minutes early, coalesce concurrent refresh, and retry one request after `401`. Client IDs, secrets, rejected tokens, replacement tokens, and encoded forms are redaction inputs. Users/devices conversion rejects blank, duplicate, ambiguous, unresolved, paginated, or partial data rather than publishing an incomplete snapshot.
+
+## D15 — Provider switching is explicit and atomic
+
+Setup prompts for the provider first and only that provider's credentials. New files always store `CONTROL_PLANE`. Existing v0.2 Headscale files without the selector remain compatible only with a value-free deprecation warning; v0.3 requires explicit selection.
+
+When a provider switch would remove inactive known credential keys, setup lists the key names and requires explicit confirmation. Refusal or input abort leaves the file byte-for-byte unchanged. Unknown keys remain, and setup never creates a plaintext credential backup. Runtime ignores inactive known credentials but warns only by variable name.
+
+## D16 — Validation schema v2 records support metadata
+
+Validation reports include non-sensitive `provider`, `policy_mode`, `support_level`, and explicit/implicit selection. Headscale reports `supported`; Tailscale reports `preview`. Reports and Doctor never print tailnet data, OAuth client IDs, secrets, access tokens, Headscale keys, NPM credentials, or JWTs.

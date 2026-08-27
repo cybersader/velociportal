@@ -6,7 +6,7 @@
 
 # Your network policy is your dashboard policy.
 
-<p class="vp-hero__lede">Velociportal reads Headscale legacy ACL rules and Nginx Proxy Manager proxy hosts, then renders a server-filtered visibility portal for the human identity supplied by Tailscale Serve.</p>
+<p class="vp-hero__lede">Velociportal reads a selected Headscale or Tailscale SaaS legacy ACL source plus Nginx Proxy Manager proxy hosts, then renders a server-filtered visibility portal for the human identity supplied by Tailscale Serve.</p>
 
 <div class="vp-actions" markdown>
 [Start the TrueNAS Quickstart](guides/truenas-scale.md){ .md-button .md-button--primary }
@@ -14,7 +14,8 @@
 </div>
 
 <div class="vp-chip-row" aria-label="Project status">
-<span class="vp-chip vp-chip--supported">Architecture implemented</span>
+<span class="vp-chip vp-chip--supported">Headscale implemented</span>
+<span class="vp-chip vp-chip--validation">Tailscale SaaS preview</span>
 <span class="vp-chip vp-chip--validation">Live acceptance pending</span>
 <span class="vp-chip vp-chip--security">Identity: tailnet Serve</span>
 </div>
@@ -28,7 +29,7 @@
 </div>
 
 !!! info "Visibility, not enforcement"
-    Velociportal does not authenticate users, issue tokens, proxy service traffic, or enforce access. Tailscale Serve, Headscale ACLs, NPM, and each backend remain security boundaries. A hidden card is not authorization.
+    Velociportal does not authenticate users, issue tokens, proxy service traffic, or enforce access. Tailscale Serve, the selected control plane, NPM, and each backend remain security boundaries. A hidden card is not authorization.
 
 ## Canonical TrueNAS shape
 
@@ -46,13 +47,14 @@ flowchart LR
 The runtime upstream network is the named private Docker network `velociportal-upstreams`:
 
 ```text
+CONTROL_PLANE=headscale
 HEADSCALE_URL=http://headscale.velociportal.internal:8080
 NPM_URL=http://npm.velociportal.internal:81
 ```
 
 Headscale HTTP is accepted only for the implementation's exact local/internal allowlist. Other locations require verified HTTPS. The base Compose bundle has no CA mount.
 
-Existing NPM provides the trusted HTTPS endpoint needed before a client joins the tailnet. Its certificate comes from the operator's existing automated NPM lifecycle. If a joining client does not already trust that endpoint, stop rather than disabling verification. Runtime Velociportal bypasses NPM; workstation-only `headscale-ops` stays HTTPS-only.
+In Headscale mode, existing NPM provides the trusted HTTPS endpoint needed before a client joins the tailnet. Runtime Velociportal bypasses that control proxy; workstation-only `headscale-ops` stays HTTPS-only. Tailscale SaaS preview mode instead uses dedicated OAuth credentials against the fixed verified SaaS origin and does not require Headscale or the NPM Headscale control proxy.
 
 ## Follow one operator journey
 
@@ -70,6 +72,12 @@ Existing NPM provides the trusted HTTPS endpoint needed before a client joins th
 
     [Review the architecture →](guides/headscale-npm.md)
 
+-   :material-cloud-outline: **Use Tailscale SaaS preview**
+
+    Configure a dedicated four-scope OAuth client, fixed verified API origin, strict owner mapping, the shared legacy ACL boundary, and the unchanged NPM/Serve deployment shape. Keep the preview label until live acceptance passes.
+
+    [Open the SaaS preview →](guides/tailscale-saas-npm.md)
+
 -   :material-shield-account-outline: **Understand identity trust**
 
     Learn why HTTP Serve over WireGuard is the canonical browser path, why NPM cannot assert the portal identity, and how bypass attempts are handled.
@@ -78,7 +86,7 @@ Existing NPM provides the trusted HTTPS endpoint needed before a client joins th
 
 -   :material-test-tube: **Validate a real deployment**
 
-    Compare two users, NPM joins, card URLs, restart persistence, LAN-negative results, and actual Headscale reachability before making a support claim.
+    Compare two users, NPM joins, card URLs, restart persistence, LAN-negative results, and actual selected-control-plane reachability before making a support claim.
 
     [Open the validation worksheet →](getting-started/validation.md)
 
@@ -100,8 +108,10 @@ Existing NPM provides the trusted HTTPS endpoint needed before a client joins th
 
 === "Implemented"
 
+    - Explicit Headscale or Tailscale provider selection; implicit Headscale warns through v0.2
     - Exact local/internal Headscale HTTP allowlist plus verified HTTPS elsewhere
-    - Separate hardened Headscale and NPM transports
+    - Fixed-origin Tailscale OAuth adapter with strict owner mapping, labeled preview
+    - Separate hardened provider and NPM transports
     - Named private production bridge, required egress, and direct runtime aliases
     - Optional private-CA overlay; no base-stack CA mount
     - NPM credential login and proxy-host discovery
@@ -114,15 +124,15 @@ Existing NPM provides the trusted HTTPS endpoint needed before a client joins th
 === "Not implemented"
 
     - Headscale automatic HTTPS Serve certificate automation
-    - Tailscale SaaS API support
-    - Grants, SSH, posture, capabilities, port, or protocol evaluation
+    - Grants, SSH-as-card-evidence, posture, capabilities, port, or protocol evaluation
     - Caddy or Traefik discovery
     - Direct Authentik, Authelia, `Remote-User`, or `X-Webauth-*` adapters
     - NPM access-list-driven visibility
 
 === "Must be validated"
 
-    - Trusted NPM HTTPS for brand-new clients and WebSocket/upgrade preservation
+    - Tailscale SaaS OAuth scopes, refresh/revocation, owner mapping, policy negatives, and reachability before preview becomes supported
+    - Trusted NPM HTTPS for brand-new Headscale clients and WebSocket/upgrade preservation
     - Headscale port `8080` not published to the LAN
     - Separate operator/runtime API keys and safe NPM logging
     - Policy permission to Serve port `8081` and identity-header replacement

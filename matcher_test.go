@@ -369,15 +369,15 @@ func TestMatchServicesTagsAndCIDR(t *testing.T) {
 	nodes := []Node{
 		// The current API tag field is on a node owned by alice; it is destination data,
 		// not an additional human source identity.
-		{ID: "1", Name: "alice-tagged", User: User{Name: "alice@"}, Tags: []string{"tag:current"}, IPAddresses: []string{"10.0.0.1"}},
-		// Legacy Headscale tag fields remain usable for destination resolution.
-		{ID: "2", Name: "forced-tagged", User: User{Name: "service@"}, ForcedTags: []string{"tag:forced"}, IPAddresses: []string{"10.0.0.2"}},
-		{ID: "3", Name: "valid-tagged", User: User{Name: "service@"}, ValidTags: []string{"tag:valid"}, IPAddresses: []string{"10.0.0.3"}},
+		{ID: "1", Name: "alice-tagged", OwnerLogin: "alice@", Tags: []string{"tag:current"}, Addresses: []string{"10.0.0.1"}},
+		// Legacy Headscale tag fields are unified during DTO conversion.
+		{ID: "2", Name: "forced-tagged", OwnerLogin: "service@", Tags: []string{"tag:forced"}, Addresses: []string{"10.0.0.2"}},
+		{ID: "3", Name: "valid-tagged", OwnerLogin: "service@", Tags: []string{"tag:valid"}, Addresses: []string{"10.0.0.3"}},
 		// autogroup:self uses exact ownership for a fully qualified human identity.
-		{ID: "4", Name: "alice-self", User: User{Name: "alice@example.com"}, IPAddresses: []string{"100.64.0.9"}},
+		{ID: "4", Name: "alice-self", OwnerLogin: "alice@example.com", Addresses: []string{"100.64.0.9"}},
 		// Neither another full domain nor an ambiguous short owner becomes alice's self IP.
-		{ID: "5", Name: "other-alice", User: User{Name: "alice@other.example"}, IPAddresses: []string{"100.64.0.10"}},
-		{ID: "6", Name: "short-alice", User: User{Name: "alice@"}, IPAddresses: []string{"100.64.0.11"}},
+		{ID: "5", Name: "other-alice", OwnerLogin: "alice@other.example", Addresses: []string{"100.64.0.10"}},
+		{ID: "6", Name: "short-alice", OwnerLogin: "alice@", Addresses: []string{"100.64.0.11"}},
 	}
 
 	data := &CacheData{
@@ -499,7 +499,7 @@ func TestEvaluateServicesExplainsMatchServices(t *testing.T) {
 				{Action: "accept", Src: []string{"*"}, Dst: []string{"10.0.0.0/24:*"}},
 			},
 		},
-		Nodes: []Node{{User: User{Name: "service@example.com"}, Tags: []string{"tag:app"}, IPAddresses: []string{"10.0.0.10"}}},
+		Nodes: []Node{{OwnerLogin: "service@example.com", Tags: []string{"tag:app"}, Addresses: []string{"10.0.0.10"}}},
 		ProxyHosts: []ProxyHost{
 			{ID: 2, DomainNames: []string{"wiki.example.com"}, ForwardHost: "10.0.0.20", Enabled: true},
 			{ID: 1, DomainNames: []string{"app.example.com"}, ForwardHost: "10.0.0.10", Enabled: true},

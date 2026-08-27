@@ -22,14 +22,20 @@ import (
 var assetsFS embed.FS
 
 type Config struct {
-	HeadscaleURL     string
-	HeadscaleAPIKey  string
-	NPMURL           string
-	NPMEmail         string
-	NPMPassword      string
-	ListenAddr       string
-	PollInterval     time.Duration
-	TrustedProxyCIDR *net.IPNet
+	ControlPlane                controlPlaneProvider
+	ControlPlaneExplicit        bool
+	InactiveControlPlaneKeys    []string
+	ControlPlaneRedactionValues []string
+	HeadscaleURL                string
+	HeadscaleAPIKey             string
+	TailscaleOAuthClientID      string
+	TailscaleOAuthClientSecret  string
+	NPMURL                      string
+	NPMEmail                    string
+	NPMPassword                 string
+	ListenAddr                  string
+	PollInterval                time.Duration
+	TrustedProxyCIDR            *net.IPNet
 }
 
 type configLookup func(string) (string, bool, error)
@@ -39,6 +45,9 @@ const (
 	maxPollInterval       = 24 * time.Hour
 	processEnvEncodingKey = "VELOCIPORTAL_ENV_FILE_ENCODING"
 	goQuotedEnvEncoding   = "go-quoted-v1"
+
+	implicitHeadscaleDeprecationMessage = "CONTROL_PLANE is unset; defaulting to headscale for v0.2 compatibility. Explicit selection becomes required in v0.3."
+	implicitHeadscaleDeprecationWarning = "WARNING: " + implicitHeadscaleDeprecationMessage
 )
 
 type headscaleTransportClass uint8
@@ -49,13 +58,32 @@ const (
 	headscaleTransportRestrictedHTTP
 )
 
-var requiredConfigKeys = []string{
-	"HEADSCALE_URL",
-	"HEADSCALE_API_KEY",
+var commonRequiredConfigKeys = []string{
 	"NPM_URL",
 	"NPM_EMAIL",
 	"NPM_PASSWORD",
 	"TRUSTED_PROXY_CIDR",
+}
+
+var headscaleRequiredConfigKeys = []string{"HEADSCALE_URL", "HEADSCALE_API_KEY"}
+var tailscaleRequiredConfigKeys = []string{"TAILSCALE_OAUTH_CLIENT_ID", "TAILSCALE_OAUTH_CLIENT_SECRET"}
+
+// requiredConfigKeys remains the compatibility list used by existing Headscale
+// tests and contributor tooling. Provider-aware paths select their own family.
+var requiredConfigKeys = append(append([]string(nil), headscaleRequiredConfigKeys...), commonRequiredConfigKeys...)
+
+func controlPlaneConfigKeys(provider controlPlaneProvider) []string {
+	if provider == controlPlaneTailscale {
+		return tailscaleRequiredConfigKeys
+	}
+	return headscaleRequiredConfigKeys
+}
+
+func inactiveControlPlaneConfigKeys(provider controlPlaneProvider) []string {
+	if provider == controlPlaneTailscale {
+		return headscaleRequiredConfigKeys
+	}
+	return tailscaleRequiredConfigKeys
 }
 
 func processConfigLookup(key string) (string, bool, error) {
@@ -83,12 +111,27 @@ func loadConfigFrom(lookup configLookup) (*Config, error) {
 		return nil, fmt.Errorf("loadConfig: nil environment lookup")
 	}
 
-	values := make(map[string]string, len(requiredConfigKeys))
-	missing := make([]string, 0, len(requiredConfigKeys))
-	for _, key := range requiredConfigKeys {
-		value, _, err := lookup(key)
-		if err != nil {
-			return nil, fmt.Errorf("loadConfig: %w", err)
+	selector, selectorSet, err := lookup("CONTROL_PLANE")
+	if err != nil {
+		return nil, fmt.Errorf("loadConfig: %w", err)
+	}
+	provider := controlPlaneProvider(strings.ToLower(strings.TrimSpace(selector)))
+	explicit := selectorSet && provider != ""
+	if !explicit {
+		provider = controlPlaneHeadscale
+	}
+	if provider != controlPlaneHeadscale && provider != controlPlaneTailscale {
+		return nil, fmt.Errorf("loadConfig: CONTROL_PLANE must be headscale or tailscale")
+	}
+
+	providerKeys := controlPlaneConfigKeys(provider)
+	required := append(append([]string(nil), providerKeys...), commonRequiredConfigKeys...)
+	values := make(map[string]string, len(required)+4)
+	missing := make([]string, 0, len(required))
+	for _, key := range required {
+		value, _, lookupErr := lookup(key)
+		if lookupErr != nil {
+			return nil, fmt.Errorf("loadConfig: %w", lookupErr)
 		}
 		values[key] = value
 		if strings.TrimSpace(value) == "" {
@@ -99,9 +142,21 @@ func loadConfigFrom(lookup configLookup) (*Config, error) {
 		return nil, fmt.Errorf("loadConfig: missing required env: %s", strings.Join(missing, ", "))
 	}
 
-	headscaleURL, err := normalizeHeadscaleBaseURL(values["HEADSCALE_URL"])
-	if err != nil {
-		return nil, fmt.Errorf("loadConfig: %w", err)
+	redactionValues := make([]string, 0, len(providerKeys)+len(inactiveControlPlaneConfigKeys(provider)))
+	for _, key := range providerKeys {
+		if value := values[key]; value != "" {
+			redactionValues = append(redactionValues, value)
+		}
+	}
+	inactiveKeys, inactiveRedactions := inspectInactiveControlPlaneConfig(lookup, provider)
+	redactionValues = append(redactionValues, inactiveRedactions...)
+
+	var headscaleURL string
+	if provider == controlPlaneHeadscale {
+		headscaleURL, err = normalizeHeadscaleBaseURL(values["HEADSCALE_URL"])
+		if err != nil {
+			return nil, fmt.Errorf("loadConfig: %w", err)
+		}
 	}
 	npmURL, err := normalizeNPMBaseURL(values["NPM_URL"])
 	if err != nil {
@@ -135,15 +190,41 @@ func loadConfigFrom(lookup configLookup) (*Config, error) {
 	}
 
 	return &Config{
-		HeadscaleURL:     headscaleURL,
-		HeadscaleAPIKey:  values["HEADSCALE_API_KEY"],
-		NPMURL:           npmURL,
-		NPMEmail:         strings.TrimSpace(values["NPM_EMAIL"]),
-		NPMPassword:      values["NPM_PASSWORD"],
-		ListenAddr:       listenAddr,
-		PollInterval:     interval,
-		TrustedProxyCIDR: trustedProxyCIDR,
+		ControlPlane:                provider,
+		ControlPlaneExplicit:        explicit,
+		InactiveControlPlaneKeys:    inactiveKeys,
+		ControlPlaneRedactionValues: redactionValues,
+		HeadscaleURL:                headscaleURL,
+		HeadscaleAPIKey:             values["HEADSCALE_API_KEY"],
+		TailscaleOAuthClientID:      strings.TrimSpace(values["TAILSCALE_OAUTH_CLIENT_ID"]),
+		TailscaleOAuthClientSecret:  values["TAILSCALE_OAUTH_CLIENT_SECRET"],
+		NPMURL:                      npmURL,
+		NPMEmail:                    strings.TrimSpace(values["NPM_EMAIL"]),
+		NPMPassword:                 values["NPM_PASSWORD"],
+		ListenAddr:                  listenAddr,
+		PollInterval:                interval,
+		TrustedProxyCIDR:            trustedProxyCIDR,
 	}, nil
+}
+
+func inspectInactiveControlPlaneConfig(lookup configLookup, provider controlPlaneProvider) ([]string, []string) {
+	keys := make([]string, 0, len(inactiveControlPlaneConfigKeys(provider)))
+	redactions := make([]string, 0, len(inactiveControlPlaneConfigKeys(provider)))
+	for _, key := range inactiveControlPlaneConfigKeys(provider) {
+		value, ok, err := lookup(key)
+		if err != nil {
+			if ok {
+				keys = append(keys, key)
+			}
+			continue
+		}
+		if !ok || strings.TrimSpace(value) == "" {
+			continue
+		}
+		keys = append(keys, key)
+		redactions = append(redactions, value)
+	}
+	return keys, redactions
 }
 
 func lookupOr(lookup configLookup, key, fallback string) (string, error) {
@@ -362,9 +443,15 @@ func runServer(cfg *Config) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	hs, npm := newUpstreamClients(cfg)
+	if !cfg.ControlPlaneExplicit {
+		slog.Warn(implicitHeadscaleDeprecationMessage)
+	}
+	if len(cfg.InactiveControlPlaneKeys) > 0 {
+		slog.Warn("inactive control-plane configuration is ignored", "keys", strings.Join(cfg.InactiveControlPlaneKeys, ","))
+	}
+	controlPlane, npm := newUpstreamClients(cfg)
 
-	cache := NewCache(hs, npm, cfg.PollInterval, slog.Default())
+	cache := NewCache(controlPlane, npm, cfg.PollInterval, slog.Default())
 	cache.Start(ctx)
 
 	static, err := fs.Sub(assetsFS, "assets")

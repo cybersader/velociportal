@@ -29,8 +29,9 @@ services:
       - "127.0.0.1:18080:8080"
 
     # The fixed default bridge carries host-loopback ingress and remains the
-    # preferred default route. The stable private bridge carries direct Headscale
-    # and NPM API calls while preserving the egress those upstreams require.
+    # preferred default route, including verified Tailscale SaaS egress when that
+    # control plane is selected. The stable private bridge carries NPM plus any
+    # selected local control-plane API traffic while preserving required egress.
     networks:
       default:
         gw_priority: 1

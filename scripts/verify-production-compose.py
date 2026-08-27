@@ -14,7 +14,10 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[1]
 COMPOSE_FILE = Path("deploy/compose.yaml")
 PRIVATE_CA_COMPOSE_FILE = Path("deploy/compose.private-ca.yaml")
-RUNTIME_ENV_EXAMPLE = Path("deploy/velociportal.env.example")
+RUNTIME_ENV_EXAMPLES = {
+    "headscale": Path("deploy/velociportal.env.example"),
+    "tailscale": Path("deploy/velociportal.tailscale.env.example"),
+}
 STACK_ENV_FILE = Path("deploy/stack.env.example")
 VERIFY_IMAGE = "ghcr.io/cybersader/velociportal:v0.0.0-verify"
 VERIFY_CA_FILE = ROOT / ".env.example"
@@ -238,7 +241,7 @@ def validate_raw_model(model: dict, *, expect_private_ca: bool) -> None:
     validate_raw_networks(model)
 
 
-def validate_rendered_model(model: dict, *, expect_private_ca: bool) -> None:
+def validate_rendered_model(model: dict, *, provider: str, expect_private_ca: bool) -> None:
     require(model.get("name") == "velociportal-production", "rendered production project name changed unexpectedly")
     service = only_service(model)
     require(service.get("image") == VERIFY_IMAGE, "rendered image reference does not match the verification input")
@@ -264,8 +267,8 @@ def validate_rendered_model(model: dict, *, expect_private_ca: bool) -> None:
 
     environment = service.get("environment", {})
     require(
-        environment.get("HEADSCALE_URL") == '"http://headscale.velociportal.internal:8080"',
-        "raw env-file mode must preserve the quoted internal HEADSCALE_URL",
+        environment.get("CONTROL_PLANE") == f'"{provider}"',
+        "raw env-file mode must preserve the explicit control-plane selector",
     )
     require(
         environment.get("NPM_URL") == '"http://npm.velociportal.internal:81"',
@@ -275,6 +278,28 @@ def validate_rendered_model(model: dict, *, expect_private_ca: bool) -> None:
         environment.get("NPM_PASSWORD") == '"replace-with-the-dedicated-npm-password"',
         "raw env-file mode must preserve quoted credential values",
     )
+    if provider == "headscale":
+        require(
+            environment.get("HEADSCALE_URL") == '"http://headscale.velociportal.internal:8080"',
+            "Headscale mode must preserve the quoted internal HEADSCALE_URL",
+        )
+        require("TAILSCALE_OAUTH_CLIENT_ID" not in environment, "Headscale example must not contain Tailscale OAuth credentials")
+        require("TAILSCALE_OAUTH_CLIENT_SECRET" not in environment, "Headscale example must not contain Tailscale OAuth credentials")
+    elif provider == "tailscale":
+        require("HEADSCALE_URL" not in environment, "Tailscale example must not contain Headscale configuration")
+        require("HEADSCALE_API_KEY" not in environment, "Tailscale example must not contain Headscale credentials")
+        require(
+            environment.get("TAILSCALE_OAUTH_CLIENT_ID") == '"replace-with-the-dedicated-oauth-client-id"',
+            "Tailscale mode must preserve the OAuth client ID placeholder",
+        )
+        require(
+            environment.get("TAILSCALE_OAUTH_CLIENT_SECRET") == '"replace-with-the-dedicated-oauth-client-secret"',
+            "Tailscale mode must preserve the OAuth client secret placeholder",
+        )
+        for forbidden in ("TAILSCALE_API_URL", "TAILSCALE_API_KEY", "TAILSCALE_ACCESS_TOKEN", "TAILSCALE_TAILNET"):
+            require(forbidden not in environment, f"Tailscale example must not define {forbidden}")
+    else:
+        fail(f"unknown verification provider {provider!r}")
     require(
         environment.get("TRUSTED_PROXY_CIDR") == "172.31.255.1/32",
         "rendered trusted source must equal the fixed bridge gateway /32",
@@ -309,7 +334,7 @@ def rendered_config_arguments(*compose_files: Path) -> list[str]:
     return arguments
 
 
-def verification_environment() -> dict[str, str]:
+def verification_environment(runtime_env_example: Path) -> dict[str, str]:
     environment = os.environ.copy()
     # Keep verification deterministic even when the caller manages other stacks
     # with ambient Compose or deployment overrides.
@@ -318,7 +343,7 @@ def verification_environment() -> dict[str, str]:
     environment.update(
         {
             "VELOCIPORTAL_IMAGE": VERIFY_IMAGE,
-            "VELOCIPORTAL_ENV_FILE": "./velociportal.env.example",
+            "VELOCIPORTAL_ENV_FILE": f"./{runtime_env_example.name}",
             "VELOCIPORTAL_SUBNET": "172.31.255.0/24",
             "VELOCIPORTAL_GATEWAY": "172.31.255.1",
             "VELOCIPORTAL_TRUSTED_PROXY_CIDR": "172.31.255.1/32",
@@ -327,7 +352,7 @@ def verification_environment() -> dict[str, str]:
     return environment
 
 
-def short_include_model() -> dict:
+def short_include_model(runtime_env_example: Path) -> dict:
     with tempfile.TemporaryDirectory(prefix="velociportal-include-") as temporary_directory:
         temporary_root = Path(temporary_directory)
         bundle_directory = temporary_root / "bundle"
@@ -338,7 +363,7 @@ def short_include_model() -> dict:
             encoding="utf-8",
         )
         (bundle_directory / "velociportal.env").write_text(
-            (ROOT / RUNTIME_ENV_EXAMPLE).read_text(encoding="utf-8"),
+            (ROOT / runtime_env_example).read_text(encoding="utf-8"),
             encoding="utf-8",
         )
         (bundle_directory / ".env").write_text(
@@ -381,32 +406,37 @@ def short_include_model() -> dict:
 
 
 def main() -> int:
-    base_environment = verification_environment()
+    for provider, runtime_env_example in RUNTIME_ENV_EXAMPLES.items():
+        base_environment = verification_environment(runtime_env_example)
 
-    raw_base = compose_json(raw_config_arguments(COMPOSE_FILE), base_environment)
-    validate_raw_model(raw_base, expect_private_ca=False)
+        raw_base = compose_json(raw_config_arguments(COMPOSE_FILE), base_environment)
+        validate_raw_model(raw_base, expect_private_ca=False)
 
-    rendered_base = compose_json(rendered_config_arguments(COMPOSE_FILE), base_environment)
-    validate_rendered_model(rendered_base, expect_private_ca=False)
+        rendered_base = compose_json(rendered_config_arguments(COMPOSE_FILE), base_environment)
+        validate_rendered_model(rendered_base, provider=provider, expect_private_ca=False)
 
-    included_base = short_include_model()
-    validate_rendered_model(included_base, expect_private_ca=False)
+        included_base = short_include_model(runtime_env_example)
+        validate_rendered_model(included_base, provider=provider, expect_private_ca=False)
 
-    raw_private_ca = compose_json(
-        raw_config_arguments(COMPOSE_FILE, PRIVATE_CA_COMPOSE_FILE),
-        base_environment,
-    )
-    validate_raw_model(raw_private_ca, expect_private_ca=True)
+        raw_private_ca = compose_json(
+            raw_config_arguments(COMPOSE_FILE, PRIVATE_CA_COMPOSE_FILE),
+            base_environment,
+        )
+        validate_raw_model(raw_private_ca, expect_private_ca=True)
 
-    private_ca_environment = base_environment.copy()
-    private_ca_environment["VELOCIPORTAL_CA_FILE"] = str(VERIFY_CA_FILE)
-    rendered_private_ca = compose_json(
-        rendered_config_arguments(COMPOSE_FILE, PRIVATE_CA_COMPOSE_FILE),
-        private_ca_environment,
-    )
-    validate_rendered_model(rendered_private_ca, expect_private_ca=True)
+        private_ca_environment = base_environment.copy()
+        private_ca_environment["VELOCIPORTAL_CA_FILE"] = str(VERIFY_CA_FILE)
+        rendered_private_ca = compose_json(
+            rendered_config_arguments(COMPOSE_FILE, PRIVATE_CA_COMPOSE_FILE),
+            private_ca_environment,
+        )
+        validate_rendered_model(
+            rendered_private_ca,
+            provider=provider,
+            expect_private_ca=True,
+        )
 
-    print("production Compose bundle verified")
+    print("production Compose bundle verified for headscale and tailscale")
     return 0
 
 

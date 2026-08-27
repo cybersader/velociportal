@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync/atomic"
@@ -11,27 +12,33 @@ import (
 const upstreamTimeout = 10 * time.Second
 
 type CacheData struct {
-	Policy     *Policy
-	Nodes      []Node
-	ProxyHosts []ProxyHost
-	UpdatedAt  time.Time
+	Policy       *Policy
+	Nodes        []Node
+	ProxyHosts   []ProxyHost
+	ControlPlane ControlPlaneMetadata
+	UpdatedAt    time.Time
 }
 
 type Cache struct {
-	data      atomic.Pointer[CacheData]
-	headscale *HeadscaleClient
-	npm       *NPMClient
-	interval  time.Duration
-	logger    *slog.Logger
+	data         atomic.Pointer[CacheData]
+	controlPlane ControlPlane
+	npm          *NPMClient
+	interval     time.Duration
+	logger       *slog.Logger
 }
 
 type snapshotLoadStage string
 
 const (
-	snapshotStageHeadscalePolicy snapshotLoadStage = "Headscale policy"
-	snapshotStageHeadscaleNodes  snapshotLoadStage = "Headscale nodes"
-	snapshotStageNPMAuth         snapshotLoadStage = "NPM authentication"
-	snapshotStageNPMProxyHosts   snapshotLoadStage = "NPM proxy hosts"
+	snapshotStageHeadscalePolicy  snapshotLoadStage = "Headscale policy"
+	snapshotStageHeadscaleNodes   snapshotLoadStage = "Headscale nodes"
+	snapshotStageTailscaleOAuth   snapshotLoadStage = "Tailscale OAuth"
+	snapshotStageTailscalePolicy  snapshotLoadStage = "Tailscale policy"
+	snapshotStageTailscaleUsers   snapshotLoadStage = "Tailscale users"
+	snapshotStageTailscaleDevices snapshotLoadStage = "Tailscale devices"
+	snapshotStageControlPlane     snapshotLoadStage = "control plane"
+	snapshotStageNPMAuth          snapshotLoadStage = "NPM authentication"
+	snapshotStageNPMProxyHosts    snapshotLoadStage = "NPM proxy hosts"
 )
 
 type snapshotLoadError struct {
@@ -39,22 +46,17 @@ type snapshotLoadError struct {
 	Err   error
 }
 
-func (e *snapshotLoadError) Error() string {
-	return fmt.Sprintf("%s: %v", e.Stage, e.Err)
-}
-
-func (e *snapshotLoadError) Unwrap() error {
-	return e.Err
-}
+func (e *snapshotLoadError) Error() string { return fmt.Sprintf("%s: %v", e.Stage, e.Err) }
+func (e *snapshotLoadError) Unwrap() error { return e.Err }
 
 type snapshotLoadProgress func(stage snapshotLoadStage, count int)
 
-func NewCache(headscale *HeadscaleClient, npm *NPMClient, interval time.Duration, logger *slog.Logger) *Cache {
+func NewCache(controlPlane ControlPlane, npm *NPMClient, interval time.Duration, logger *slog.Logger) *Cache {
 	return &Cache{
-		headscale: headscale,
-		npm:       npm,
-		interval:  interval,
-		logger:    logger,
+		controlPlane: controlPlane,
+		npm:          npm,
+		interval:     interval,
+		logger:       logger,
 	}
 }
 
@@ -80,9 +82,7 @@ func (c *Cache) Start(ctx context.Context) {
 	}()
 }
 
-func (c *Cache) Get() *CacheData {
-	return c.data.Load()
-}
+func (c *Cache) Get() *CacheData { return c.data.Load() }
 
 func (c *Cache) LastUpdated() time.Time {
 	if d := c.data.Load(); d != nil {
@@ -92,37 +92,41 @@ func (c *Cache) LastUpdated() time.Time {
 }
 
 func (c *Cache) refresh(ctx context.Context) error {
-	snapshot, err := loadSnapshot(ctx, c.headscale, c.npm)
+	snapshot, err := loadSnapshot(ctx, c.controlPlane, c.npm)
 	if err != nil {
 		return fmt.Errorf("refresh: %w", err)
 	}
-
 	c.data.Store(snapshot)
 	c.logger.Info("cache refreshed",
+		"provider", snapshot.ControlPlane.Provider,
 		"nodes", len(snapshot.Nodes), "proxy_hosts", len(snapshot.ProxyHosts))
 	return nil
 }
 
-func loadSnapshot(ctx context.Context, headscale *HeadscaleClient, npm *NPMClient) (*CacheData, error) {
-	return loadSnapshotWithProgress(ctx, headscale, npm, nil)
+func loadSnapshot(ctx context.Context, controlPlane ControlPlane, npm *NPMClient) (*CacheData, error) {
+	return loadSnapshotWithProgress(ctx, controlPlane, npm, nil)
 }
 
-func loadSnapshotWithProgress(ctx context.Context, headscale *HeadscaleClient, npm *NPMClient, progress snapshotLoadProgress) (*CacheData, error) {
-	if headscale == nil {
-		return nil, &snapshotLoadError{Stage: snapshotStageHeadscalePolicy, Err: fmt.Errorf("client is unavailable")}
+func loadSnapshotWithProgress(ctx context.Context, controlPlane ControlPlane, npm *NPMClient, progress snapshotLoadProgress) (*CacheData, error) {
+	if controlPlane == nil {
+		return nil, &snapshotLoadError{Stage: snapshotStageControlPlane, Err: fmt.Errorf("client is unavailable")}
 	}
 
-	policy, err := call(ctx, headscale.FetchPolicy)
+	provider := controlPlane.Provider()
+	controlResult, err := controlPlane.Load(ctx, func(stage controlPlaneLoadStage, count int) {
+		reportSnapshotProgress(progress, snapshotStageForControlPlane(provider, stage), count)
+	})
 	if err != nil {
-		return nil, &snapshotLoadError{Stage: snapshotStageHeadscalePolicy, Err: err}
+		stage := snapshotStageControlPlane
+		var loadErr *controlPlaneLoadError
+		if errors.As(err, &loadErr) {
+			stage = snapshotStageForControlPlane(loadErr.Provider, loadErr.Stage)
+		}
+		return nil, &snapshotLoadError{Stage: stage, Err: err}
 	}
-	reportSnapshotProgress(progress, snapshotStageHeadscalePolicy, len(policy.ACLs))
-
-	nodes, err := call(ctx, headscale.FetchNodes)
-	if err != nil {
-		return nil, &snapshotLoadError{Stage: snapshotStageHeadscaleNodes, Err: err}
+	if controlResult == nil || controlResult.Policy == nil {
+		return nil, &snapshotLoadError{Stage: snapshotStageControlPlane, Err: fmt.Errorf("provider returned an incomplete result")}
 	}
-	reportSnapshotProgress(progress, snapshotStageHeadscaleNodes, len(nodes))
 
 	if npm == nil {
 		return nil, &snapshotLoadError{Stage: snapshotStageNPMAuth, Err: fmt.Errorf("client is unavailable")}
@@ -141,11 +145,36 @@ func loadSnapshotWithProgress(ctx context.Context, headscale *HeadscaleClient, n
 	reportSnapshotProgress(progress, snapshotStageNPMProxyHosts, len(proxyHosts))
 
 	return &CacheData{
-		Policy:     policy,
-		Nodes:      nodes,
-		ProxyHosts: proxyHosts,
-		UpdatedAt:  time.Now(),
+		Policy:       controlResult.Policy,
+		Nodes:        controlResult.Nodes,
+		ProxyHosts:   proxyHosts,
+		ControlPlane: controlResult.Metadata,
+		UpdatedAt:    time.Now(),
 	}, nil
+}
+
+func snapshotStageForControlPlane(provider controlPlaneProvider, stage controlPlaneLoadStage) snapshotLoadStage {
+	switch provider {
+	case controlPlaneHeadscale:
+		switch stage {
+		case controlPlaneStagePolicy:
+			return snapshotStageHeadscalePolicy
+		case controlPlaneStageNodes, controlPlaneStageDevices:
+			return snapshotStageHeadscaleNodes
+		}
+	case controlPlaneTailscale:
+		switch stage {
+		case controlPlaneStageAuth:
+			return snapshotStageTailscaleOAuth
+		case controlPlaneStagePolicy:
+			return snapshotStageTailscalePolicy
+		case controlPlaneStageUsers:
+			return snapshotStageTailscaleUsers
+		case controlPlaneStageDevices, controlPlaneStageNodes:
+			return snapshotStageTailscaleDevices
+		}
+	}
+	return snapshotStageControlPlane
 }
 
 func reportSnapshotProgress(progress snapshotLoadProgress, stage snapshotLoadStage, count int) {

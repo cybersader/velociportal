@@ -25,39 +25,28 @@ func NewHeadscaleClient(baseURL, apiKey string, httpClient *http.Client) *Headsc
 		httpClient = newUpstreamHTTPClient()
 	}
 	return &HeadscaleClient{
-		baseURL:    baseURL,
+		baseURL:    strings.TrimRight(baseURL, "/"),
 		apiKey:     apiKey,
 		httpClient: httpClient,
 	}
 }
 
-type Policy struct {
-	Groups    map[string][]string `json:"groups"`
-	TagOwners map[string][]string `json:"tagOwners"`
-	ACLs      []ACLRule           `json:"acls"`
-	Hosts     map[string]string   `json:"hosts"`
-}
+func (c *HeadscaleClient) Provider() controlPlaneProvider { return controlPlaneHeadscale }
 
-type ACLRule struct {
-	Action string   `json:"action"`
-	Src    []string `json:"src"`
-	Dst    []string `json:"dst"`
-}
-
-type User struct {
+type headscaleUserDTO struct {
 	ID        string    `json:"id"`
 	Name      string    `json:"name"`
 	CreatedAt time.Time `json:"createdAt"`
 }
 
-type Node struct {
-	ID          string   `json:"id"`
-	Name        string   `json:"name"`
-	User        User     `json:"user"`
-	Tags        []string `json:"tags"`
-	ForcedTags  []string `json:"forcedTags"`
-	ValidTags   []string `json:"validTags"`
-	IPAddresses []string `json:"ipAddresses"`
+type headscaleNodeDTO struct {
+	ID          string           `json:"id"`
+	Name        string           `json:"name"`
+	User        headscaleUserDTO `json:"user"`
+	Tags        []string         `json:"tags"`
+	ForcedTags  []string         `json:"forcedTags"`
+	ValidTags   []string         `json:"validTags"`
+	IPAddresses []string         `json:"ipAddresses"`
 }
 
 // trailingCommaRE matches a comma that is followed only by whitespace and a
@@ -65,11 +54,9 @@ type Node struct {
 // rejects.
 var trailingCommaRE = regexp.MustCompile(`,(\s*[}\]])`)
 
-// standardizeHuJSON converts a huJSON (Human JSON) document into strict JSON
-// that encoding/json can parse. It strips `//` line comments and removes
-// trailing commas before `}` and `]`. It deliberately does NOT attempt to
-// handle `//` sequences inside string literals — Headscale policy documents
-// never contain those, so the simple line-based approach is safe here.
+// standardizeHuJSON converts the limited huJSON form returned by Headscale into
+// strict JSON. This deliberately preserves the implementation's existing
+// comment and trailing-comma behavior.
 func standardizeHuJSON(b []byte) []byte {
 	lines := strings.Split(string(b), "\n")
 	for i, line := range lines {
@@ -124,70 +111,129 @@ func (c *HeadscaleClient) get(ctx context.Context, path string, out any) error {
 }
 
 func (c *HeadscaleClient) FetchPolicy(ctx context.Context) (*Policy, error) {
-	start := time.Now()
+	validated, err := c.fetchPolicy(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return validated.Policy, nil
+}
 
-	// The policy endpoint wraps the policy document as a JSON-encoded string,
-	// which may itself contain huJSON features (comments, trailing commas).
+func (c *HeadscaleClient) fetchPolicy(ctx context.Context) (*validatedPolicy, error) {
+	start := time.Now()
 	var wrapper struct {
-		Policy    string `json:"policy"`
-		UpdatedAt string `json:"updatedAt"`
+		Policy    *string `json:"policy"`
+		UpdatedAt string  `json:"updatedAt"`
 	}
 	if err := c.get(ctx, "/api/v1/policy", &wrapper); err != nil {
 		return nil, fmt.Errorf("FetchPolicy: %w", err)
 	}
-
-	var p Policy
-	if strings.TrimSpace(wrapper.Policy) == "" {
-		// No policy defined (Headscale default is allow-all). Return an empty
-		// policy rather than failing to parse an empty string.
-		slog.Info("headscale: fetched policy (empty)",
-			"path", "/api/v1/policy", "duration", time.Since(start))
-		return &p, nil
+	if wrapper.Policy == nil {
+		return nil, fmt.Errorf("FetchPolicy: response is missing policy")
 	}
 
-	raw := []byte(wrapper.Policy)
-	if err := json.Unmarshal(raw, &p); err != nil {
-		// Fall back to standardizing huJSON before giving up.
-		if err2 := json.Unmarshal(standardizeHuJSON(raw), &p); err2 != nil {
-			return nil, fmt.Errorf("FetchPolicy: parse policy document: %w", err2)
+	if strings.TrimSpace(*wrapper.Policy) == "" {
+		slog.Info("headscale: fetched policy (empty)",
+			"path", "/api/v1/policy", "duration", time.Since(start))
+		return &validatedPolicy{Policy: &Policy{}}, nil
+	}
+
+	raw := []byte(*wrapper.Policy)
+	validated, err := validatePolicyDocument(raw)
+	if err != nil {
+		standardized := standardizeHuJSON(raw)
+		if json.Valid(standardized) {
+			validated, err = validatePolicyDocument(standardized)
+		}
+		if err != nil {
+			return nil, fmt.Errorf("FetchPolicy: parse policy document: %w", err)
 		}
 	}
 
 	slog.Info("headscale: fetched policy",
 		"path", "/api/v1/policy",
 		"duration", time.Since(start),
-		"groups", len(p.Groups),
-		"tagOwners", len(p.TagOwners),
-		"acls", len(p.ACLs))
-	return &p, nil
+		"groups", len(validated.Policy.Groups),
+		"tagOwners", len(validated.Policy.TagOwners),
+		"acls", len(validated.Policy.ACLs))
+	return validated, nil
 }
 
-func (c *HeadscaleClient) FetchUsers(ctx context.Context) ([]User, error) {
+// FetchUsers is retained for Headscale API compatibility tests. Runtime loading
+// intentionally does not call the user endpoint because node DTOs already carry
+// the owner identity needed by the matcher.
+func (c *HeadscaleClient) FetchUsers(ctx context.Context) ([]headscaleUserDTO, error) {
 	start := time.Now()
 	var wrapper struct {
-		Users []User `json:"users"`
+		Users *[]headscaleUserDTO `json:"users"`
 	}
 	if err := c.get(ctx, "/api/v1/user", &wrapper); err != nil {
 		return nil, fmt.Errorf("FetchUsers: %w", err)
 	}
+	if wrapper.Users == nil {
+		return nil, fmt.Errorf("FetchUsers: response is missing users")
+	}
 	slog.Info("headscale: fetched users",
 		"path", "/api/v1/user",
 		"duration", time.Since(start),
-		"count", len(wrapper.Users))
-	return wrapper.Users, nil
+		"count", len(*wrapper.Users))
+	return *wrapper.Users, nil
 }
 
 func (c *HeadscaleClient) FetchNodes(ctx context.Context) ([]Node, error) {
 	start := time.Now()
 	var wrapper struct {
-		Nodes []Node `json:"nodes"`
+		Nodes *[]headscaleNodeDTO `json:"nodes"`
 	}
 	if err := c.get(ctx, "/api/v1/node", &wrapper); err != nil {
 		return nil, fmt.Errorf("FetchNodes: %w", err)
 	}
+	if wrapper.Nodes == nil {
+		return nil, fmt.Errorf("FetchNodes: response is missing nodes")
+	}
+
+	nodes := make([]Node, 0, len(*wrapper.Nodes))
+	for _, dto := range *wrapper.Nodes {
+		tags := make([]string, 0, len(dto.Tags)+len(dto.ForcedTags)+len(dto.ValidTags))
+		tags = append(tags, dto.Tags...)
+		tags = append(tags, dto.ForcedTags...)
+		tags = append(tags, dto.ValidTags...)
+		nodes = append(nodes, Node{
+			ID:         strings.TrimSpace(dto.ID),
+			Name:       strings.TrimSpace(dto.Name),
+			OwnerLogin: strings.TrimSpace(dto.User.Name),
+			Tags:       normalizeStrings(tags),
+			Addresses:  normalizeStrings(dto.IPAddresses),
+		})
+	}
+
 	slog.Info("headscale: fetched nodes",
 		"path", "/api/v1/node",
 		"duration", time.Since(start),
-		"count", len(wrapper.Nodes))
-	return wrapper.Nodes, nil
+		"count", len(nodes))
+	return nodes, nil
+}
+
+func (c *HeadscaleClient) Load(ctx context.Context, progress controlPlaneProgress) (*ControlPlaneResult, error) {
+	policyResult, err := call(ctx, c.fetchPolicy)
+	if err != nil {
+		return nil, &controlPlaneLoadError{Provider: c.Provider(), Stage: controlPlaneStagePolicy, Err: err}
+	}
+	reportControlPlaneProgress(progress, controlPlaneStagePolicy, len(policyResult.Policy.ACLs))
+
+	nodes, err := call(ctx, c.FetchNodes)
+	if err != nil {
+		return nil, &controlPlaneLoadError{Provider: c.Provider(), Stage: controlPlaneStageNodes, Err: err}
+	}
+	reportControlPlaneProgress(progress, controlPlaneStageNodes, len(nodes))
+
+	return &ControlPlaneResult{
+		Policy: policyResult.Policy,
+		Nodes:  nodes,
+		Metadata: ControlPlaneMetadata{
+			Provider:     c.Provider(),
+			PolicyMode:   legacyACLVisibilityV1,
+			SupportLevel: controlPlaneSupported,
+			SSHPresent:   policyResult.SSHPresent,
+		},
+	}, nil
 }

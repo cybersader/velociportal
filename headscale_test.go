@@ -95,6 +95,18 @@ func TestFetchPolicy_EmptyPolicy(t *testing.T) {
 	}
 }
 
+func TestFetchPolicy_MissingEnvelopeField(t *testing.T) {
+	_, client := newHeadscaleTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"message":"ok"}`))
+	})
+
+	_, err := client.FetchPolicy(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "missing policy") {
+		t.Fatalf("FetchPolicy error = %v", err)
+	}
+}
+
 func TestFetchUsers(t *testing.T) {
 	body := `{"users": [{"id": "1", "name": "alice"}, {"id": "2", "name": "bob"}]}`
 	_, client := newHeadscaleTestServer(t, func(w http.ResponseWriter, r *http.Request) {
@@ -121,7 +133,7 @@ func TestFetchUsers(t *testing.T) {
 }
 
 func TestFetchNodes(t *testing.T) {
-	body := `{"nodes": [{"id": "1", "name": "node1", "user": {"id": "1", "name": "alice"}, "forcedTags": ["tag:server"], "validTags": ["tag:web"], "ipAddresses": ["100.64.0.1"]}]}`
+	body := `{"nodes": [{"id": "1", "name": "node1", "user": {"id": "1", "name": "alice"}, "tags": ["tag:current"], "forcedTags": ["tag:server"], "validTags": ["tag:web"], "ipAddresses": ["100.64.0.1"]}]}`
 	_, client := newHeadscaleTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/v1/node" {
 			t.Errorf("unexpected path %q", r.URL.Path)
@@ -141,17 +153,26 @@ func TestFetchNodes(t *testing.T) {
 	if n.ID != "1" || n.Name != "node1" {
 		t.Errorf("node = %+v, want ID=1 Name=node1", n)
 	}
-	if n.User.Name != "alice" {
-		t.Errorf("node.User.Name = %q, want alice", n.User.Name)
+	if n.OwnerLogin != "alice" {
+		t.Errorf("node.OwnerLogin = %q, want alice", n.OwnerLogin)
 	}
-	if len(n.ForcedTags) != 1 || n.ForcedTags[0] != "tag:server" {
-		t.Errorf("ForcedTags = %v, want [tag:server]", n.ForcedTags)
+	if len(n.Tags) != 3 || n.Tags[0] != "tag:current" || n.Tags[1] != "tag:server" || n.Tags[2] != "tag:web" {
+		t.Errorf("Tags = %v, want [tag:current tag:server tag:web]", n.Tags)
 	}
-	if len(n.ValidTags) != 1 || n.ValidTags[0] != "tag:web" {
-		t.Errorf("ValidTags = %v, want [tag:web]", n.ValidTags)
+	if len(n.Addresses) != 1 || n.Addresses[0] != "100.64.0.1" {
+		t.Errorf("Addresses = %v, want [100.64.0.1]", n.Addresses)
 	}
-	if len(n.IPAddresses) != 1 || n.IPAddresses[0] != "100.64.0.1" {
-		t.Errorf("IPAddresses = %v, want [100.64.0.1]", n.IPAddresses)
+}
+
+func TestFetchNodes_MissingEnvelopeField(t *testing.T) {
+	_, client := newHeadscaleTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"message":"ok"}`))
+	})
+
+	_, err := client.FetchNodes(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "missing nodes") {
+		t.Fatalf("FetchNodes error = %v", err)
 	}
 }
 

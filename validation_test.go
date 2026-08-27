@@ -16,6 +16,9 @@ func setValidationProcessConfig(t *testing.T) {
 	for key, value := range validConfigValues() {
 		t.Setenv(key, value)
 	}
+	for _, key := range tailscaleRequiredConfigKeys {
+		t.Setenv(key, "")
+	}
 	t.Setenv("LISTEN_ADDR", "127.0.0.1:8080")
 	t.Setenv("POLL_INTERVAL", "30s")
 }
@@ -31,6 +34,11 @@ func setValidationBuildInfo(t *testing.T, version, revision, state string) {
 
 func validationTestSnapshot() *CacheData {
 	return &CacheData{
+		ControlPlane: ControlPlaneMetadata{
+			Provider:     controlPlaneHeadscale,
+			PolicyMode:   legacyACLVisibilityV1,
+			SupportLevel: controlPlaneSupported,
+		},
 		Policy: &Policy{
 			Groups: map[string][]string{
 				"group:alpha": {"alice@example.com"},
@@ -41,7 +49,7 @@ func validationTestSnapshot() *CacheData {
 				{Action: "accept", Src: []string{"group:beta"}, Dst: []string{"tag:beta:*"}},
 			},
 		},
-		Nodes: []Node{{User: User{Name: "service@example.com"}, Tags: []string{"tag:beta"}, IPAddresses: []string{"10.0.0.20"}}},
+		Nodes: []Node{{OwnerLogin: "service@example.com", Tags: []string{"tag:beta"}, Addresses: []string{"10.0.0.20"}}},
 		ProxyHosts: []ProxyHost{
 			{ID: 20, DomainNames: []string{"beta.internal.example"}, ForwardScheme: "http", ForwardHost: "10.0.0.20", ForwardPort: 8080, Enabled: true},
 			{ID: 10, DomainNames: []string{"alpha.internal.example"}, ForwardScheme: "https", ForwardHost: "10.0.0.10", ForwardPort: 443, Enabled: true},
@@ -52,7 +60,7 @@ func validationTestSnapshot() *CacheData {
 func validationDependenciesFor(snapshot *CacheData) validationDependencies {
 	return validationDependencies{
 		now: func() time.Time { return time.Date(2026, time.July, 30, 12, 0, 0, 0, time.UTC) },
-		loadSnapshot: func(context.Context, *HeadscaleClient, *NPMClient) (*CacheData, error) {
+		loadSnapshot: func(context.Context, ControlPlane, *NPMClient) (*CacheData, error) {
 			return snapshot, nil
 		},
 	}
@@ -107,6 +115,9 @@ func TestRunValidationCommandSummaryJSONIsDeterministicAndPrivate(t *testing.T) 
 	if report.SchemaVersion != validationSchemaVersion || report.Status != "pass" || report.Privacy != string(validationPrivacySummary) {
 		t.Fatalf("report metadata = %#v", report)
 	}
+	if report.ControlPlane.Provider != controlPlaneHeadscale || report.ControlPlane.PolicyMode != legacyACLVisibilityV1 || report.ControlPlane.SupportLevel != controlPlaneSupported || report.ControlPlane.Selection != "explicit" {
+		t.Fatalf("control-plane metadata = %#v", report.ControlPlane)
+	}
 	if len(report.Services) != 2 || report.Services[0].ID != "service-001" || report.Services[1].ID != "service-002" {
 		t.Fatalf("services = %#v", report.Services)
 	}
@@ -146,7 +157,7 @@ func TestRunValidationCommandHeadscaleHTTPNoticeIsDeterministicNonFailingAndReda
 	if err := json.Unmarshal([]byte(first), &report); err != nil {
 		t.Fatalf("stdout is not JSON-only: %v\n%s", err, first)
 	}
-	if report.SchemaVersion != "1" || report.Status != "pass" {
+	if report.SchemaVersion != "2" || report.Status != "pass" {
 		t.Fatalf("report metadata = %#v", report)
 	}
 	if !strings.Contains(report.Scope, headscaleHTTPValidationScopeNotice) {
@@ -165,9 +176,78 @@ func TestRunValidationCommandHeadscaleHTTPNoticeIsDeterministicNonFailingAndReda
 	if matchingFindings != 1 {
 		t.Fatalf("Headscale HTTP finding count = %d, findings=%#v", matchingFindings, report.Findings)
 	}
-	for _, forbidden := range []string{"http://", "127.0.0.1", "8080", "control", "test-key", "changeme"} {
+	for _, forbidden := range []string{"http://", "127.0.0.1", "8080", "/control", "test-key", "changeme"} {
 		if strings.Contains(first, forbidden) || strings.Contains(firstErr, forbidden) {
 			t.Fatalf("HTTP validation output leaked %q:\nstdout=%s\nstderr=%s", forbidden, first, firstErr)
+		}
+	}
+}
+
+func TestRunValidationCommandRecordsImplicitHeadscaleDeprecation(t *testing.T) {
+	setValidationProcessConfig(t)
+	t.Setenv("CONTROL_PLANE", "")
+	setValidationBuildInfo(t, "v1.2.3", "revision-canary", "clean")
+	code, stdout, stderr := runValidationForTest([]string{
+		"--identity", "alpha=alice@example.com",
+		"--identity", "beta=bob@example.com",
+		"--format", "json",
+	}, validationDependenciesFor(validationTestSnapshot()))
+	if code != 0 {
+		t.Fatalf("exit code=%d stdout=%q stderr=%q", code, stdout, stderr)
+	}
+	if stderr != implicitHeadscaleDeprecationWarning+"\n" {
+		t.Fatalf("stderr = %q", stderr)
+	}
+	var report ValidationReport
+	if err := json.Unmarshal([]byte(stdout), &report); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v", err)
+	}
+	if report.ControlPlane.Selection != "implicit" {
+		t.Fatalf("selection = %q", report.ControlPlane.Selection)
+	}
+	found := false
+	for _, finding := range report.Findings {
+		if finding.Code == implicitControlPlaneSelectionCode {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("implicit selection finding missing: %#v", report.Findings)
+	}
+}
+
+func TestRunValidationCommandReportsTailscalePreviewMetadataPrivately(t *testing.T) {
+	setValidationProcessConfig(t)
+	t.Setenv("CONTROL_PLANE", "tailscale")
+	t.Setenv("HEADSCALE_URL", "")
+	t.Setenv("HEADSCALE_API_KEY", "")
+	t.Setenv("TAILSCALE_OAUTH_CLIENT_ID", "private-oauth-client-id")
+	t.Setenv("TAILSCALE_OAUTH_CLIENT_SECRET", "private-oauth-client-secret")
+	setValidationBuildInfo(t, "v1.2.3", "revision-canary", "clean")
+	snapshot := validationTestSnapshot()
+	snapshot.ControlPlane = ControlPlaneMetadata{
+		Provider:     controlPlaneTailscale,
+		PolicyMode:   legacyACLVisibilityV1,
+		SupportLevel: controlPlanePreview,
+	}
+	code, stdout, stderr := runValidationForTest([]string{
+		"--identity", "alpha=alice@example.com",
+		"--identity", "beta=bob@example.com",
+		"--format", "json",
+	}, validationDependenciesFor(snapshot))
+	if code != 0 || stderr != "" {
+		t.Fatalf("exit=%d stdout=%q stderr=%q", code, stdout, stderr)
+	}
+	var report ValidationReport
+	if err := json.Unmarshal([]byte(stdout), &report); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v", err)
+	}
+	if report.ControlPlane.Provider != controlPlaneTailscale || report.ControlPlane.SupportLevel != controlPlanePreview || report.ControlPlane.Selection != "explicit" {
+		t.Fatalf("control-plane metadata = %#v", report.ControlPlane)
+	}
+	for _, forbidden := range []string{"private-oauth-client-id", "private-oauth-client-secret"} {
+		if strings.Contains(stdout+stderr, forbidden) {
+			t.Fatalf("validation exposed %q", forbidden)
 		}
 	}
 }
@@ -255,6 +335,35 @@ func TestRunValidationCommandIdenticalCardSetsRequireReview(t *testing.T) {
 	}
 	if !strings.Contains(stdout, `"code": "identical-card-sets"`) {
 		t.Fatalf("report missing identical-card finding:\n%s", stdout)
+	}
+}
+
+func TestRunValidationCommandSummaryRedactsUnsupportedPolicySelectors(t *testing.T) {
+	setValidationProcessConfig(t)
+	const selector = "svc:secret-internal-app:443"
+	dependencies := validationDependencies{
+		now: time.Now,
+		loadSnapshot: func(context.Context, ControlPlane, *NPMClient) (*CacheData, error) {
+			return nil, &snapshotLoadError{
+				Stage: snapshotStageHeadscalePolicy,
+				Err: &controlPlaneLoadError{
+					Provider: controlPlaneHeadscale,
+					Stage:    controlPlaneStagePolicy,
+					Err:      &unsupportedPolicyError{Section: "acls", Reason: "rule 0 uses unsupported destination selector " + selector},
+				},
+			}
+		},
+	}
+
+	code, stdout, stderr := runValidationForTest([]string{
+		"--identity", "alpha=alice@example.com",
+		"--identity", "beta=bob@example.com",
+	}, dependencies)
+	if code != 1 || stdout != "" {
+		t.Fatalf("exit=%d stdout=%q stderr=%q", code, stdout, stderr)
+	}
+	if strings.Contains(stderr, selector) || !strings.Contains(stderr, "unsupported access-control semantics") {
+		t.Fatalf("summary validation error = %q", stderr)
 	}
 }
 
