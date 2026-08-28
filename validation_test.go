@@ -235,8 +235,11 @@ func TestRunValidationCommandReportsTailscalePreviewMetadataPrivately(t *testing
 	}
 	snapshot.Policy.ACLs = nil
 	snapshot.Policy.Grants = []GrantRule{
-		{Src: []string{"group:alpha"}, BrowserSrc: []string{"group:alpha"}, Dst: []string{"10.0.0.10"}, IPCapabilities: []grantIPCapability{tcp443}},
+		{Src: []string{"autogroup:admin"}, BrowserSrc: []string{"autogroup:admin"}, Dst: []string{"10.0.0.10"}, IPCapabilities: []grantIPCapability{tcp443}},
 		{Src: []string{"group:beta"}, BrowserSrc: []string{"group:beta"}, Dst: []string{"tag:beta"}, IPCapabilities: []grantIPCapability{tcp8080}},
+	}
+	snapshot.GrantRoleSelectorsByLogin = map[string][]string{
+		"alice@example.com": {"autogroup:admin", "autogroup:member"},
 	}
 	snapshot.ControlPlane = ControlPlaneMetadata{
 		Provider:     controlPlaneTailscale,
@@ -261,10 +264,73 @@ func TestRunValidationCommandReportsTailscalePreviewMetadataPrivately(t *testing
 	if report.Snapshot.AccessRules != 2 || len(report.Identities) != 2 || len(report.Identities[0].Services) != 1 || len(report.Identities[1].Services) != 1 || report.Identities[0].Services[0].RuleKind != accessRuleGrant || report.Identities[0].Services[0].RuleIndex != 0 || report.Identities[1].Services[0].RuleKind != accessRuleGrant || report.Identities[1].Services[0].RuleIndex != 1 {
 		t.Fatalf("grant evidence = %#v", report)
 	}
-	for _, forbidden := range []string{"private-oauth-client-id", "private-oauth-client-secret"} {
+	for _, forbidden := range []string{
+		"private-oauth-client-id",
+		"private-oauth-client-secret",
+		"alice@example.com",
+		"bob@example.com",
+		"autogroup:admin",
+	} {
 		if strings.Contains(stdout+stderr, forbidden) {
 			t.Fatalf("validation exposed %q", forbidden)
 		}
+	}
+}
+
+func TestRunValidationCommandPrivateReportExplainsAuthoritativeRoleMatchWithoutLogin(t *testing.T) {
+	setValidationProcessConfig(t)
+	t.Setenv("CONTROL_PLANE", "tailscale")
+	t.Setenv("HEADSCALE_URL", "")
+	t.Setenv("HEADSCALE_API_KEY", "")
+	t.Setenv("TAILSCALE_OAUTH_CLIENT_ID", "private-oauth-client-id")
+	t.Setenv("TAILSCALE_OAUTH_CLIENT_SECRET", "private-oauth-client-secret")
+	setValidationBuildInfo(t, "v1.2.3", "revision-canary", "clean")
+	snapshot := validationTestSnapshot()
+	tcp443, err := parseGrantIPCapability("tcp:443")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tcp8080, err := parseGrantIPCapability("tcp:8080")
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot.Policy.ACLs = nil
+	snapshot.Policy.Grants = []GrantRule{
+		{
+			Src:            []string{"autogroup:admin"},
+			BrowserSrc:     []string{"autogroup:admin"},
+			Dst:            []string{"10.0.0.10"},
+			IPCapabilities: []grantIPCapability{tcp443},
+		},
+		{
+			Src:            []string{"group:beta"},
+			BrowserSrc:     []string{"group:beta"},
+			Dst:            []string{"tag:beta"},
+			IPCapabilities: []grantIPCapability{tcp8080},
+		},
+	}
+	snapshot.GrantRoleSelectorsByLogin = map[string][]string{
+		"alice@example.com": {"autogroup:admin", "autogroup:member"},
+	}
+	snapshot.ControlPlane = ControlPlaneMetadata{
+		Provider:     controlPlaneTailscale,
+		PolicyMode:   networkAccessVisibilityV1,
+		SupportLevel: controlPlanePreview,
+	}
+	code, stdout, stderr := runValidationForTest([]string{
+		"--identity", "admin=alice@example.com",
+		"--identity", "beta=bob@example.com",
+		"--format", "json",
+		"--privacy", "private",
+	}, validationDependenciesFor(snapshot))
+	if code != 0 {
+		t.Fatalf("exit code=%d stdout=%q stderr=%q", code, stdout, stderr)
+	}
+	if !strings.Contains(stdout, `"source_token": "autogroup:admin"`) {
+		t.Fatalf("private report missing authoritative role evidence:\n%s", stdout)
+	}
+	if strings.Contains(stdout+stderr, "alice@example.com") {
+		t.Fatalf("private report exposed login: stdout=%s stderr=%s", stdout, stderr)
 	}
 }
 

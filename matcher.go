@@ -126,6 +126,26 @@ func srcGranted(src []string, ids map[string]bool) bool {
 	return granted
 }
 
+func sourceGrantForRule(rule accessRule, ids, roleSelectors map[string]bool) (string, bool) {
+	for _, source := range rule.Src {
+		if source == "*" || ids[source] || (rule.Kind == accessRuleGrant && roleSelectors[source]) {
+			return source, true
+		}
+	}
+	return "", false
+}
+
+func grantRoleSelectorSet(login string, data *CacheData) map[string]bool {
+	set := make(map[string]bool)
+	if data == nil || login == "" {
+		return set
+	}
+	for _, selector := range data.GrantRoleSelectorsByLogin[login] {
+		set[selector] = true
+	}
+	return set
+}
+
 // matchContext carries the resolved data needed to match access-rule destinations
 // against a proxy host's forward address: host aliases, tag→IP resolution, and the
 // requesting user's own node IPs (for autogroup:self).
@@ -303,11 +323,13 @@ func evaluateServices(identity *Identity, data *CacheData) []serviceMatchEvidenc
 		return []serviceMatchEvidence{}
 	}
 
-	login := normalizeLogin(identity.Login)
+	exactLogin := strings.TrimSpace(identity.Login)
+	login := normalizeLogin(exactLogin)
 	if login == "" {
 		return []serviceMatchEvidence{}
 	}
 	ids := buildIdentitySet(identity, data.Policy)
+	roleSelectors := grantRoleSelectorSet(exactLogin, data)
 	mc := buildMatchContext(login, data)
 
 	slog.Debug("matching services",
@@ -324,7 +346,7 @@ func evaluateServices(identity *Identity, data *CacheData) []serviceMatchEvidenc
 			if !rule.permitsTCP(proxyHost.ForwardPort) {
 				continue
 			}
-			source, sourceMatched := sourceGrant(rule.Src, ids)
+			source, sourceMatched := sourceGrantForRule(rule, ids, roleSelectors)
 			if !sourceMatched {
 				continue
 			}

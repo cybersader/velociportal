@@ -75,6 +75,18 @@ type tailscaleTokenDTO struct {
 type tailscaleUserDTO struct {
 	ID        json.RawMessage `json:"id"`
 	LoginName string          `json:"loginName"`
+	Type      json.RawMessage `json:"type"`
+	Role      json.RawMessage `json:"role"`
+}
+
+const (
+	tailscaleUserTypeMember = "member"
+	tailscaleUserTypeShared = "shared"
+)
+
+var tailscaleUserTypes = map[string]bool{
+	tailscaleUserTypeMember: true,
+	tailscaleUserTypeShared: true,
 }
 
 type tailscaleDeviceDTO struct {
@@ -115,7 +127,7 @@ func (c *TailscaleClient) Load(ctx context.Context, progress controlPlaneProgres
 	}
 	reportControlPlaneProgress(progress, controlPlaneStagePolicy, policyResult.Policy.accessRuleCount())
 
-	users, err := c.fetchUsers(ctx)
+	users, grantRoleSelectorsByLogin, err := c.fetchUsers(ctx)
 	if err != nil {
 		return nil, &controlPlaneLoadError{Provider: c.Provider(), Stage: controlPlaneStageUsers, Err: err}
 	}
@@ -128,8 +140,9 @@ func (c *TailscaleClient) Load(ctx context.Context, progress controlPlaneProgres
 	reportControlPlaneProgress(progress, controlPlaneStageDevices, len(nodes))
 
 	return &ControlPlaneResult{
-		Policy: policyResult.Policy,
-		Nodes:  nodes,
+		Policy:                    policyResult.Policy,
+		Nodes:                     nodes,
+		GrantRoleSelectorsByLogin: grantRoleSelectorsByLogin,
 		Metadata: ControlPlaneMetadata{
 			Provider:     c.Provider(),
 			PolicyMode:   policyResult.PolicyMode,
@@ -151,62 +164,102 @@ func (c *TailscaleClient) fetchPolicy(ctx context.Context) (*validatedPolicy, er
 	return validated, nil
 }
 
-func (c *TailscaleClient) fetchUsers(ctx context.Context) ([]tailscaleUserDTO, error) {
+func (c *TailscaleClient) fetchUsers(ctx context.Context) ([]tailscaleUserDTO, map[string][]string, error) {
 	body, header, err := c.doAPI(ctx, http.MethodGet, "/tailnet/-/users")
 	if err != nil {
-		return nil, fmt.Errorf("fetch users: %w", err)
+		return nil, nil, fmt.Errorf("fetch users: %w", err)
 	}
 	var envelope map[string]json.RawMessage
 	if err := json.Unmarshal(body, &envelope); err != nil {
-		return nil, fmt.Errorf("fetch users: decode response: %w", err)
+		return nil, nil, fmt.Errorf("fetch users: decode response: %w", err)
 	}
 	if err := rejectPartialTailscaleResponse(envelope, header); err != nil {
-		return nil, fmt.Errorf("fetch users: %w", err)
+		return nil, nil, fmt.Errorf("fetch users: %w", err)
 	}
 	rawUsers, ok := envelope["users"]
 	if !ok {
-		return nil, fmt.Errorf("fetch users: response is missing users")
+		return nil, nil, fmt.Errorf("fetch users: response is missing users")
 	}
 	if bytes.Equal(bytes.TrimSpace(rawUsers), []byte("null")) {
-		return nil, fmt.Errorf("fetch users: users must be an array")
+		return nil, nil, fmt.Errorf("fetch users: users must be an array")
 	}
 	var users []tailscaleUserDTO
 	if err := json.Unmarshal(rawUsers, &users); err != nil {
-		return nil, fmt.Errorf("fetch users: decode users: %w", err)
+		return nil, nil, fmt.Errorf("fetch users: decode users: %w", err)
 	}
-	if err := validateTailscaleUsers(users); err != nil {
-		return nil, fmt.Errorf("fetch users: %w", err)
+	grantRoleSelectorsByLogin, err := validateTailscaleUsers(users)
+	if err != nil {
+		return nil, nil, fmt.Errorf("fetch users: %w", err)
 	}
-	return users, nil
+	return users, grantRoleSelectorsByLogin, nil
 }
 
-func validateTailscaleUsers(users []tailscaleUserDTO) error {
+func validateTailscaleUsers(users []tailscaleUserDTO) (map[string][]string, error) {
 	ids := make(map[string]int, len(users))
 	logins := make(map[string]int, len(users))
+	grantRoleSelectorsByLogin := make(map[string][]string)
 	for index, user := range users {
 		id, err := tailscaleReference(user.ID)
 		if err != nil || id == "" {
-			return fmt.Errorf("user %d has a blank or invalid id", index)
+			return nil, fmt.Errorf("user %d has a blank or invalid id", index)
 		}
 		login := strings.TrimSpace(user.LoginName)
 		if login == "" {
-			return fmt.Errorf("user %d has a blank loginName", index)
+			return nil, fmt.Errorf("user %d has a blank loginName", index)
+		}
+		userType, err := tailscaleUserString(user.Type, index, "type")
+		if err != nil {
+			return nil, err
+		}
+		if !tailscaleUserTypes[userType] {
+			return nil, fmt.Errorf("user %d has an unsupported type", index)
+		}
+		role, err := tailscaleUserString(user.Role, index, "role")
+		if err != nil {
+			return nil, err
+		}
+		if !tailscaleHumanRoles[role] {
+			return nil, fmt.Errorf("user %d has an unsupported role", index)
 		}
 		if previous, exists := ids[id]; exists {
-			return fmt.Errorf("users %d and %d have duplicate id", previous, index)
+			return nil, fmt.Errorf("users %d and %d have duplicate id", previous, index)
 		}
 		if previous, exists := logins[login]; exists {
-			return fmt.Errorf("users %d and %d have duplicate loginName", previous, index)
+			return nil, fmt.Errorf("users %d and %d have duplicate loginName", previous, index)
 		}
 		ids[id] = index
 		logins[login] = index
+		if userType == tailscaleUserTypeMember {
+			grantRoleSelectorsByLogin[login] = normalizeStrings([]string{
+				"autogroup:member",
+				"autogroup:" + role,
+			})
+		}
 	}
 	for id, idIndex := range ids {
 		if loginIndex, exists := logins[id]; exists && loginIndex != idIndex {
-			return fmt.Errorf("users %d and %d create an ambiguous owner reference", idIndex, loginIndex)
+			return nil, fmt.Errorf("users %d and %d create an ambiguous owner reference", idIndex, loginIndex)
 		}
 	}
-	return nil
+	return grantRoleSelectorsByLogin, nil
+}
+
+func tailscaleUserString(raw json.RawMessage, index int, field string) (string, error) {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		return "", fmt.Errorf("user %d has a blank %s", index, field)
+	}
+	var value string
+	if err := json.Unmarshal(trimmed, &value); err != nil {
+		return "", fmt.Errorf("user %d has an invalid %s", index, field)
+	}
+	if value == "" {
+		return "", fmt.Errorf("user %d has a blank %s", index, field)
+	}
+	if strings.TrimSpace(value) != value {
+		return "", fmt.Errorf("user %d has a non-canonical %s", index, field)
+	}
+	return value, nil
 }
 
 func (c *TailscaleClient) fetchDevices(ctx context.Context, users []tailscaleUserDTO) ([]Node, error) {

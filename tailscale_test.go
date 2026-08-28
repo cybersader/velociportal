@@ -67,7 +67,7 @@ func newTailscaleFixture(t *testing.T) *tailscaleFixture {
 	})
 	mux.HandleFunc("/api/v2/tailnet/-/users", func(w http.ResponseWriter, r *http.Request) {
 		fixture.recordPath(r)
-		writeJSON(t, w, map[string]any{"users": []map[string]any{{"id": "user-1", "loginName": "alice@example.com"}}})
+		writeJSON(t, w, map[string]any{"users": []map[string]any{{"id": "user-1", "loginName": "alice@example.com", "type": "member", "role": "admin"}}})
 	})
 	mux.HandleFunc("/api/v2/tailnet/-/devices", func(w http.ResponseWriter, r *http.Request) {
 		fixture.recordPath(r)
@@ -115,6 +115,11 @@ func TestTailscaleLoadUsesApprovedEndpointsAndMapsOwners(t *testing.T) {
 	if node.ID != "device-1" || node.OwnerLogin != "alice@example.com" || len(node.Tags) != 0 || !reflect.DeepEqual(node.Addresses, []string{"100.64.0.10"}) {
 		t.Fatalf("node = %#v", node)
 	}
+	if got, want := result.GrantRoleSelectorsByLogin, map[string][]string{
+		"alice@example.com": {"autogroup:admin", "autogroup:member"},
+	}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("GrantRoleSelectorsByLogin = %#v, want %#v", got, want)
+	}
 	if got, want := progress, []controlPlaneLoadStage{controlPlaneStageAuth, controlPlaneStagePolicy, controlPlaneStageUsers, controlPlaneStageDevices}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("progress = %v, want %v", got, want)
 	}
@@ -147,6 +152,87 @@ func TestTailscaleLoadSupportsSafeGrantsAndNodeAttrs(t *testing.T) {
 	}
 	if result.Metadata.PolicyMode != networkAccessVisibilityV1 || len(result.Policy.Grants) != 2 || result.Policy.accessRuleCount() != 2 {
 		t.Fatalf("result = %#v", result)
+	}
+}
+
+func TestTailscaleUserRolesBuildGrantMembership(t *testing.T) {
+	users := `{"users":[
+		{"id":"1","loginName":"owner@example.com","type":"member","role":"owner"},
+		{"id":"2","loginName":"admin@example.com","type":"member","role":"admin"},
+		{"id":"3","loginName":"member@example.com","type":"member","role":"member"},
+		{"id":"4","loginName":"it@example.com","type":"member","role":"it-admin"},
+		{"id":"5","loginName":"network@example.com","type":"member","role":"network-admin"},
+		{"id":"6","loginName":"billing@example.com","type":"member","role":"billing-admin"},
+		{"id":"7","loginName":"auditor@example.com","type":"member","role":"auditor"},
+		{"id":"8","loginName":"shared@example.com","type":"shared","role":"admin"}
+	]}`
+	client, closeServer := tailscaleClientWithBodies(t, users, `{"devices":[]}`, "")
+	defer closeServer()
+
+	result, err := client.Load(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	want := map[string][]string{
+		"owner@example.com":   {"autogroup:member", "autogroup:owner"},
+		"admin@example.com":   {"autogroup:admin", "autogroup:member"},
+		"member@example.com":  {"autogroup:member"},
+		"it@example.com":      {"autogroup:it-admin", "autogroup:member"},
+		"network@example.com": {"autogroup:member", "autogroup:network-admin"},
+		"billing@example.com": {"autogroup:billing-admin", "autogroup:member"},
+		"auditor@example.com": {"autogroup:auditor", "autogroup:member"},
+	}
+	if !reflect.DeepEqual(result.GrantRoleSelectorsByLogin, want) {
+		t.Fatalf("GrantRoleSelectorsByLogin = %#v, want %#v", result.GrantRoleSelectorsByLogin, want)
+	}
+	if _, exists := result.GrantRoleSelectorsByLogin["shared@example.com"]; exists {
+		t.Fatalf("shared user received Grant role selectors: %#v", result.GrantRoleSelectorsByLogin)
+	}
+}
+
+func TestTailscaleEmptyUsersBuildCompleteEmptyGrantMembership(t *testing.T) {
+	client, closeServer := tailscaleClientWithBodies(t, `{"users":[]}`, `{"devices":[]}`, "")
+	defer closeServer()
+
+	result, err := client.Load(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if result.GrantRoleSelectorsByLogin == nil || len(result.GrantRoleSelectorsByLogin) != 0 {
+		t.Fatalf("GrantRoleSelectorsByLogin = %#v, want complete empty mapping", result.GrantRoleSelectorsByLogin)
+	}
+}
+
+func TestTailscaleRejectsInvalidUserTypeAndRole(t *testing.T) {
+	tests := map[string]struct {
+		user string
+		want string
+	}{
+		"missing type":    {user: `{"id":"1","loginName":"alice@example.com","role":"member"}`, want: "blank type"},
+		"null type":       {user: `{"id":"1","loginName":"alice@example.com","type":null,"role":"member"}`, want: "blank type"},
+		"non-string type": {user: `{"id":"1","loginName":"alice@example.com","type":1,"role":"member"}`, want: "invalid type"},
+		"blank type":      {user: `{"id":"1","loginName":"alice@example.com","type":"","role":"member"}`, want: "blank type"},
+		"padded type":     {user: `{"id":"1","loginName":"alice@example.com","type":" member ","role":"member"}`, want: "non-canonical type"},
+		"unknown type":    {user: `{"id":"1","loginName":"alice@example.com","type":"Member","role":"member"}`, want: "unsupported type"},
+		"missing role":    {user: `{"id":"1","loginName":"alice@example.com","type":"member"}`, want: "blank role"},
+		"null role":       {user: `{"id":"1","loginName":"alice@example.com","type":"member","role":null}`, want: "blank role"},
+		"non-string role": {user: `{"id":"1","loginName":"alice@example.com","type":"member","role":1}`, want: "invalid role"},
+		"blank role":      {user: `{"id":"1","loginName":"alice@example.com","type":"member","role":""}`, want: "blank role"},
+		"padded role":     {user: `{"id":"1","loginName":"alice@example.com","type":"member","role":" admin "}`, want: "non-canonical role"},
+		"unknown role":    {user: `{"id":"1","loginName":"alice@example.com","type":"member","role":"Admin"}`, want: "unsupported role"},
+	}
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			client, closeServer := tailscaleClientWithBodies(t, `{"users":[`+test.user+`]}`, `{"devices":[]}`, "")
+			defer closeServer()
+			_, err := client.Load(context.Background(), nil)
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("Load() error = %v, want %q", err, test.want)
+			}
+			if strings.Contains(err.Error(), "alice@example.com") {
+				t.Fatalf("Load() error exposed login: %v", err)
+			}
+		})
 	}
 }
 
@@ -215,7 +301,7 @@ func TestTailscaleRetriesOnceAfterUnauthorized(t *testing.T) {
 		writeJSON(t, w, map[string]any{"acls": []any{}})
 	})
 	mux.HandleFunc("/api/v2/tailnet/-/users", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(t, w, map[string]any{"users": []map[string]any{{"id": "1", "loginName": "alice@example.com"}}})
+		writeJSON(t, w, map[string]any{"users": []map[string]any{{"id": "1", "loginName": "alice@example.com", "type": "member", "role": "member"}}})
 	})
 	mux.HandleFunc("/api/v2/tailnet/-/devices", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(t, w, map[string]any{"devices": []any{}})
@@ -298,17 +384,17 @@ func TestTailscaleRejectsInvalidOwnerMappings(t *testing.T) {
 			want:    "blank loginName",
 		},
 		"duplicate login": {
-			users:   `{"users":[{"id":"1","loginName":"alice@example.com"},{"id":"2","loginName":"alice@example.com"}]}`,
+			users:   `{"users":[{"id":"1","loginName":"alice@example.com","type":"member","role":"member"},{"id":"2","loginName":"alice@example.com","type":"member","role":"member"}]}`,
 			devices: `{"devices":[]}`,
 			want:    "duplicate loginName",
 		},
 		"unresolved owner": {
-			users:   `{"users":[{"id":"1","loginName":"alice@example.com"}]}`,
+			users:   `{"users":[{"id":"1","loginName":"alice@example.com","type":"member","role":"member"}]}`,
 			devices: `{"devices":[{"id":"d1","user":"missing"}]}`,
 			want:    "does not resolve",
 		},
 		"ambiguous owner": {
-			users:   `{"users":[{"id":"alice@example.com","loginName":"bob@example.com"},{"id":"2","loginName":"alice@example.com"}]}`,
+			users:   `{"users":[{"id":"alice@example.com","loginName":"bob@example.com","type":"member","role":"member"},{"id":"2","loginName":"alice@example.com","type":"member","role":"member"}]}`,
 			devices: `{"devices":[{"id":"d1","user":"alice@example.com"}]}`,
 			want:    "ambiguous",
 		},
@@ -327,7 +413,7 @@ func TestTailscaleRejectsInvalidOwnerMappings(t *testing.T) {
 
 func TestTailscaleAllowsTaggedDeviceWithoutUser(t *testing.T) {
 	client, closeServer := tailscaleClientWithBodies(t,
-		`{"users":[{"id":"1","loginName":"alice@example.com"}]}`,
+		`{"users":[{"id":"1","loginName":"alice@example.com","type":"member","role":"member"}]}`,
 		`{"devices":[{"id":"tagged-1","name":"service","tags":["tag:server"],"addresses":["100.64.0.20"]}]}`,
 		"")
 	defer closeServer()
@@ -347,7 +433,7 @@ func TestTailscaleAllowsTaggedDeviceWithoutUser(t *testing.T) {
 
 func TestTailscaleIgnoresUserOnTaggedDevice(t *testing.T) {
 	client, closeServer := tailscaleClientWithBodies(t,
-		`{"users":[{"id":"1","loginName":"alice@example.com"}]}`,
+		`{"users":[{"id":"1","loginName":"alice@example.com","type":"member","role":"member"}]}`,
 		`{"devices":[{"id":"tagged-1","name":"service","user":"1","tags":["tag:server"],"addresses":["100.64.0.20"]}]}`,
 		"")
 	defer closeServer()
@@ -363,7 +449,7 @@ func TestTailscaleIgnoresUserOnTaggedDevice(t *testing.T) {
 
 func TestTailscaleRejectsUntaggedDeviceWithoutUser(t *testing.T) {
 	client, closeServer := tailscaleClientWithBodies(t,
-		`{"users":[{"id":"1","loginName":"alice@example.com"}]}`,
+		`{"users":[{"id":"1","loginName":"alice@example.com","type":"member","role":"member"}]}`,
 		`{"devices":[{"id":"device-1","name":"unowned"}]}`,
 		"")
 	defer closeServer()
@@ -400,7 +486,7 @@ func TestTailscaleRejectsNullPolicyAndCollections(t *testing.T) {
 func TestTailscaleRejectsPartialResponses(t *testing.T) {
 	for _, collection := range []string{"users", "devices"} {
 		t.Run(collection, func(t *testing.T) {
-			users := `{"users":[{"id":"1","loginName":"alice@example.com"}]}`
+			users := `{"users":[{"id":"1","loginName":"alice@example.com","type":"member","role":"member"}]}`
 			devices := `{"devices":[]}`
 			if collection == "users" {
 				users = `{"users":[],"next":"cursor"}`
@@ -427,11 +513,11 @@ func TestTailscaleRejectsContentRange(t *testing.T) {
 	})
 	mux.HandleFunc("/tailnet/-/users", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Range", "users 0-0/2")
-		_, _ = io.WriteString(w, `{"users":[{"id":"1","loginName":"alice@example.com"}]}`)
+		_, _ = io.WriteString(w, `{"users":[{"id":"1","loginName":"alice@example.com","type":"member","role":"member"}]}`)
 	})
 	server := httptest.NewServer(mux)
 	defer server.Close()
-	client := newTailscaleClientForTest(server.URL, "id", "secret", server.Client(), time.Now)
+	client := newTailscaleClientForTest(server.URL, tailscaleTestClientID, tailscaleTestClientSecret, server.Client(), time.Now)
 
 	_, err := client.Load(context.Background(), nil)
 	if err == nil || !strings.Contains(err.Error(), "paginated or partial") {
@@ -542,7 +628,7 @@ func TestTailscaleRequestTimeoutAndResponseBound(t *testing.T) {
 			_, _ = io.WriteString(w, strings.Repeat("x", maxUpstreamResponseBody+1))
 		}))
 		defer server.Close()
-		client := newTailscaleClientForTest(server.URL, "id", "secret", server.Client(), time.Now)
+		client := newTailscaleClientForTest(server.URL, tailscaleTestClientID, tailscaleTestClientSecret, server.Client(), time.Now)
 		_, err := client.Load(context.Background(), nil)
 		if err == nil || !strings.Contains(err.Error(), "response body exceeds") {
 			t.Fatalf("Load() error = %v", err)
@@ -563,7 +649,7 @@ func tailscaleClientWithBodies(t *testing.T, users, devices, policy string) (*Ta
 	mux.HandleFunc("/tailnet/-/users", func(w http.ResponseWriter, r *http.Request) { _, _ = io.WriteString(w, users) })
 	mux.HandleFunc("/tailnet/-/devices", func(w http.ResponseWriter, r *http.Request) { _, _ = io.WriteString(w, devices) })
 	server := httptest.NewServer(mux)
-	client := newTailscaleClientForTest(server.URL, "id", "secret", server.Client(), time.Now)
+	client := newTailscaleClientForTest(server.URL, tailscaleTestClientID, tailscaleTestClientSecret, server.Client(), time.Now)
 	return client, server.Close
 }
 

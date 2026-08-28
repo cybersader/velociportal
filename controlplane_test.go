@@ -56,7 +56,10 @@ func TestValidatePolicyDocumentSupportsSafeGrantsAndNodeAttrs(t *testing.T) {
 		t.Fatalf("policy rules = %#v", validated.Policy)
 	}
 	first := validated.Policy.Grants[0]
-	if len(first.BrowserSrc) != 1 || first.BrowserSrc[0] != "group:admin" || len(validated.Policy.Grants[1].BrowserSrc) != 0 || len(validated.Policy.Grants[2].BrowserSrc) != 0 {
+	if len(first.BrowserSrc) != 1 || first.BrowserSrc[0] != "group:admin" ||
+		len(validated.Policy.Grants[1].BrowserSrc) != 0 ||
+		len(validated.Policy.Grants[2].BrowserSrc) != 1 || validated.Policy.Grants[2].BrowserSrc[0] != "autogroup:member" ||
+		len(validated.Policy.Grants[3].BrowserSrc) != 1 || validated.Policy.Grants[3].BrowserSrc[0] != "autogroup:member" {
 		t.Fatalf("grant browser sources = %#v", validated.Policy.Grants)
 	}
 	if len(first.IPCapabilities) != 2 || !first.IPCapabilities[0].permitsTCP(443) || first.IPCapabilities[0].permitsTCP(80) || first.IPCapabilities[1].permitsTCP(53) {
@@ -317,8 +320,15 @@ func TestGrantSourceClassification(t *testing.T) {
 		{selector: "*", kind: grantSourceWildcard, browser: true},
 		{selector: "alice@example.com", kind: grantSourceHuman, browser: true},
 		{selector: "group:users", kind: grantSourceGroup, browser: true},
-		{selector: "autogroup:member", kind: grantSourceRole},
+		{selector: "autogroup:owner", kind: grantSourceRole, browser: true},
+		{selector: "autogroup:admin", kind: grantSourceRole, browser: true},
+		{selector: "autogroup:member", kind: grantSourceRole, browser: true},
+		{selector: "autogroup:it-admin", kind: grantSourceRole, browser: true},
+		{selector: "autogroup:network-admin", kind: grantSourceRole, browser: true},
+		{selector: "autogroup:billing-admin", kind: grantSourceRole, browser: true},
+		{selector: "autogroup:auditor", kind: grantSourceRole, browser: true},
 		{selector: "autogroup:tagged", kind: grantSourceMachine},
+		{selector: "autogroup:shared", kind: grantSourceMachine},
 		{selector: "tag:client", kind: grantSourceMachine},
 		{selector: "100.64.0.10", kind: grantSourceMachine},
 		{selector: "100.64.0.0/24", kind: grantSourceMachine},

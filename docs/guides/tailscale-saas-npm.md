@@ -6,10 +6,10 @@
 <span class="vp-chip vp-chip--security">Live acceptance pending</span>
 </div>
 
-Velociportal can select Tailscale SaaS as its single control plane while continuing to use Nginx Proxy Manager (NPM) as the service catalog. OAuth and API connectivity have reached a live tailnet, and the safe-Grants correction is implemented in source, but this path remains **preview** until the full SaaS acceptance matrix passes.
+Velociportal can select Tailscale SaaS as its single control plane while continuing to use Nginx Proxy Manager (NPM) as the service catalog. Published `v0.2.0-rc.2` is immutable and contains the safe-Grants correction. Live acceptance proved API connectivity, a complete snapshot, Serve ingress, and destination/TCP matching, then exposed a narrower role-membership gap that omitted expected role-derived cards. `v0.2.0-rc.3` is the next candidate, and this path remains **preview** until the full SaaS acceptance matrix passes.
 
 !!! warning "Preview is not a support claim"
-    The adapter has automated coverage for OAuth, policy/user/device conversion, owner mapping, response limits, redaction, and fail-closed policy handling. The first live snapshot stopped safely on unsupported Grants/nodeAttrs in rc.1. The replacement candidate still requires token refresh, revocation, two human identities, actual reachability, and unsupported-policy negative tests.
+    The adapter has automated coverage for OAuth, policy/user/device conversion, authoritative Grant-role membership, separate owner mapping, response limits, redaction, and fail-closed policy handling. RC.2 must not be replaced or retagged. RC.3 still requires token refresh, revocation, two human identities, actual reachability, and unsupported-policy negative tests.
 
 ## Architecture
 
@@ -84,8 +84,8 @@ Tailscale SaaS reports `legacy_acl_visibility_v1` for ACL-only policies and `net
 | Legacy `acls` with `action`, `src`, and `dst` | Evaluated for visibility; destination ports and protocols remain unmodeled |
 | Grants `src`, `dst`, and `ip` | Evaluated only for the narrow network subset; one capability must permit TCP to the exact NPM `forward_port` |
 | Grant `ip` capabilities | Accept `*`, ports/ranges, protocol wildcards, and protocol ports/ranges; valid non-TCP-only Grants load but produce no HTTP card |
-| Human login, `group:*`, or `*` Grant sources | Can become per-user card evidence |
-| Tag, IP, CIDR, host-alias, and supported autogroup Grant sources | May load as machine/role rules but never become a human browser identity |
+| Human login, `group:*`, `*`, or supported human-role autogroup Grant sources | Exact humans/groups/wildcard can become evidence directly. `autogroup:owner`, `autogroup:admin`, `autogroup:member`, `autogroup:it-admin`, `autogroup:network-admin`, `autogroup:billing-admin`, and `autogroup:auditor` require authoritative exact-login Users API membership, apply only to Grants, and have no hierarchy. |
+| Tag, IP, CIDR, host-alias, `autogroup:shared`, `autogroup:tagged`, and other machine Grant sources | May load but never become a human browser identity |
 | Known attr-only `nodeAttrs` | `*`, individual users, defined groups, tags, and `autogroup:member` targets with `funnel` are validated and ignored for authorization |
 | Empty policy or empty access-rule sections | Complete snapshot with zero cards |
 | Posture, IP sets, services, non-empty `via`, Grant/node-attribute applications | Fail the entire refresh |
@@ -95,14 +95,17 @@ Tailscale SaaS reports `legacy_acl_visibility_v1` for ACL-only policies and `net
 
 A failed control-plane or NPM stage never publishes a partial snapshot. A warm process retains the exact previous complete snapshot; a cold process has no snapshot and remains unhealthy.
 
-## User and device mapping
+## User role and device mapping
 
-The adapter maps each device owner reference through the users response to one exact `loginName`. That login is the matcher-facing owner identity and must align with `Tailscale-User-Login` supplied by Serve.
+The complete Users API response is authoritative for Grant-role membership. The mapping is keyed only by exact `loginName`: a user with `type: "member"` receives `autogroup:member` plus exactly its API role from `owner`, `admin`, `member`, `it-admin`, `network-admin`, `billing-admin`, or `auditor`; a user with `type: "shared"` receives no human role selectors. There is no role hierarchy, case folding, local-part, short-login, or bare-login fallback. Membership applies only to Grant sources and is never inferred from devices, device ownership, node tags, or `tagOwners`.
+
+Device owner references are mapped separately through the same users response to one exact `loginName`. That owner identity supports node ownership, destination matching, and `autogroup:self`; it does not confer role membership.
 
 The refresh fails rather than guessing when it encounters:
 
 - blank or duplicate user IDs;
 - blank or duplicate login names;
+- missing, null, non-string, blank, padded, or unsupported user `type` or `role` values;
 - ambiguous ID/login references;
 - an unresolved owner reference;
 - a duplicate or blank device ID; or
@@ -139,15 +142,17 @@ Before changing the Tailscale label from preview to supported, record:
 - [ ] Token refresh beyond the normal one-hour lifetime
 - [ ] Revocation behavior and recovery after replacement credentials
 - [ ] No client ID, secret, old token, or replacement token in errors or reports
-- [ ] Exact owner mapping for at least two human logins
-- [ ] Different predicted card sets for those identities
-- [ ] Actual Tailscale and NPM reachability parity for visible and hidden services
+- [ ] Exact Users API `loginName`, `type`, and `role` mapping for direct members
+- [ ] `autogroup:member` plus exact-role evidence, shared-user zero-membership evidence, and no-hierarchy negatives
+- [ ] Exact separate device-owner mapping with no device/tag/owner inference into role membership
+- [ ] Different predicted card sets for at least two human identities
+- [ ] Actual Tailscale and NPM reachability parity for visible and hidden role-derived services
 - [ ] Accepted ACL/Grant coexistence, exact TCP/backend-port matching, and machine-source non-inference match the live policy
 - [ ] Unsupported posture, IP-set, service, routing, application-capability, malformed, and unknown semantics fail closed
 - [ ] Cold-start failure, stale-snapshot retention, recovery, and restart behavior
 - [ ] Caller-supplied identity headers are replaced by Serve
 - [ ] The raw Velociportal port remains unreachable from the LAN
-- [ ] Immutable image digest and schema-v3 validation report are recorded
+- [ ] Immutable RC.3 image digest and schema-v3 validation report are recorded while the RC.2 digest remains retained as historical evidence
 
 Until those checks pass, describe this path as **implemented preview**, not supported production behavior.
 

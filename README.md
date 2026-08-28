@@ -37,7 +37,7 @@ The production bundle lives under [`deploy/`](./deploy/). It requires Docker Com
 > No usable public image, `headscale-ops` release, or support claim is implied until tagged artifacts are actually published, anonymously verified, and the real TrueNAS acceptance matrix passes.
 
 > [!NOTE]
-> Tailscale SaaS OAuth and API connectivity have reached a live tailnet, but support remains labeled **preview** until the safe-Grants candidate, token refresh/revocation, owner mapping, unsupported-policy failures, two identities, and actual reachability pass acceptance.
+> Published `v0.2.0-rc.2` is immutable and contains the safe-Grants compatibility correction. Live acceptance then exposed a narrower gap: Grant role autogroups lacked authoritative per-`loginName` Users API membership, so expected role-derived cards were omitted. `v0.2.0-rc.3` is the next preview candidate; Tailscale remains **preview** pending its verification and the remaining live acceptance matrix.
 
 > [!WARNING]
 > The canonical browser route is tailnet-only HTTP Serve over WireGuard: `:8081 -> http://127.0.0.1:18080`. NPM is not portal identity. Official Tailscale can automate `*.ts.net` certificates, but Headscale automatic HTTPS Serve remains future upstream work tracked by [issue #2527](https://github.com/juanfont/headscale/issues/2527) and [PR #3300](https://github.com/juanfont/headscale/pull/3300). Tailnet HTTP Serve is not a release blocker.
@@ -81,7 +81,7 @@ Velociportal polls one selected control-plane result plus NPM on one ticker:
 
 A refresh replaces the cache only after the complete selected-provider load and NPM call succeed. Requests use the last complete in-process snapshot and never wait on an upstream API.
 
-On each request, Velociportal accepts `Tailscale-User-Login` only from `TRUSTED_PROXY_CIDR`, resolves supported identity and group forms, evaluates normalized supported access rules against enabled NPM proxy hosts, and renders matching cards server-side. Legacy ACL ports/protocols remain unmodeled; accepted Tailscale Grants must permit TCP to the exact NPM backend port. The selected control plane, Tailscale Serve, NPM, and backends still enforce access.
+On each request, Velociportal accepts `Tailscale-User-Login` only from `TRUSTED_PROXY_CIDR`, resolves supported identity and group forms, evaluates normalized supported access rules against enabled NPM proxy hosts, and renders matching cards server-side. In Tailscale mode, `/users` supplies exact `loginName`, `type`, and `role` values for Grant-only role membership. A direct `member` receives `autogroup:member` plus exactly its API role; a `shared` user receives none. Role lookup requires exact login equality, has no hierarchy, and is never inferred from devices, owners, tags, or `tagOwners`. Machine/tag/shared selectors remain non-human. Legacy ACL ports/protocols remain unmodeled; accepted Tailscale Grants must permit TCP to the exact NPM backend port. The selected control plane, Tailscale Serve, NPM, and backends still enforce access.
 
 ## What it is — and is not
 
@@ -99,14 +99,14 @@ On each request, Velociportal accepts `Tailscale-User-Login` only from `TRUSTED_
 - Explicit `CONTROL_PLANE=headscale|tailscale`; implicit Headscale compatibility warns through v0.2
 - Headscale adapter labeled supported and Tailscale OAuth adapter labeled preview
 - Exact allowlisted local Headscale HTTP plus verified HTTPS elsewhere
-- Fixed verified Tailscale API origin, in-memory token lifecycle, strict owner mapping, and exact read scopes
+- Fixed verified Tailscale API origin, in-memory token lifecycle, strict Users API identity/type/role validation, exact Grant-role membership, separate strict device-owner mapping, and exact read scopes
 - Separate hardened provider and NPM transports with no redirects or environment proxies and bounded responses
 - Named private production bridge, exact NPM alias, and exact Headscale alias when selected
 - Optional private-CA public-root overlay with no CA mount in the base stack
 - NPM credential JWT and proxy-host client
 - All-or-nothing background snapshot refresh with atomic swap
 - Trusted-source `Tailscale-User-*` identity middleware
-- Legacy ACL matching plus a narrow Tailscale Grants network subset with exact TCP/backend-port checks
+- Legacy ACL matching plus a narrow Tailscale Grants network subset with exact TCP/backend-port checks and Users-API-authoritative role-autogroup sources
 - Known attr-only Tailscale `nodeAttrs` accepted as non-authorization metadata; the supported `funnel` attribute never becomes card evidence
 - Server-rendered responsive portal, embedded htmx refresh, and NPM status indicators
 - Non-root `FROM scratch` image and Engine-28+-gated loopback-only publication
@@ -124,7 +124,7 @@ On each request, Velociportal accepts `Tailscale-User-Login` only from `TRUSTED_
 
 **Still requires real deployment validation**
 
-- Tailscale SaaS OAuth scopes, token refresh/revocation, owner mapping, policy negatives, and live reachability before preview can become supported
+- Tailscale SaaS OAuth scopes, token refresh/revocation, exact Users API `loginName`/`type`/`role` mapping, separate device-owner mapping, role-derived card evidence, policy negatives, and live reachability before preview can become supported
 - The NPM HTTPS-to-Headscale control path, including WebSocket/upgrade behavior and trusted certificate use by brand-new clients
 - The private Docker network and proof that Headscale port `8080` is not reachable from the LAN
 - Separate operator/runtime key handling and NPM header-logging posture
@@ -188,6 +188,8 @@ No CA state lives on pfSense/the router. Router replacement restores ordinary DN
 - [ ] Complete Tailscale OAuth refresh/revocation, policy-negative, owner-mapping, identity, and reachability acceptance; retain preview until then
 - [ ] Refine or replace the `forward_host` join
 - [x] Model a narrow Tailscale Grants network subset with exact TCP/backend-port checks
+- [x] Derive Grant-role source membership solely from exact Tailscale Users API `loginName`/`type`/`role` data
+- [ ] Publish and live-test immutable `v0.2.0-rc.3` without modifying `v0.2.0-rc.2`
 - [ ] Expand modern-policy support only with additional fail-closed semantics and live evidence
 - [ ] Derive browser-facing URLs from NPM frontend fields
 - [ ] Add custom service metadata

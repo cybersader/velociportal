@@ -41,7 +41,7 @@ func TestCrossProviderMatcherParity(t *testing.T) {
 		writeJSON(t, w, policy)
 	})
 	tailscaleMux.HandleFunc("/tailnet/-/users", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(t, w, map[string]any{"users": []map[string]any{{"id": "user-1", "loginName": "alice@example.com"}}})
+		writeJSON(t, w, map[string]any{"users": []map[string]any{{"id": "user-1", "loginName": "alice@example.com", "type": "member", "role": "member"}}})
 	})
 	tailscaleMux.HandleFunc("/tailnet/-/devices", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(t, w, map[string]any{"devices": []map[string]any{{

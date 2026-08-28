@@ -77,7 +77,7 @@ sequenceDiagram
 2. Reject the request with `403` unless it is inside `TRUSTED_PROXY_CIDR`.
 3. Require `Tailscale-User-Login`; a missing identity from a trusted source returns `401`.
 4. Preserve a fully qualified login exactly. Short or bare legacy forms are accepted only when the trusted header itself uses that form.
-5. Resolve supported policy groups for that identity.
+5. Resolve supported policy groups and, for Tailscale Grants only, Users-API-authoritative role selectors for that exact login.
 6. Evaluate enabled NPM proxy hosts against normalized supported access rules. Grant-derived cards require TCP to the exact backend port.
 7. Sort matching cards and render HTML server-side.
 8. Let embedded htmx refresh the card grid every 60 seconds without turning the app into an SPA.
@@ -95,7 +95,7 @@ The current join compares NPM `forward_host` with supported access-rule destinat
 - `*`
 - `autogroup:self`
 
-Headscale remains legacy-ACL-only. The Tailscale preview also evaluates the narrow network-Grants subset: accepted capabilities must permit TCP to the exact NPM backend port. Valid machine-source Grants and the known `*`/user/group/tag/`autogroup:member` attr-only `nodeAttrs` targets using the `funnel` attribute may load but never become human card evidence. NPM access lists, posture, routing, services, IP sets, application capabilities, and unknown semantics are not modeled. `autogroup:internet` fails closed. Human identities do not inherit `tag:*` source membership from `tagOwners` or from tags on nodes they own.
+Headscale remains legacy-ACL-only. The Tailscale preview also evaluates the narrow network-Grants subset: accepted capabilities must permit TCP to the exact NPM backend port. Exact users, defined groups, wildcard, and supported human-role autogroups may produce Grant evidence. Role membership comes only from the complete Users API response: a direct member receives `autogroup:member` plus exactly its API role, a shared user receives none, and there is no role hierarchy. Lookup requires exact login equality and is never inferred from devices, owners, node tags, or `tagOwners`. Tags, IPs, CIDRs, host aliases, `autogroup:shared`, `autogroup:tagged`, and other machine sources remain non-human. Legacy ACLs and `nodeAttrs` do not consume the Users API role mapping; the known `*`/user/group/tag/`autogroup:member` attr-only `nodeAttrs` targets using `funnel` remain non-authorization metadata. NPM access lists, posture, routing, services, IP sets, application capabilities, and unknown semantics are not modeled. `autogroup:internet` fails closed.
 
 !!! warning "Validate the join on real data"
     NPM may store a Docker DNS name such as `grafana`, while Headscale destinations resolve to an IP address or tag. The current join is covered by fixtures but has not been proven end-to-end. See [Known Limitations](../reference/known-limitations.md).

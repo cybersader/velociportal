@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -255,8 +256,9 @@ func TestCache_ControlPlaneFailureRetainsExactSnapshot(t *testing.T) {
 	provider := &fakeControlPlane{
 		provider: controlPlaneTailscale,
 		result: &ControlPlaneResult{
-			Policy:   &Policy{ACLs: []ACLRule{{Action: "accept", Src: []string{"*"}, Dst: []string{"*:*"}}}},
-			Metadata: ControlPlaneMetadata{Provider: controlPlaneTailscale, PolicyMode: legacyACLVisibilityV1, SupportLevel: controlPlanePreview},
+			Policy:                    &Policy{ACLs: []ACLRule{{Action: "accept", Src: []string{"*"}, Dst: []string{"*:*"}}}},
+			GrantRoleSelectorsByLogin: map[string][]string{"alice@example.com": {"autogroup:admin", "autogroup:member"}},
+			Metadata:                  ControlPlaneMetadata{Provider: controlPlaneTailscale, PolicyMode: legacyACLVisibilityV1, SupportLevel: controlPlanePreview},
 		},
 	}
 	cache := NewCache(provider, u.npm, time.Hour, discardLogger())
@@ -264,12 +266,34 @@ func TestCache_ControlPlaneFailureRetainsExactSnapshot(t *testing.T) {
 		t.Fatalf("initial refresh error = %v", err)
 	}
 	good := cache.Get()
+	if got := good.GrantRoleSelectorsByLogin["alice@example.com"]; !reflect.DeepEqual(got, []string{"autogroup:admin", "autogroup:member"}) {
+		t.Fatalf("initial role selectors = %v", got)
+	}
+	provider.result = &ControlPlaneResult{
+		Policy:                    &Policy{ACLs: []ACLRule{{Action: "accept", Src: []string{"*"}, Dst: []string{"*:*"}}}},
+		GrantRoleSelectorsByLogin: map[string][]string{"alice@example.com": {"autogroup:member"}},
+		Metadata:                  ControlPlaneMetadata{Provider: controlPlaneTailscale, PolicyMode: legacyACLVisibilityV1, SupportLevel: controlPlanePreview},
+	}
 	provider.err = &controlPlaneLoadError{Provider: controlPlaneTailscale, Stage: controlPlaneStageUsers, Err: errors.New("users unavailable")}
 	if err := cache.refresh(context.Background()); err == nil {
 		t.Fatal("refresh error = nil")
 	}
 	if cache.Get() != good {
 		t.Fatal("cache pointer changed after control-plane failure")
+	}
+	if got := cache.Get().GrantRoleSelectorsByLogin["alice@example.com"]; !reflect.DeepEqual(got, []string{"autogroup:admin", "autogroup:member"}) {
+		t.Fatalf("stale role selectors changed = %v", got)
+	}
+
+	provider.err = nil
+	if err := cache.refresh(context.Background()); err != nil {
+		t.Fatalf("recovery refresh error = %v", err)
+	}
+	if cache.Get() == good {
+		t.Fatal("cache pointer did not change after successful recovery")
+	}
+	if got := cache.Get().GrantRoleSelectorsByLogin["alice@example.com"]; !reflect.DeepEqual(got, []string{"autogroup:member"}) {
+		t.Fatalf("recovered role selectors = %v", got)
 	}
 }
 

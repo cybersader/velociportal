@@ -539,7 +539,7 @@ func TestEvaluateServicesExplainsMatchServices(t *testing.T) {
 	}
 }
 
-func TestEvaluateServicesMatchesGrantTCPPortsAndSkipsTaggedSources(t *testing.T) {
+func TestEvaluateServicesMatchesGrantTCPPortsAndSkipsUnauthoritativeSources(t *testing.T) {
 	tcp443, err := parseGrantIPCapability("tcp:443")
 	if err != nil {
 		t.Fatal(err)
@@ -559,7 +559,7 @@ func TestEvaluateServicesMatchesGrantTCPPortsAndSkipsTaggedSources(t *testing.T)
 				{Src: []string{"group:admin"}, BrowserSrc: []string{"group:admin"}, Dst: []string{"tag:app"}, IPCapabilities: []grantIPCapability{tcp443}},
 				{Src: []string{"group:admin"}, BrowserSrc: []string{"group:admin"}, Dst: []string{"10.0.0.20"}, IPCapabilities: []grantIPCapability{udp53}},
 				{Src: []string{"tag:client"}, Dst: []string{"10.0.0.30"}, IPCapabilities: []grantIPCapability{wildcard}},
-				{Src: []string{"autogroup:member"}, Dst: []string{"10.0.0.40"}, IPCapabilities: []grantIPCapability{wildcard}},
+				{Src: []string{"autogroup:member"}, BrowserSrc: []string{"autogroup:member"}, Dst: []string{"10.0.0.40"}, IPCapabilities: []grantIPCapability{wildcard}},
 			},
 		},
 		Nodes: []Node{{Tags: []string{"tag:app"}, Addresses: []string{"10.0.0.10"}}},
@@ -578,6 +578,88 @@ func TestEvaluateServicesMatchesGrantTCPPortsAndSkipsTaggedSources(t *testing.T)
 	if matches[0].Card.Domain != "app.example.com" || matches[0].RuleKind != accessRuleGrant || matches[0].RuleIndex != 0 {
 		t.Fatalf("grant evidence = %#v", matches[0])
 	}
+}
+
+func TestEvaluateServicesMatchesAuthoritativeGrantRolesOnly(t *testing.T) {
+	wildcard, err := parseGrantIPCapability("*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := &CacheData{
+		Policy: &Policy{
+			ACLs: []ACLRule{
+				{Action: "accept", Src: []string{"autogroup:admin"}, Dst: []string{"10.0.1.90:443"}},
+			},
+			Grants: []GrantRule{
+				{Src: []string{"autogroup:member"}, BrowserSrc: []string{"autogroup:member"}, Dst: []string{"10.0.1.10"}, IPCapabilities: []grantIPCapability{wildcard}},
+				{Src: []string{"autogroup:admin"}, BrowserSrc: []string{"autogroup:admin"}, Dst: []string{"10.0.1.20"}, IPCapabilities: []grantIPCapability{wildcard}},
+				{Src: []string{"autogroup:owner"}, BrowserSrc: []string{"autogroup:owner"}, Dst: []string{"10.0.1.30"}, IPCapabilities: []grantIPCapability{wildcard}},
+				{Src: []string{"autogroup:it-admin"}, BrowserSrc: []string{"autogroup:it-admin"}, Dst: []string{"10.0.1.40"}, IPCapabilities: []grantIPCapability{wildcard}},
+				{Src: []string{"autogroup:network-admin"}, BrowserSrc: []string{"autogroup:network-admin"}, Dst: []string{"10.0.1.50"}, IPCapabilities: []grantIPCapability{wildcard}},
+				{Src: []string{"autogroup:billing-admin"}, BrowserSrc: []string{"autogroup:billing-admin"}, Dst: []string{"10.0.1.60"}, IPCapabilities: []grantIPCapability{wildcard}},
+				{Src: []string{"autogroup:auditor"}, BrowserSrc: []string{"autogroup:auditor"}, Dst: []string{"10.0.1.70"}, IPCapabilities: []grantIPCapability{wildcard}},
+				{Src: []string{"autogroup:admin"}, BrowserSrc: []string{"autogroup:admin"}, Dst: []string{"autogroup:self"}, IPCapabilities: []grantIPCapability{wildcard}},
+				{Src: []string{"tag:client"}, Dst: []string{"10.0.1.80"}, IPCapabilities: []grantIPCapability{wildcard}},
+			},
+		},
+		Nodes: []Node{{OwnerLogin: "admin@example.com", Addresses: []string{"10.0.2.10"}}},
+		ProxyHosts: []ProxyHost{
+			{ID: 1, DomainNames: []string{"member.example.com"}, ForwardHost: "10.0.1.10", ForwardPort: 443, Enabled: true},
+			{ID: 2, DomainNames: []string{"admin.example.com"}, ForwardHost: "10.0.1.20", ForwardPort: 443, Enabled: true},
+			{ID: 3, DomainNames: []string{"owner.example.com"}, ForwardHost: "10.0.1.30", ForwardPort: 443, Enabled: true},
+			{ID: 4, DomainNames: []string{"it.example.com"}, ForwardHost: "10.0.1.40", ForwardPort: 443, Enabled: true},
+			{ID: 5, DomainNames: []string{"network.example.com"}, ForwardHost: "10.0.1.50", ForwardPort: 443, Enabled: true},
+			{ID: 6, DomainNames: []string{"billing.example.com"}, ForwardHost: "10.0.1.60", ForwardPort: 443, Enabled: true},
+			{ID: 7, DomainNames: []string{"auditor.example.com"}, ForwardHost: "10.0.1.70", ForwardPort: 443, Enabled: true},
+			{ID: 8, DomainNames: []string{"machine.example.com"}, ForwardHost: "10.0.1.80", ForwardPort: 443, Enabled: true},
+			{ID: 9, DomainNames: []string{"acl-role.example.com"}, ForwardHost: "10.0.1.90", ForwardPort: 443, Enabled: true},
+			{ID: 10, DomainNames: []string{"self.example.com"}, ForwardHost: "10.0.2.10", ForwardPort: 443, Enabled: true},
+		},
+		GrantRoleSelectorsByLogin: map[string][]string{
+			"owner@example.com":   {"autogroup:member", "autogroup:owner"},
+			"admin@example.com":   {"autogroup:admin", "autogroup:member"},
+			"member@example.com":  {"autogroup:member"},
+			"it@example.com":      {"autogroup:it-admin", "autogroup:member"},
+			"network@example.com": {"autogroup:member", "autogroup:network-admin"},
+			"billing@example.com": {"autogroup:billing-admin", "autogroup:member"},
+			"auditor@example.com": {"autogroup:auditor", "autogroup:member"},
+		},
+	}
+
+	tests := map[string]struct {
+		login string
+		want  []string
+	}{
+		"owner":         {login: "owner@example.com", want: []string{"member.example.com", "owner.example.com"}},
+		"admin":         {login: "admin@example.com", want: []string{"admin.example.com", "member.example.com", "self.example.com"}},
+		"member":        {login: "member@example.com", want: []string{"member.example.com"}},
+		"it admin":      {login: "it@example.com", want: []string{"it.example.com", "member.example.com"}},
+		"network admin": {login: "network@example.com", want: []string{"member.example.com", "network.example.com"}},
+		"billing admin": {login: "billing@example.com", want: []string{"billing.example.com", "member.example.com"}},
+		"auditor":       {login: "auditor@example.com", want: []string{"auditor.example.com", "member.example.com"}},
+		"shared":        {login: "shared@example.com", want: []string{}},
+		"case variant":  {login: "Admin@example.com", want: []string{}},
+		"short alias":   {login: "admin@", want: []string{}},
+		"bare alias":    {login: "admin", want: []string{}},
+	}
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			if got := cardNames(MatchServices(&Identity{Login: test.login}, data)); !reflect.DeepEqual(got, test.want) {
+				t.Fatalf("cards = %v, want %v", got, test.want)
+			}
+		})
+	}
+
+	matches := evaluateServices(&Identity{Login: "admin@example.com"}, data)
+	for _, match := range matches {
+		if match.Card.Domain == "admin.example.com" {
+			if match.RuleKind != accessRuleGrant || match.RuleIndex != 1 || match.SourceToken != "autogroup:admin" {
+				t.Fatalf("admin role evidence = %#v", match)
+			}
+			return
+		}
+	}
+	t.Fatal("admin role match not found")
 }
 
 func TestEvaluateServicesCombinesACLsAndGrants(t *testing.T) {

@@ -40,7 +40,7 @@ Use Go 1.22+, standard-library HTTP/JSON primitives, embedded server-rendered HT
 
 Headscale remains legacy-ACL-only in `legacy_acl_visibility_v1`. Tailscale may combine legacy `acls` `accept` rules with a narrow network Grants subset; accepted non-empty Grants select `network_access_visibility_v1`. Both rule kinds normalize into provenance-aware access rules and resolve supported destinations against NPM `forward_host`.
 
-Grant `ip` capabilities accept wildcard, port/range, protocol wildcard, and protocol port/range forms. A Grant becomes HTTP card evidence only when one capability permits TCP to the exact NPM `forward_port`. Valid non-TCP-only Grants load but produce no card. Human logins, defined groups, and wildcard sources may become browser evidence. Valid tag, IP, CIDR, host-alias, and supported autogroup sources may load as machine/role rules but never map to a human browser identity; that classification is retained separately from the raw source strings. Attr-only `nodeAttrs` accept only `*`, individual users, defined groups, tags, and `autogroup:member` targets with the `funnel` attribute as non-authorization metadata.
+Grant `ip` capabilities accept wildcard, port/range, protocol wildcard, and protocol port/range forms. A Grant becomes HTTP card evidence only when one capability permits TCP to the exact NPM `forward_port`. Valid non-TCP-only Grants load but produce no card. Human logins, defined groups, wildcard, and Users-API-authoritative human-role autogroups may become Grant browser evidence. Valid tags, IPs, CIDRs, host aliases, `autogroup:shared`, `autogroup:tagged`, and other machine selectors may load but never map to a human browser identity; source classification is retained separately from the raw strings. Attr-only `nodeAttrs` accept only `*`, individual users, defined groups, tags, and `autogroup:member` targets with the `funnel` attribute as non-authorization metadata.
 
 Locked exclusions:
 
@@ -48,12 +48,13 @@ Locked exclusions:
 - Posture, IP sets, services, non-empty routing `via`, application capabilities, malformed capabilities, unknown semantics, and unsafe selectors reject the complete refresh.
 - `autogroup:internet` fails closed.
 - `tagOwners` and tags on owned nodes do not make a human a `tag:*` source.
+- Users API role membership applies only to Grants. It does not authorize legacy ACL role sources or `nodeAttrs`, has no hierarchy, and is never inferred from devices, device owners, node tags, or `tagOwners`.
 - NPM access lists are not visibility inputs.
 - The `forward_host` join remains subject to real-deployment validation.
 
 ## D7 — Named private upstream bridge with egress
 
-The canonical production bundle creates the normal user-defined Docker bridge `velociportal-upstreams`. TrueNAS catalog renderer library 2.3.4 replaces an app's implicit default network whenever any UI-managed network is selected. The RC.1 `internal: true` bridge therefore became Headscale's only network, removed outbound DNS/NAT, and caused mandatory DERP-map retrieval to fail. Live acceptance rolled that attachment back and established the RC.2 correction.
+The canonical production bundle creates the normal user-defined Docker bridge `velociportal-upstreams`. TrueNAS catalog renderer library 2.3.4 replaces an app's implicit default network whenever any UI-managed network is selected. The `v0.1.0-rc.1` `internal: true` bridge therefore became Headscale's only network, removed outbound DNS/NAT, and caused mandatory DERP-map retrieval to fail. Live acceptance rolled that attachment back and established the `v0.1.0-rc.2` correction.
 
 NPM always attaches through TrueNAS-managed settings with alias `npm.velociportal.internal`. Headscale mode additionally attaches Headscale with alias `headscale.velociportal.internal`; Tailscale SaaS mode needs no Headscale attachment and uses the preferred default network for fixed-origin HTTPS egress.
 
@@ -100,13 +101,13 @@ No CA private key, certificate lifecycle, application database, policy file, or 
 
 ## D13 — No public support claim before real acceptance
 
-Unit tests, fixtures, Compose rendering, and documentation builds are not production acceptance. Headscale support requires the canonical TrueNAS path to pass trusted NPM HTTPS checks, bootstrap/key separation, two distinct human identities, header replacement, LAN-negative raw-port tests, restart recovery, NPM join review, and comparison with actual reachability. Tailscale SaaS must remain preview until live OAuth scopes, token refresh/revocation, owner mapping, unsupported-policy negatives, two identities, and actual reachability also pass.
+Unit tests, fixtures, Compose rendering, and documentation builds are not production acceptance. Headscale support requires the canonical TrueNAS path to pass trusted NPM HTTPS checks, bootstrap/key separation, two distinct human identities, header replacement, LAN-negative raw-port tests, restart recovery, NPM join review, and comparison with actual reachability. Tailscale SaaS must remain preview until live OAuth scopes, token refresh/revocation, authoritative exact-login role mapping, direct-member/shared-user and no-hierarchy negatives, separate device-owner mapping, role-derived card evidence, unsupported-policy negatives, two identities, and actual reachability also pass.
 
 ## D14 — Tailscale SaaS is fixed-origin OAuth-only preview
 
 Production uses `https://api.tailscale.com/api/v2`, the credential's `-` alias, and exactly `policy_file:read`, `devices:posture_attributes:read`, `devices:core:read`, and `users:read`. Add no API-key fallback, access-token environment variable, configurable API origin, explicit tailnet, insecure TLS, redirect following, or environment-proxy behavior.
 
-Access tokens remain in memory, refresh about five minutes early, coalesce concurrent refresh, and retry one request after `401`. Client IDs, secrets, rejected tokens, replacement tokens, and encoded forms are redaction inputs. Users/devices conversion rejects blank, duplicate, ambiguous, unresolved, paginated, or partial data rather than publishing an incomplete snapshot.
+Access tokens remain in memory, refresh about five minutes early, coalesce concurrent refresh, and retry one request after `401`. Client IDs, secrets, rejected tokens, replacement tokens, and encoded forms are redaction inputs. The complete users response is authoritative for Grant-role membership: required canonical `type` and `role` fields are mapped by exact `loginName`; direct members receive `autogroup:member` plus exactly their API role, shared users receive none, and unknown or malformed values fail closed. There is no role hierarchy or device-derived inference. Device-owner conversion remains separate. Users/devices conversion rejects blank, duplicate, ambiguous, unresolved, paginated, or partial data rather than publishing an incomplete snapshot.
 
 ## D15 — Provider switching is explicit and atomic
 
