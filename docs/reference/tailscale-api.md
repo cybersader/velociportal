@@ -63,16 +63,19 @@ Each request has an independent timeout. The hardened client requires normal cer
 
 ## Policy response
 
-The policy is validated through the provider-neutral `legacy_acl_visibility_v1` boundary:
+The policy validator reports `legacy_acl_visibility_v1` for ACL-only input and `network_access_visibility_v1` when accepted Grants participate:
 
-- legacy `acls` `accept` rules are supported;
-- groups, tag owners, and hosts are retained for matching;
-- destination ports and protocols are not modeled for visibility;
-- non-empty Grants, postures, IP sets, service selectors, and unsupported access-control sections fail the refresh;
+- legacy `acls` `accept` rules remain supported; their destination ports and protocols are not modeled;
+- safe network Grants are additive with ACLs and must carry non-empty `src`, `dst`, and `ip` arrays;
+- Grant capabilities accept wildcard, port/range, protocol wildcard, and protocol port/range forms; card evidence requires TCP to the exact NPM `forward_port`;
+- exact humans, defined groups, and `*` may become browser card sources;
+- valid tag, IP, CIDR, host-alias, and supported autogroup sources may load but never map to a human browser identity;
+- attr-only `nodeAttrs` accept only `*`, individual users, defined groups, tags, and `autogroup:member` targets with the `funnel` attribute, and never authorize cards;
+- postures, IP sets, services, non-empty `via`, application capabilities, malformed capabilities, and unknown semantics fail the refresh;
 - SSH is not card evidence and is reported separately; and
 - empty policy is a complete zero-card snapshot.
 
-This is intentionally narrower than the full Tailscale policy language. Tailscale remains the enforcement boundary.
+Headscale remains legacy-ACL-only. This Tailscale subset is intentionally narrower than the full policy language, and Tailscale remains the enforcement boundary.
 
 ## User and device conversion
 
@@ -99,4 +102,4 @@ A control-plane failure or NPM failure prevents the entire new snapshot from rep
 
 Automated fixtures cover endpoint paths, OAuth token reuse and refresh, concurrent refresh coalescing, one retry after `401`, owner mapping, duplicate and partial-response rejection, transport hardening, response limits, and credential redaction.
 
-They do not prove the live SaaS API schema, scopes, token lifetime, revocation, real owner references, or policy behavior for the operator's tailnet. Complete the [Tailscale SaaS live acceptance](../guides/tailscale-saas-npm.md#live-acceptance-required) before calling the adapter supported.
+A live tailnet has confirmed OAuth and basic policy/users/devices connectivity, but not token lifetime, revocation, complete safe-Grants behavior, two-identity owner mapping, or reachability. Complete the [Tailscale SaaS live acceptance](../guides/tailscale-saas-npm.md#live-acceptance-required) before calling the adapter supported.

@@ -36,7 +36,8 @@ type destinationMatchEvidence struct {
 type serviceMatchEvidence struct {
 	Card        ServiceCard
 	ProxyHost   ProxyHost
-	ACLIndex    int
+	RuleKind    accessRuleKind
+	RuleIndex   int
 	SourceToken string
 	Destination destinationMatchEvidence
 }
@@ -83,8 +84,9 @@ func loginMatches(login, candidate string) bool {
 	return identityTokens(login)[candidate]
 }
 
-// buildIdentitySet returns the safe ACL src tokens that identify the user plus every
-// group with a matching member. Fully qualified logins do not gain short aliases.
+// buildIdentitySet returns the safe access-rule source tokens that identify the
+// user plus every group with a matching member. Fully qualified logins do not gain
+// short aliases.
 //
 // tagOwners is deliberately NOT consulted here. It only says who may assign a tag
 // to a node; neither tag ownership nor tags on owned nodes make a human identity be
@@ -124,9 +126,9 @@ func srcGranted(src []string, ids map[string]bool) bool {
 	return granted
 }
 
-// matchContext carries the resolved data needed to match ACL dst entries against a
-// proxy host's forward address: host aliases, tag→IP resolution, and the requesting
-// user's own node IPs (for autogroup:self).
+// matchContext carries the resolved data needed to match access-rule destinations
+// against a proxy host's forward address: host aliases, tag→IP resolution, and the
+// requesting user's own node IPs (for autogroup:self).
 type matchContext struct {
 	hosts   map[string]string   // Policy.Hosts: alias name -> IP/CIDR
 	tagIPs  map[string][]string // tag -> IPs of all nodes wearing that tag
@@ -149,7 +151,7 @@ func dstMatches(dst []string, host string, mc *matchContext) bool {
 
 func matchDestination(selector, host string, mc *matchContext) (destinationMatchEvidence, bool) {
 	normalized := stripPort(selector)
-	if mc != nil && mc.hosts != nil {
+	if !reservedPolicySelector(normalized) && mc != nil && mc.hosts != nil {
 		if resolved, ok := mc.hosts[normalized]; ok {
 			resolved = stripPort(resolved)
 			if _, matched := matchResolvedDestination(resolved, host, mc); matched {
@@ -228,14 +230,15 @@ func resolvedMatchValue(kind destinationMatchKind, selector, host string) string
 	}
 }
 
-// matchDst decides whether a single ACL destination matches a proxy host's
+// matchDst decides whether one access-rule destination matches a proxy host's
 // forward address. The evidence-returning path above is authoritative.
 func matchDst(d, host string, mc *matchContext) bool {
 	_, matched := matchDestination(d, host, mc)
 	return matched
 }
 
-// stripPort removes a trailing ":port" from an ACL dst entry without mangling IPv6.
+// stripPort removes a trailing ":port" from a legacy ACL destination without
+// mangling IPv6. Grant destinations carry ports separately in network capabilities.
 //
 //   - Bracketed IPv6 (with or without a port): "[::1]:443" -> "::1", "[fd7a::1]" -> "fd7a::1"
 //   - Bare IP literal (v4 or v6): returned unchanged so IPv6 colons survive.
@@ -317,15 +320,15 @@ func evaluateServices(identity *Identity, data *CacheData) []serviceMatchEvidenc
 			continue
 		}
 
-		for aclIndex, acl := range data.Policy.ACLs {
-			if acl.Action != "accept" {
+		for _, rule := range data.Policy.accessRules() {
+			if !rule.permitsTCP(proxyHost.ForwardPort) {
 				continue
 			}
-			source, sourceMatched := sourceGrant(acl.Src, ids)
+			source, sourceMatched := sourceGrant(rule.Src, ids)
 			if !sourceMatched {
 				continue
 			}
-			destination, destinationMatched := destinationGrant(acl.Dst, proxyHost.ForwardHost, mc)
+			destination, destinationMatched := destinationGrant(rule.Dst, proxyHost.ForwardHost, mc)
 			if !destinationMatched {
 				continue
 			}
@@ -344,11 +347,12 @@ func evaluateServices(identity *Identity, data *CacheData) []serviceMatchEvidenc
 					Online: proxyHost.Meta.NginxOnline,
 				},
 				ProxyHost:   proxyHost,
-				ACLIndex:    aclIndex,
+				RuleKind:    rule.Kind,
+				RuleIndex:   rule.Index,
 				SourceToken: source,
 				Destination: destination,
 			})
-			slog.Debug("service granted", "proxy_host_id", proxyHost.ID, "acl_index", aclIndex)
+			slog.Debug("service granted", "proxy_host_id", proxyHost.ID, "rule_kind", rule.Kind, "rule_index", rule.Index)
 			break
 		}
 	}

@@ -91,13 +91,13 @@ Doctor reports stable `PASS`, `WARN`, and `FAIL` stages for:
 
 - configuration and owner-only environment-file permissions;
 - explicit or implicit provider selection, plus variable-name-only warnings for inactive known credentials;
-- selected provider, `legacy_acl_visibility_v1` policy mode, and `supported` or `preview` support level;
+- selected provider, `legacy_acl_visibility_v1` or `network_access_visibility_v1` policy mode, and `supported` or `preview` support level;
 - trusted proxy CIDR narrowness;
 - a pre-contact warning only when Headscale uses allowlisted HTTP, because the CLI cannot prove private route confinement;
 - Headscale policy/node API progress or Tailscale OAuth/policy/users/devices progress;
 - NPM authentication and proxy-host retrieval;
 - complete snapshot construction;
-- supported ACL-to-`forward_host` join coverage; and
+- supported access-rule-to-`forward_host` join coverage, including exact Grant TCP/backend-port checks; and
 - optional matcher-backed identity previews.
 
 Doctor sanitizes and bounds upstream errors. It does not print Headscale keys, OAuth client IDs/secrets, current or rejected OAuth tokens, NPM credentials/JWTs, or complete configuration structs. A passing run is a preflight result, not proof that rendered cards equal real network authorization.
@@ -112,7 +112,7 @@ velociportal validate --env-file .env \
 
 Validation loads one complete live snapshot, compares the supplied identity labels through the same matcher used by the portal, and explains supported destination kinds. Summary privacy is the default: it emits opaque service IDs and never emits identity logins, domains, IPs, forward hosts, or raw selectors. `--privacy private` adds internal topology for local diagnosis and prints a warning to stderr.
 
-Use `--format json` for deterministic schema-v2 output. The report's `control_plane` object records `provider`, `policy_mode`, `support_level`, and whether selection was explicit or implicit, without including endpoints or credentials. A complete report returns `1` when findings such as an unmatched forward host, a zero-card identity, identical card sets, or an unknown/dirty build require review. Notices about known limitations do not by themselves fail the report. GNU Make converts any failed recipe into Make exit code `2`, so automation that needs the application's exact `0`/`1`/`2` distinction should invoke `velociportal validate` directly; Make users should inspect the report status and findings.
+Use `--format json` for deterministic schema-v3 output. The report records `access_rules` plus per-match `rule_kind` and original `rule_index`; its `control_plane` object records `provider`, `policy_mode`, `support_level`, and whether selection was explicit or implicit, without including endpoints or credentials. A complete report returns `1` when findings such as an unmatched forward host, a zero-card identity, identical card sets, or an unknown/dirty build require review. Notices about known limitations do not by themselves fail the report. GNU Make converts any failed recipe into Make exit code `2`, so automation that needs the application's exact `0`/`1`/`2` distinction should invoke `velociportal validate` directly; Make users should inspect the report status and findings.
 
 Validation is still a visibility prediction. An implicit Headscale selector emits a deprecation warning and a non-failing report notice. When Headscale uses allowlisted HTTP, validation also emits a redacted route-confinement notice. Tailscale reports remain labeled `preview` until live SaaS acceptance passes. Follow the [real-deployment worksheet](../getting-started/validation.md) to verify the private upstream network, NPM control proxy, final identity path, `401`/`403` behavior, LAN-negative ports, browser-facing links, and actual selected-control-plane reachability.
 
@@ -257,6 +257,6 @@ The scratch image has no shell or separate HTTP utility. Its static binary conta
 | `403 untrusted source` | Actual immediate peer seen inside the container versus `TRUSTED_PROXY_CIDR` |
 | `401 no identity` | Whether the trusted proxy injected `Tailscale-User-Login` |
 | `503` from health | The selected control-plane load and NPM proxy-host refresh must both complete successfully |
-| Empty portal with healthy snapshot | Identity/group spelling, legacy `acls`, NPM `forward_host`, and documented matcher limits |
+| Empty portal with healthy snapshot | Identity/group spelling, accepted ACL/Grant sources, Grant TCP/backend-port capability, NPM `forward_host`, and documented matcher limits |
 
 See [Known Limitations](known-limitations.md) before interpreting a healthy process as proof of policy parity.

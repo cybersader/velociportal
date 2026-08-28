@@ -168,7 +168,7 @@ make validate VALIDATE_ARGS="--identity user-a=${VP_USER_A} --identity user-b=${
 unset VP_USER_A VP_USER_B
 ```
 
-Schema-v2 validation records non-sensitive provider, policy-mode, support-level, and explicit/implicit selection metadata. For allowlisted Headscale HTTP, it emits a non-failing route-confinement notice without printing the URL or credential. Tailscale reports retain `support_level: preview` until live SaaS acceptance passes.
+Schema-v3 validation records non-sensitive provider, policy-mode, support-level, explicit/implicit selection, access-rule counts, and rule provenance. For allowlisted Headscale HTTP, it emits a non-failing route-confinement notice without printing the URL or credential. Tailscale reports retain `support_level: preview` until live SaaS acceptance passes.
 
 Summary reports remain topology-minimized, not anonymous. Private reports can expose internal hostnames, forward targets, and policy relationships and must not be published.
 
@@ -181,7 +181,7 @@ The local workflow cannot replace the canonical acceptance matrix. Before any su
 | Headscale-only trusted NPM HTTPS | Brand-new client and HTTPS-only `headscale-ops` succeed without insecure flags |
 | Headscale-only NPM protocol behavior | Headscale WebSocket/upgrade behavior works and auth headers are not logged |
 | Tailscale-only OAuth | Exact scopes, token refresh/revocation, users/devices reads, and credential redaction pass live checks |
-| Tailscale-only policy negatives | Unsupported Grants, posture, IP-set, and service policies fail closed |
+| Tailscale-only policy boundary | Accepted ACL/Grant coexistence and exact TCP/backend-port matching pass; posture, IP-set, service, routing, application, malformed, and unknown semantics fail closed |
 | Runtime upstream isolation | Headscale `8080` and Velociportal raw port are unreachable on the LAN address |
 | User A through Serve | Only User A's supported matches appear |
 | User B through Serve | A meaningfully different card set appears |

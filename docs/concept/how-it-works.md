@@ -1,24 +1,24 @@
 # How it works
 
-Velociportal separates **control-plane refreshes**, **identity-aware portal requests**, and **service traffic**. Portal rendering reads one immutable in-memory snapshot and never waits on Headscale or NPM.
+Velociportal separates **control-plane refreshes**, **identity-aware portal requests**, and **service traffic**. Portal rendering reads one immutable in-memory snapshot and never waits on the selected control plane or NPM.
 
 ## Control plane: complete snapshot refresh
 
 ```mermaid
 flowchart TD
     accTitle: Complete snapshot refresh
-    accDescr: Startup or a poll tick triggers Headscale policy, Headscale node, and NPM proxy-host fetches. If all three succeed, Velociportal atomically replaces the snapshot. If any fetch fails, it keeps the previous complete snapshot.
+    accDescr: Startup or a poll tick triggers the selected provider's complete policy and node/device load plus the NPM proxy-host fetch. If every stage succeeds, Velociportal atomically replaces the snapshot. If any stage fails, it keeps the previous complete snapshot.
 
-    Tick["Startup or poll tick"] --> Policy["Fetch Headscale policy"]
-    Policy --> Nodes["Fetch Headscale nodes"]
-    Nodes --> Hosts["Authenticate to NPM<br/>fetch proxy hosts"]
-    Hosts -->|"all three succeeded"| Swap["Atomically replace<br/>complete snapshot"]
+    Tick["Startup or poll tick"] --> Policy["Fetch selected-provider policy"]
+    Policy --> Inventory["Fetch nodes or<br/>users + devices"]
+    Inventory --> Hosts["Authenticate to NPM<br/>fetch proxy hosts"]
+    Hosts -->|"all stages succeeded"| Swap["Atomically replace<br/>complete snapshot"]
     Policy -->|failure| Keep["Keep previous<br/>complete snapshot"]
-    Nodes -->|failure| Keep
+    Inventory -->|failure| Keep
     Hosts -->|failure| Keep
 
     class Tick core
-    class Policy,Nodes control
+    class Policy,Inventory control
     class Hosts service
     class Swap accepted
     class Keep output
@@ -28,7 +28,7 @@ flowchart TD
 
 - The default poll interval is `30s`.
 - Each upstream call has a `10s` context timeout.
-- A refresh is **all-or-nothing**: policy, nodes, and proxy hosts must all succeed before publication.
+- A refresh is **all-or-nothing**: the selected provider's complete policy/inventory load and NPM proxy hosts must all succeed before publication.
 - Startup performs an immediate refresh. If it fails and there is no earlier in-process snapshot, portal requests and `/healthz` remain unavailable until a later refresh succeeds.
 - The cache is not persisted. A process restart always starts cold.
 
@@ -37,9 +37,9 @@ flowchart TD
 ```mermaid
 sequenceDiagram
     accTitle: Identity, control-plane, and service request sequence
-    accDescr: A background poll builds the complete snapshot from Headscale and NPM. A human requests the portal through Tailscale HTTP Serve over the encrypted tailnet. Serve sanitizes and injects Tailscale user headers. Velociportal checks the source, reads the snapshot, matches supported ACL rules, and returns filtered cards. When the human selects a card, service traffic goes through NPM to the backend without passing through Velociportal.
+    accDescr: A background poll builds the complete snapshot from the selected control plane and NPM. A human requests the portal through Tailscale HTTP Serve over the encrypted tailnet. Serve sanitizes and injects Tailscale user headers. Velociportal checks the source, reads the snapshot, matches supported access rules, and returns filtered cards. When the human selects a card, service traffic goes through NPM to the backend without passing through Velociportal.
 
-    participant HS as Headscale (control plane)
+    participant CP as Selected control plane
     participant Catalog as NPM API (service catalog)
     participant VP as Velociportal
     participant Proxy as Tailscale HTTP Serve
@@ -48,8 +48,8 @@ sequenceDiagram
     participant App as Backend service
 
     loop Startup and every poll interval
-        VP->>HS: GET policy and nodes
-        HS-->>VP: Legacy ACL data + node metadata
+        VP->>CP: GET complete policy and inventory
+        CP-->>VP: Supported policy + node/device metadata
         VP->>Catalog: Authenticate and GET proxy hosts
         Catalog-->>VP: Enabled service metadata
         Note over VP: Publish only after all inputs succeed
@@ -59,7 +59,7 @@ sequenceDiagram
     Note over Proxy: Remove client identity headers<br/>Inject trusted Tailscale-User-Login
     Proxy->>VP: Portal request + trusted identity
     VP->>VP: Validate source CIDR and required login
-    VP->>VP: Read snapshot and match supported ACL rules
+    VP->>VP: Read snapshot and match supported access rules
     VP-->>Proxy: Server-rendered filtered cards
     Proxy-->>User: Portal HTML
 
@@ -78,7 +78,7 @@ sequenceDiagram
 3. Require `Tailscale-User-Login`; a missing identity from a trusted source returns `401`.
 4. Preserve a fully qualified login exactly. Short or bare legacy forms are accepted only when the trusted header itself uses that form.
 5. Resolve supported policy groups for that identity.
-6. Evaluate enabled NPM proxy hosts against supported legacy ACL `accept` rules.
+6. Evaluate enabled NPM proxy hosts against normalized supported access rules. Grant-derived cards require TCP to the exact backend port.
 7. Sort matching cards and render HTML server-side.
 8. Let embedded htmx refresh the card grid every 60 seconds without turning the app into an SPA.
 
@@ -86,7 +86,7 @@ sequenceDiagram
 
 ## Matching boundary
 
-The current join compares NPM `forward_host` with supported ACL destinations. It can resolve:
+The current join compares NPM `forward_host` with supported access-rule destinations. It can resolve:
 
 - Exact hostnames and IP addresses
 - CIDRs
@@ -95,7 +95,7 @@ The current join compares NPM `forward_host` with supported ACL destinations. It
 - `*`
 - `autogroup:self`
 
-It does **not** evaluate Grants, NPM access lists, protocols, or destination ports. `autogroup:internet` and unsupported autogroups fail closed. Human identities do not inherit `tag:*` source membership from `tagOwners` or from tags on nodes they own.
+Headscale remains legacy-ACL-only. The Tailscale preview also evaluates the narrow network-Grants subset: accepted capabilities must permit TCP to the exact NPM backend port. Valid machine-source Grants and the known `*`/user/group/tag/`autogroup:member` attr-only `nodeAttrs` targets using the `funnel` attribute may load but never become human card evidence. NPM access lists, posture, routing, services, IP sets, application capabilities, and unknown semantics are not modeled. `autogroup:internet` fails closed. Human identities do not inherit `tag:*` source membership from `tagOwners` or from tags on nodes they own.
 
 !!! warning "Validate the join on real data"
     NPM may store a Docker DNS name such as `grafana`, while Headscale destinations resolve to an IP address or tag. The current join is covered by fixtures but has not been proven end-to-end. See [Known Limitations](../reference/known-limitations.md).

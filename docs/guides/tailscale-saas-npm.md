@@ -6,10 +6,10 @@
 <span class="vp-chip vp-chip--security">Live acceptance pending</span>
 </div>
 
-Velociportal can select Tailscale SaaS as its single control plane while continuing to use Nginx Proxy Manager (NPM) as the service catalog. This path is implemented and fixture-tested, but it remains **preview** until the live SaaS acceptance matrix passes.
+Velociportal can select Tailscale SaaS as its single control plane while continuing to use Nginx Proxy Manager (NPM) as the service catalog. OAuth and API connectivity have reached a live tailnet, and the safe-Grants correction is implemented in source, but this path remains **preview** until the full SaaS acceptance matrix passes.
 
 !!! warning "Preview is not a support claim"
-    The adapter has automated coverage for OAuth, policy/user/device conversion, owner mapping, response limits, redaction, and fail-closed policy handling. It has not yet been accepted against a real tailnet with token refresh, revocation, two human identities, actual reachability, and unsupported-policy negative tests.
+    The adapter has automated coverage for OAuth, policy/user/device conversion, owner mapping, response limits, redaction, and fail-closed policy handling. The first live snapshot stopped safely on unsupported Grants/nodeAttrs in rc.1. The replacement candidate still requires token refresh, revocation, two human identities, actual reachability, and unsupported-policy negative tests.
 
 ## Architecture
 
@@ -77,19 +77,21 @@ Never put an access token in the environment file. Keep the OAuth client ID out 
 
 ## Policy compatibility
 
-Tailscale SaaS uses the same `legacy_acl_visibility_v1` policy mode as the Headscale adapter.
+Tailscale SaaS reports `legacy_acl_visibility_v1` for ACL-only policies and `network_access_visibility_v1` when accepted Grants participate. Legacy ACLs and Grants are additive.
 
 | Policy construct | Preview behavior |
 |---|---|
-| Legacy `acls` with `action`, `src`, and `dst` | Evaluated for visibility |
-| Destination ports | Stripped; not modeled |
-| Protocols | Parsed when syntactically simple, then ignored |
-| Empty policy or empty `acls` | Complete snapshot with zero cards |
-| Grants | Non-empty section fails the entire refresh |
-| Postures, IP sets, service selectors | Non-empty/used constructs fail the entire refresh |
+| Legacy `acls` with `action`, `src`, and `dst` | Evaluated for visibility; destination ports and protocols remain unmodeled |
+| Grants `src`, `dst`, and `ip` | Evaluated only for the narrow network subset; one capability must permit TCP to the exact NPM `forward_port` |
+| Grant `ip` capabilities | Accept `*`, ports/ranges, protocol wildcards, and protocol ports/ranges; valid non-TCP-only Grants load but produce no HTTP card |
+| Human login, `group:*`, or `*` Grant sources | Can become per-user card evidence |
+| Tag, IP, CIDR, host-alias, and supported autogroup Grant sources | May load as machine/role rules but never become a human browser identity |
+| Known attr-only `nodeAttrs` | `*`, individual users, defined groups, tags, and `autogroup:member` targets with `funnel` are validated and ignored for authorization |
+| Empty policy or empty access-rule sections | Complete snapshot with zero cards |
+| Posture, IP sets, services, non-empty `via`, Grant/node-attribute applications | Fail the entire refresh |
 | SSH | Not card evidence; reported as a separate authorization surface |
-| Unknown access-control fields or actions | Fail the entire refresh |
-| `autogroup:internet` and unsupported source tags | Fail closed in matching |
+| Unknown fields, actions, selectors, sections, or malformed capabilities | Fail the entire refresh |
+| `autogroup:internet` | Fails closed |
 
 A failed control-plane or NPM stage never publishes a partial snapshot. A warm process retains the exact previous complete snapshot; a cold process has no snapshot and remains unhealthy.
 
@@ -118,7 +120,7 @@ Follow the [TrueNAS Quickstart](truenas-scale.md), choosing the Tailscale SaaS p
 4. Keep the fixed ingress network as the preferred gateway for SaaS HTTPS egress.
 5. Configure the dedicated least-privilege OAuth client outside Velociportal.
 6. Configure Tailscale Serve and the exact trusted proxy source.
-7. Run Doctor and schema-v2 validation, then complete live acceptance.
+7. Run Doctor and schema-v3 validation, then complete live acceptance.
 
 The optional private-CA overlay can still be used when the NPM API uses a private public root. It does not change or replace verification of `api.tailscale.com`.
 
@@ -140,11 +142,12 @@ Before changing the Tailscale label from preview to supported, record:
 - [ ] Exact owner mapping for at least two human logins
 - [ ] Different predicted card sets for those identities
 - [ ] Actual Tailscale and NPM reachability parity for visible and hidden services
-- [ ] Unsupported Grants, posture, IP-set, and service policies fail closed
+- [ ] Accepted ACL/Grant coexistence, exact TCP/backend-port matching, and machine-source non-inference match the live policy
+- [ ] Unsupported posture, IP-set, service, routing, application-capability, malformed, and unknown semantics fail closed
 - [ ] Cold-start failure, stale-snapshot retention, recovery, and restart behavior
 - [ ] Caller-supplied identity headers are replaced by Serve
 - [ ] The raw Velociportal port remains unreachable from the LAN
-- [ ] Immutable image digest and schema-v2 validation report are recorded
+- [ ] Immutable image digest and schema-v3 validation report are recorded
 
 Until those checks pass, describe this path as **implemented preview**, not supported production behavior.
 

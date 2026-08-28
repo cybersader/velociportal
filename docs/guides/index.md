@@ -3,7 +3,7 @@
 Select one implemented control-plane adapter plus NPM. Velociportal is a **visibility layer**: it reads policy and service metadata, renders a filtered dashboard, and stays out of backend service traffic.
 
 !!! note "Current support boundary"
-    **Headscale + NPM** is the supported implementation path, with real TrueNAS acceptance still pending. **Tailscale SaaS + NPM** is an implemented, fixture-tested preview that uses OAuth and the same legacy ACL visibility subset; it remains preview until live SaaS acceptance passes. One Velociportal process selects one provider.
+    **Headscale + NPM** is the supported implementation path, with real TrueNAS acceptance still pending. **Tailscale SaaS + NPM** is an implemented OAuth preview with live API-connectivity evidence and a narrow safe-Grants subset; it remains preview until live SaaS acceptance passes. One Velociportal process selects one provider.
 
 ## Architecture cards
 
@@ -23,7 +23,7 @@ Select one implemented control-plane adapter plus NPM. Velociportal is a **visib
     <span class="vp-chip vp-chip--validation">Implemented preview</span>
     <span class="vp-chip vp-chip--security">Live acceptance pending</span>
 
-    Uses a fixed verified Tailscale API origin, dedicated OAuth client credentials, exact user/device owner mapping, the same `legacy_acl_visibility_v1` boundary, and NPM discovery over `velociportal-upstreams`. Grants and posture remain unsupported and fail closed.
+    Uses a fixed verified Tailscale API origin, dedicated OAuth client credentials, exact user/device owner mapping, legacy ACLs plus a narrow network-Grants subset, and NPM discovery over `velociportal-upstreams`. Grant cards require TCP to the exact backend port; posture, routing, services, IP sets, applications, and unknown semantics fail closed.
 
     [Use the preview architecture →](tailscale-saas-npm.md)
 

@@ -68,3 +68,23 @@ func TestCrossProviderMatcherParity(t *testing.T) {
 		}
 	}
 }
+
+func TestLegacyACLAndSafeGrantMatcherParity(t *testing.T) {
+	legacy, err := validatePolicyDocument([]byte(`{"groups":{"group:admin":["alice@example.com"]},"acls":[{"action":"accept","src":["group:admin"],"dst":["tag:app:443"]}]}`))
+	if err != nil {
+		t.Fatalf("legacy policy error = %v", err)
+	}
+	modern, err := validatePolicyDocument([]byte(`{"groups":{"group:admin":["alice@example.com"]},"grants":[{"src":["group:admin"],"dst":["tag:app"],"ip":["tcp:443"]}],"nodeAttrs":[{"target":["autogroup:member"],"attr":["funnel"]}]}`))
+	if err != nil {
+		t.Fatalf("modern policy error = %v", err)
+	}
+	nodes := []Node{{Tags: []string{"tag:app"}, Addresses: []string{"100.64.0.10"}}}
+	proxyHosts := []ProxyHost{{ID: 1, DomainNames: []string{"app.example.com"}, ForwardScheme: "https", ForwardHost: "100.64.0.10", ForwardPort: 443, Enabled: true}}
+	for _, login := range []string{"alice@example.com", "bob@example.com"} {
+		legacyMatches := MatchServices(&Identity{Login: login}, &CacheData{Policy: legacy.Policy, Nodes: nodes, ProxyHosts: proxyHosts})
+		modernMatches := MatchServices(&Identity{Login: login}, &CacheData{Policy: modern.Policy, Nodes: nodes, ProxyHosts: proxyHosts})
+		if !reflect.DeepEqual(legacyMatches, modernMatches) {
+			t.Fatalf("%s parity mismatch:\nlegacy=%#v\nmodern=%#v", login, legacyMatches, modernMatches)
+		}
+	}
+}

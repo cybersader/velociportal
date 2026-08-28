@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -17,7 +19,10 @@ const (
 	controlPlaneTailscale controlPlaneProvider = "tailscale"
 )
 
-const legacyACLVisibilityV1 = "legacy_acl_visibility_v1"
+const (
+	legacyACLVisibilityV1     = "legacy_acl_visibility_v1"
+	networkAccessVisibilityV1 = "network_access_visibility_v1"
+)
 
 type controlPlaneSupportLevel string
 
@@ -80,10 +85,18 @@ func (e *unsupportedPolicyError) Error() string {
 	return fmt.Sprintf("unsupported policy section %q: %s", e.Section, e.Reason)
 }
 
+type accessRuleKind string
+
+const (
+	accessRuleACL   accessRuleKind = "acl"
+	accessRuleGrant accessRuleKind = "grant"
+)
+
 type Policy struct {
 	Groups    map[string][]string
 	TagOwners map[string][]string
 	ACLs      []ACLRule
+	Grants    []GrantRule
 	Hosts     map[string]string
 }
 
@@ -91,6 +104,86 @@ type ACLRule struct {
 	Action string
 	Src    []string
 	Dst    []string
+}
+
+type GrantRule struct {
+	Src            []string
+	BrowserSrc     []string
+	Dst            []string
+	IPCapabilities []grantIPCapability
+}
+
+type accessRule struct {
+	Kind           accessRuleKind
+	Index          int
+	Src            []string
+	Dst            []string
+	IPCapabilities []grantIPCapability
+}
+
+type grantIPCapability struct {
+	AllProtocols bool
+	Protocol     uint8
+	AllPorts     bool
+	PortStart    int
+	PortEnd      int
+}
+
+func (p *Policy) accessRules() []accessRule {
+	if p == nil {
+		return nil
+	}
+	rules := make([]accessRule, 0, len(p.ACLs)+len(p.Grants))
+	for index, rule := range p.ACLs {
+		rules = append(rules, accessRule{
+			Kind:  accessRuleACL,
+			Index: index,
+			Src:   rule.Src,
+			Dst:   rule.Dst,
+		})
+	}
+	for index, rule := range p.Grants {
+		rules = append(rules, accessRule{
+			Kind:           accessRuleGrant,
+			Index:          index,
+			Src:            rule.BrowserSrc,
+			Dst:            rule.Dst,
+			IPCapabilities: rule.IPCapabilities,
+		})
+	}
+	return rules
+}
+
+func (p *Policy) accessRuleCount() int {
+	if p == nil {
+		return 0
+	}
+	return len(p.ACLs) + len(p.Grants)
+}
+
+func (r accessRule) permitsTCP(port int) bool {
+	if r.Kind == accessRuleACL {
+		return true
+	}
+	if port < 1 || port > 65535 {
+		return false
+	}
+	for _, capability := range r.IPCapabilities {
+		if capability.permitsTCP(port) {
+			return true
+		}
+	}
+	return false
+}
+
+func (c grantIPCapability) permitsTCP(port int) bool {
+	if !c.AllProtocols && c.Protocol != 6 {
+		return false
+	}
+	if c.AllPorts {
+		return true
+	}
+	return port >= c.PortStart && port <= c.PortEnd
 }
 
 type Node struct {
@@ -102,8 +195,10 @@ type Node struct {
 }
 
 type validatedPolicy struct {
-	Policy     *Policy
-	SSHPresent bool
+	Policy           *Policy
+	PolicyMode       string
+	SSHPresent       bool
+	NodeAttrsPresent bool
 }
 
 var benignPolicySections = map[string]bool{
@@ -116,9 +211,25 @@ var benignPolicySections = map[string]bool{
 	"randomizeClientPort": true,
 }
 
+type policyValidationOptions struct {
+	AllowGrants    bool
+	AllowNodeAttrs bool
+}
+
 func validatePolicyDocument(raw []byte) (*validatedPolicy, error) {
+	return validatePolicyDocumentWithOptions(raw, policyValidationOptions{
+		AllowGrants:    true,
+		AllowNodeAttrs: true,
+	})
+}
+
+func validateLegacyPolicyDocument(raw []byte) (*validatedPolicy, error) {
+	return validatePolicyDocumentWithOptions(raw, policyValidationOptions{})
+}
+
+func validatePolicyDocumentWithOptions(raw []byte, options policyValidationOptions) (*validatedPolicy, error) {
 	if len(bytes.TrimSpace(raw)) == 0 {
-		return &validatedPolicy{Policy: &Policy{}}, nil
+		return &validatedPolicy{Policy: &Policy{}, PolicyMode: legacyACLVisibilityV1}, nil
 	}
 
 	var sections map[string]json.RawMessage
@@ -130,47 +241,116 @@ func validatePolicyDocument(raw []byte) (*validatedPolicy, error) {
 	}
 
 	policy := &Policy{}
-	result := &validatedPolicy{Policy: policy}
-	for section, value := range sections {
-		switch section {
-		case "groups":
-			if err := json.Unmarshal(value, &policy.Groups); err != nil {
-				return nil, fmt.Errorf("decode policy groups: %w", err)
-			}
-		case "tagOwners":
-			if err := json.Unmarshal(value, &policy.TagOwners); err != nil {
-				return nil, fmt.Errorf("decode policy tagOwners: %w", err)
-			}
-		case "hosts":
-			if err := json.Unmarshal(value, &policy.Hosts); err != nil {
-				return nil, fmt.Errorf("decode policy hosts: %w", err)
-			}
-		case "acls":
-			rules, err := validateACLRules(value)
+	result := &validatedPolicy{Policy: policy, PolicyMode: legacyACLVisibilityV1}
+
+	if value, ok := sections["groups"]; ok {
+		if _, err := jsonSectionObjectEmpty(value); err != nil {
+			return nil, fmt.Errorf("decode policy groups: %w", err)
+		}
+		if err := json.Unmarshal(value, &policy.Groups); err != nil {
+			return nil, fmt.Errorf("decode policy groups: %w", err)
+		}
+	}
+	if value, ok := sections["tagOwners"]; ok {
+		if _, err := jsonSectionObjectEmpty(value); err != nil {
+			return nil, fmt.Errorf("decode policy tagOwners: %w", err)
+		}
+		if err := json.Unmarshal(value, &policy.TagOwners); err != nil {
+			return nil, fmt.Errorf("decode policy tagOwners: %w", err)
+		}
+	}
+	if value, ok := sections["hosts"]; ok {
+		if _, err := jsonSectionObjectEmpty(value); err != nil {
+			return nil, fmt.Errorf("decode policy hosts: %w", err)
+		}
+		if err := json.Unmarshal(value, &policy.Hosts); err != nil {
+			return nil, fmt.Errorf("decode policy hosts: %w", err)
+		}
+	}
+	if value, ok := sections["acls"]; ok {
+		if _, err := jsonArrayEmpty(value); err != nil {
+			return nil, fmt.Errorf("decode policy acls: %w", err)
+		}
+		rules, err := validateACLRules(value)
+		if err != nil {
+			return nil, err
+		}
+		policy.ACLs = rules
+	}
+	if value, ok := sections["grants"]; ok {
+		empty, err := jsonArrayEmpty(value)
+		if err != nil {
+			return nil, fmt.Errorf("decode policy grants: %w", err)
+		}
+		if !options.AllowGrants && !empty {
+			return nil, &unsupportedPolicyError{Section: "grants", Reason: "non-empty section is not supported by this control plane"}
+		}
+		if options.AllowGrants {
+			rules, err := validateGrantRules(value, policy)
 			if err != nil {
 				return nil, err
 			}
-			policy.ACLs = rules
-		case "grants", "postures", "ipsets", "nodeAttrs":
-			if !jsonValueEmpty(value) {
-				return nil, &unsupportedPolicyError{Section: section, Reason: "non-empty section is outside legacy ACL visibility"}
-			}
-		case "ssh":
-			result.SSHPresent = !jsonValueEmpty(value)
-		default:
-			if !benignPolicySections[section] {
-				return nil, &unsupportedPolicyError{Section: section, Reason: "unknown policy section"}
+			policy.Grants = rules
+			if len(rules) > 0 {
+				result.PolicyMode = networkAccessVisibilityV1
 			}
 		}
+	}
+	for _, section := range []string{"postures", "ipsets"} {
+		if value, ok := sections[section]; ok {
+			empty, err := jsonSectionObjectEmpty(value)
+			if err != nil {
+				return nil, &unsupportedPolicyError{Section: section, Reason: fmt.Sprintf("invalid section shape: %v", err)}
+			}
+			if !empty {
+				return nil, &unsupportedPolicyError{Section: section, Reason: "non-empty section is outside network access visibility"}
+			}
+		}
+	}
+	if value, ok := sections["nodeAttrs"]; ok {
+		empty, err := jsonArrayEmpty(value)
+		if err != nil {
+			return nil, fmt.Errorf("decode policy nodeAttrs: %w", err)
+		}
+		if !options.AllowNodeAttrs && !empty {
+			return nil, &unsupportedPolicyError{Section: "nodeAttrs", Reason: "non-empty section is not supported by this control plane"}
+		}
+		if options.AllowNodeAttrs {
+			present, err := validateNodeAttrs(value, policy)
+			if err != nil {
+				return nil, err
+			}
+			result.NodeAttrsPresent = present
+		}
+	}
+	if value, ok := sections["ssh"]; ok {
+		empty, err := jsonArrayEmpty(value)
+		if err != nil {
+			return nil, &unsupportedPolicyError{Section: "ssh", Reason: fmt.Sprintf("invalid section shape: %v", err)}
+		}
+		result.SSHPresent = !empty
+	}
+
+	known := map[string]bool{
+		"groups": true, "tagOwners": true, "hosts": true, "acls": true,
+		"grants": true, "postures": true, "ipsets": true, "nodeAttrs": true,
+		"ssh": true,
+	}
+	unknown := make([]string, 0)
+	for section := range sections {
+		if !known[section] && !benignPolicySections[section] {
+			unknown = append(unknown, section)
+		}
+	}
+	if len(unknown) > 0 {
+		sort.Strings(unknown)
+		return nil, &unsupportedPolicyError{Section: unknown[0], Reason: "unknown policy section"}
 	}
 
 	return result, nil
 }
 
 func validateACLRules(raw json.RawMessage) ([]ACLRule, error) {
-	if jsonValueEmpty(raw) {
-		return nil, nil
-	}
 	var wireRules []map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &wireRules); err != nil {
 		return nil, fmt.Errorf("decode policy acls: %w", err)
@@ -178,15 +358,17 @@ func validateACLRules(raw json.RawMessage) ([]ACLRule, error) {
 
 	rules := make([]ACLRule, 0, len(wireRules))
 	for index, wire := range wireRules {
-		for field := range wire {
-			switch field {
-			case "action", "src", "dst", "proto", "srcPosture":
-			default:
-				return nil, &unsupportedPolicyError{Section: "acls", Reason: fmt.Sprintf("rule %d contains unknown field %q", index, field)}
-			}
+		if unknown := firstUnknownField(wire, "action", "src", "dst", "proto", "srcPosture"); unknown != "" {
+			return nil, &unsupportedPolicyError{Section: "acls", Reason: fmt.Sprintf("rule %d contains unknown field %q", index, unknown)}
 		}
-		if value, ok := wire["srcPosture"]; ok && !jsonValueEmpty(value) {
-			return nil, &unsupportedPolicyError{Section: "acls", Reason: fmt.Sprintf("rule %d uses source posture", index)}
+		if value, ok := wire["srcPosture"]; ok {
+			empty, err := jsonStringSliceEmpty(value)
+			if err != nil {
+				return nil, &unsupportedPolicyError{Section: "acls", Reason: fmt.Sprintf("rule %d has invalid srcPosture: %v", index, err)}
+			}
+			if !empty {
+				return nil, &unsupportedPolicyError{Section: "acls", Reason: fmt.Sprintf("rule %d uses source posture", index)}
+			}
 		}
 		if value, ok := wire["proto"]; ok {
 			if err := validateIgnoredProtocol(value); err != nil {
@@ -224,6 +406,395 @@ func validateACLRules(raw json.RawMessage) ([]ACLRule, error) {
 	return rules, nil
 }
 
+func validateGrantRules(raw json.RawMessage, policy *Policy) ([]GrantRule, error) {
+	var wireRules []map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &wireRules); err != nil {
+		return nil, fmt.Errorf("decode policy grants: %w", err)
+	}
+
+	rules := make([]GrantRule, 0, len(wireRules))
+	for index, wire := range wireRules {
+		if unknown := firstUnknownField(wire, "src", "dst", "ip", "app", "srcPosture", "via"); unknown != "" {
+			return nil, &unsupportedPolicyError{Section: "grants", Reason: fmt.Sprintf("rule %d contains unknown field %q", index, unknown)}
+		}
+		if value, ok := wire["app"]; ok {
+			empty, err := jsonObjectEmpty(value)
+			if err != nil {
+				return nil, &unsupportedPolicyError{Section: "grants", Reason: fmt.Sprintf("rule %d has invalid app: %v", index, err)}
+			}
+			if !empty {
+				return nil, &unsupportedPolicyError{Section: "grants", Reason: fmt.Sprintf("rule %d uses unsupported app semantics", index)}
+			}
+		}
+		for _, field := range []string{"srcPosture", "via"} {
+			if value, ok := wire[field]; ok {
+				empty, err := jsonStringSliceEmpty(value)
+				if err != nil {
+					return nil, &unsupportedPolicyError{Section: "grants", Reason: fmt.Sprintf("rule %d has invalid %s: %v", index, field, err)}
+				}
+				if !empty {
+					return nil, &unsupportedPolicyError{Section: "grants", Reason: fmt.Sprintf("rule %d uses unsupported %s semantics", index, field)}
+				}
+			}
+		}
+
+		var src, dst, ip []string
+		if err := unmarshalRequiredStringSlice(wire, "src", &src); err != nil {
+			return nil, fmt.Errorf("decode policy grants rule %d: %w", index, err)
+		}
+		if err := unmarshalRequiredStringSlice(wire, "dst", &dst); err != nil {
+			return nil, fmt.Errorf("decode policy grants rule %d: %w", index, err)
+		}
+		if err := unmarshalRequiredStringSlice(wire, "ip", &ip); err != nil {
+			return nil, fmt.Errorf("decode policy grants rule %d: %w", index, err)
+		}
+
+		sourceKinds := make([]grantSourceKind, 0, len(src))
+		browserSources := make([]string, 0, len(src))
+		for _, selector := range src {
+			kind, err := validateGrantSourceSelector(selector, policy)
+			if err != nil {
+				return nil, &unsupportedPolicyError{Section: "grants", Reason: fmt.Sprintf("rule %d uses unsupported source selector %q: %v", index, selector, err)}
+			}
+			sourceKinds = append(sourceKinds, kind)
+			if kind.browserEligible() {
+				browserSources = append(browserSources, selector)
+			}
+		}
+		selfDestination := false
+		for _, selector := range dst {
+			if err := validateGrantDestinationSelector(selector, policy); err != nil {
+				return nil, &unsupportedPolicyError{Section: "grants", Reason: fmt.Sprintf("rule %d uses unsupported destination selector %q: %v", index, selector, err)}
+			}
+			selfDestination = selfDestination || strings.TrimSpace(selector) == "autogroup:self"
+		}
+		if selfDestination && !grantSourcesSupportSelf(sourceKinds) {
+			return nil, &unsupportedPolicyError{Section: "grants", Reason: fmt.Sprintf("rule %d uses autogroup:self with a non-human source", index)}
+		}
+
+		capabilities := make([]grantIPCapability, 0, len(ip))
+		for _, value := range ip {
+			capability, err := parseGrantIPCapability(value)
+			if err != nil {
+				return nil, &unsupportedPolicyError{Section: "grants", Reason: fmt.Sprintf("rule %d has invalid ip capability %q: %v", index, value, err)}
+			}
+			capabilities = append(capabilities, capability)
+		}
+		rules = append(rules, GrantRule{
+			Src:            normalizeStrings(src),
+			BrowserSrc:     normalizeStrings(browserSources),
+			Dst:            normalizeStrings(dst),
+			IPCapabilities: capabilities,
+		})
+	}
+	return rules, nil
+}
+
+func validateNodeAttrs(raw json.RawMessage, policy *Policy) (bool, error) {
+	var entries []map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &entries); err != nil {
+		return false, fmt.Errorf("decode policy nodeAttrs: %w", err)
+	}
+	for index, entry := range entries {
+		if unknown := firstUnknownField(entry, "target", "attr", "app"); unknown != "" {
+			return false, &unsupportedPolicyError{Section: "nodeAttrs", Reason: fmt.Sprintf("entry %d contains unknown field %q", index, unknown)}
+		}
+		var target, attr []string
+		if err := unmarshalRequiredStringSlice(entry, "target", &target); err != nil {
+			return false, fmt.Errorf("decode policy nodeAttrs entry %d: %w", index, err)
+		}
+		if value, ok := entry["app"]; ok {
+			empty, err := jsonObjectEmpty(value)
+			if err != nil {
+				return false, &unsupportedPolicyError{Section: "nodeAttrs", Reason: fmt.Sprintf("entry %d has invalid app: %v", index, err)}
+			}
+			if !empty {
+				return false, &unsupportedPolicyError{Section: "nodeAttrs", Reason: fmt.Sprintf("entry %d uses application capabilities", index)}
+			}
+		}
+		if err := unmarshalRequiredStringSlice(entry, "attr", &attr); err != nil {
+			return false, fmt.Errorf("decode policy nodeAttrs entry %d: %w", index, err)
+		}
+		for _, selector := range target {
+			if err := validateFunnelNodeAttrTarget(selector, policy); err != nil {
+				return false, &unsupportedPolicyError{Section: "nodeAttrs", Reason: fmt.Sprintf("entry %d uses unsupported target selector %q: %v", index, selector, err)}
+			}
+		}
+		for _, attribute := range attr {
+			if strings.TrimSpace(attribute) != "funnel" {
+				return false, &unsupportedPolicyError{Section: "nodeAttrs", Reason: fmt.Sprintf("entry %d uses unsupported attribute %q", index, attribute)}
+			}
+		}
+	}
+	return len(entries) > 0, nil
+}
+
+func validateFunnelNodeAttrTarget(selector string, policy *Policy) error {
+	selector = strings.TrimSpace(selector)
+	switch {
+	case selector == "*", selector == "autogroup:member":
+		return nil
+	case strings.HasPrefix(selector, "group:"):
+		if policy != nil {
+			if _, ok := policy.Groups[selector]; ok {
+				return nil
+			}
+		}
+		return errors.New("group is not defined")
+	case strings.HasPrefix(selector, "tag:"):
+		if strings.TrimPrefix(selector, "tag:") != "" {
+			return nil
+		}
+		return errors.New("tag is blank")
+	case strings.Contains(selector, "@") && !strings.Contains(selector, ":"):
+		return nil
+	default:
+		return errors.New("selector class is not supported for funnel")
+	}
+}
+
+type grantSourceKind string
+
+const (
+	grantSourceWildcard grantSourceKind = "wildcard"
+	grantSourceHuman    grantSourceKind = "human"
+	grantSourceGroup    grantSourceKind = "group"
+	grantSourceRole     grantSourceKind = "role"
+	grantSourceMachine  grantSourceKind = "machine"
+)
+
+func (kind grantSourceKind) browserEligible() bool {
+	return kind == grantSourceWildcard || kind == grantSourceHuman || kind == grantSourceGroup
+}
+
+func (kind grantSourceKind) supportsSelf() bool {
+	return kind == grantSourceHuman || kind == grantSourceGroup || kind == grantSourceRole
+}
+
+func validateGrantSourceSelector(selector string, policy *Policy) (grantSourceKind, error) {
+	selector = strings.TrimSpace(selector)
+	if selector == "" {
+		return "", errors.New("selector is blank")
+	}
+	if selector == "*" {
+		return grantSourceWildcard, nil
+	}
+	if net.ParseIP(selector) != nil {
+		return grantSourceMachine, nil
+	}
+	if _, _, err := net.ParseCIDR(selector); err == nil {
+		return grantSourceMachine, nil
+	}
+	if strings.HasPrefix(selector, "group:") {
+		if policy != nil {
+			if _, ok := policy.Groups[selector]; ok {
+				return grantSourceGroup, nil
+			}
+		}
+		return "", errors.New("group is not defined")
+	}
+	if strings.HasPrefix(selector, "tag:") {
+		if strings.TrimPrefix(selector, "tag:") != "" {
+			return grantSourceMachine, nil
+		}
+		return "", errors.New("tag is blank")
+	}
+	if strings.HasPrefix(selector, "autogroup:") {
+		role := strings.TrimPrefix(selector, "autogroup:")
+		if grantHumanRoleAutogroups[role] {
+			return grantSourceRole, nil
+		}
+		if grantSourceAutogroups[role] {
+			return grantSourceMachine, nil
+		}
+		return "", errors.New("autogroup is not supported")
+	}
+	if unsupportedPolicySelector(selector) {
+		return "", errors.New("selector class is not supported")
+	}
+	if policy != nil {
+		if _, ok := policy.Hosts[selector]; ok {
+			return grantSourceMachine, nil
+		}
+	}
+	if strings.Contains(selector, "@") && !strings.Contains(selector, ":") {
+		return grantSourceHuman, nil
+	}
+	return "", errors.New("selector class is not supported")
+}
+
+var grantHumanRoleAutogroups = map[string]bool{
+	"admin": true, "member": true, "owner": true, "it-admin": true,
+	"network-admin": true, "billing-admin": true, "auditor": true,
+}
+
+var grantSourceAutogroups = map[string]bool{
+	"admin": true, "member": true, "owner": true, "it-admin": true,
+	"network-admin": true, "billing-admin": true, "auditor": true,
+	"tagged": true, "shared": true,
+}
+
+func validateGrantDestinationSelector(selector string, policy *Policy) error {
+	selector = strings.TrimSpace(selector)
+	if selector == "" {
+		return errors.New("selector is blank")
+	}
+	if selector == "*" || selector == "autogroup:self" || net.ParseIP(selector) != nil {
+		return nil
+	}
+	if _, _, err := net.ParseCIDR(selector); err == nil {
+		return nil
+	}
+	if strings.HasPrefix(selector, "tag:") {
+		if strings.TrimPrefix(selector, "tag:") != "" {
+			return nil
+		}
+		return errors.New("tag is blank")
+	}
+	if reservedPolicySelector(selector) {
+		return errors.New("selector class is not supported")
+	}
+	if policy != nil {
+		if _, ok := policy.Hosts[selector]; ok {
+			return nil
+		}
+	}
+	return errors.New("selector class is not supported")
+}
+
+func grantSourcesSupportSelf(kinds []grantSourceKind) bool {
+	if len(kinds) == 0 {
+		return false
+	}
+	for _, kind := range kinds {
+		if !kind.supportsSelf() {
+			return false
+		}
+	}
+	return true
+}
+
+func parseGrantIPCapability(raw string) (grantIPCapability, error) {
+	value := strings.TrimSpace(raw)
+	if value == "" {
+		return grantIPCapability{}, errors.New("must not be blank")
+	}
+	if value == "*" {
+		return grantIPCapability{AllProtocols: true, AllPorts: true}, nil
+	}
+	if strings.Count(value, ":") > 1 {
+		return grantIPCapability{}, errors.New("must contain at most one protocol separator")
+	}
+	if !strings.Contains(value, ":") {
+		start, end, err := parseGrantPortRange(value)
+		if err != nil {
+			return grantIPCapability{}, err
+		}
+		return grantIPCapability{AllProtocols: true, PortStart: start, PortEnd: end}, nil
+	}
+
+	parts := strings.SplitN(value, ":", 2)
+	protocol, err := parseGrantProtocol(parts[0])
+	if err != nil {
+		return grantIPCapability{}, err
+	}
+	if parts[1] == "*" {
+		return grantIPCapability{Protocol: protocol, AllPorts: true}, nil
+	}
+	start, end, err := parseGrantPortRange(parts[1])
+	if err != nil {
+		return grantIPCapability{}, err
+	}
+	return grantIPCapability{Protocol: protocol, PortStart: start, PortEnd: end}, nil
+}
+
+func parseGrantProtocol(raw string) (uint8, error) {
+	value := strings.ToLower(strings.TrimSpace(raw))
+	aliases := map[string]uint8{
+		"icmp": 1, "igmp": 2, "ipv4": 4, "ip-in-ip": 4, "tcp": 6,
+		"egp": 8, "igp": 9, "udp": 17, "gre": 47, "esp": 50,
+		"ah": 51, "sctp": 132,
+	}
+	if protocol, ok := aliases[value]; ok {
+		return protocol, nil
+	}
+	number, err := strconv.Atoi(value)
+	if err != nil || number < 1 || number > 255 {
+		return 0, errors.New("protocol must be a documented alias or a number from 1 through 255")
+	}
+	return uint8(number), nil
+}
+
+func parseGrantPortRange(raw string) (int, int, error) {
+	parts := strings.Split(raw, "-")
+	if len(parts) < 1 || len(parts) > 2 {
+		return 0, 0, errors.New("port must be a number or one inclusive range")
+	}
+	start, err := strconv.Atoi(strings.TrimSpace(parts[0]))
+	if err != nil || start < 1 || start > 65535 {
+		return 0, 0, errors.New("port must be between 1 and 65535")
+	}
+	end := start
+	if len(parts) == 2 {
+		end, err = strconv.Atoi(strings.TrimSpace(parts[1]))
+		if err != nil || end < start || end > 65535 {
+			return 0, 0, errors.New("port range must be ascending and within 1 through 65535")
+		}
+	}
+	return start, end, nil
+}
+
+func unmarshalRequiredStringSlice(fields map[string]json.RawMessage, name string, out *[]string) error {
+	raw, ok := fields[name]
+	if !ok {
+		return fmt.Errorf("missing required field %q", name)
+	}
+	if err := json.Unmarshal(raw, out); err != nil {
+		return fmt.Errorf("field %q: %w", name, err)
+	}
+	if len(*out) == 0 {
+		return fmt.Errorf("field %q must not be empty", name)
+	}
+	for _, value := range *out {
+		if strings.TrimSpace(value) == "" {
+			return fmt.Errorf("field %q contains a blank value", name)
+		}
+	}
+	return nil
+}
+
+func firstUnknownField(fields map[string]json.RawMessage, allowed ...string) string {
+	allowedSet := make(map[string]bool, len(allowed))
+	for _, field := range allowed {
+		allowedSet[field] = true
+	}
+	unknown := make([]string, 0)
+	for field := range fields {
+		if !allowedSet[field] {
+			unknown = append(unknown, field)
+		}
+	}
+	if len(unknown) == 0 {
+		return ""
+	}
+	sort.Strings(unknown)
+	return unknown[0]
+}
+
+func reservedPolicySelector(selector string) bool {
+	if selector == "*" || net.ParseIP(selector) != nil {
+		return true
+	}
+	if _, _, err := net.ParseCIDR(selector); err == nil {
+		return true
+	}
+	return strings.HasPrefix(selector, "group:") ||
+		strings.HasPrefix(selector, "tag:") ||
+		strings.HasPrefix(selector, "autogroup:") ||
+		unsupportedPolicySelector(selector) ||
+		strings.Contains(selector, "@")
+}
+
 func unsupportedPolicySelector(selector string) bool {
 	return strings.HasPrefix(selector, "ipset:") ||
 		strings.HasPrefix(selector, "svc:") ||
@@ -258,27 +829,38 @@ func validateIgnoredProtocol(raw json.RawMessage) error {
 	return errors.New("must be a string or number")
 }
 
-func jsonValueEmpty(raw json.RawMessage) bool {
-	trimmed := bytes.TrimSpace(raw)
-	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
-		return true
+func jsonStringSliceEmpty(raw json.RawMessage) (bool, error) {
+	var values []string
+	if err := json.Unmarshal(raw, &values); err != nil {
+		return false, errors.New("must be an array of strings")
 	}
-	var value any
-	if err := json.Unmarshal(trimmed, &value); err != nil {
-		return false
+	return len(values) == 0, nil
+}
+
+func jsonObjectEmpty(raw json.RawMessage) (bool, error) {
+	var value map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return false, errors.New("must be an object")
 	}
-	switch typed := value.(type) {
-	case []any:
-		return len(typed) == 0
-	case map[string]any:
-		return len(typed) == 0
-	case string:
-		return strings.TrimSpace(typed) == ""
-	case bool:
-		return !typed
-	default:
-		return false
+	return len(value) == 0, nil
+}
+
+func jsonSectionObjectEmpty(raw json.RawMessage) (bool, error) {
+	if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		return false, errors.New("must be an object, not null")
 	}
+	return jsonObjectEmpty(raw)
+}
+
+func jsonArrayEmpty(raw json.RawMessage) (bool, error) {
+	if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		return false, errors.New("must be an array, not null")
+	}
+	var values []json.RawMessage
+	if err := json.Unmarshal(raw, &values); err != nil {
+		return false, errors.New("must be an array")
+	}
+	return len(values) == 0, nil
 }
 
 func normalizeStrings(values []string) []string {

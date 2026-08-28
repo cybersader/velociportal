@@ -63,11 +63,13 @@ Exact requested scopes:
 | Method | Path | Purpose |
 |--------|------|---------|
 | POST | `/oauth/token` | Acquire a bearer token; retain only in memory, coalesce refreshes, refresh about five minutes early, retry one request after `401`. |
-| GET | `/tailnet/-/acl` | Read policy and validate it through `legacy_acl_visibility_v1`. |
+| GET | `/tailnet/-/acl` | Read policy; use `legacy_acl_visibility_v1` for ACL-only input or `network_access_visibility_v1` when the accepted safe Grants subset participates. |
 | GET | `/tailnet/-/users` | Read exact IDs and `loginName` values used for owner resolution. |
 | GET | `/tailnet/-/devices` | Read device IDs, owner references, addresses, names, and tags. |
 
 Owner mapping must resolve each untagged device to exactly one user login matching `Tailscale-User-Login`. Blank, duplicate, ambiguous, or unresolved identities reject the entire refresh. Tagged devices may omit a human owner. Users/devices responses that advertise pagination or partial data are rejected rather than published incompletely.
+
+Policy conversion accepts additive legacy ACLs plus the narrow network Grants subset. A Grant becomes HTTP card evidence only when its `ip` capability permits TCP to the exact NPM backend port. Machine/tag/IP/CIDR/host/autogroup sources may load but never become human identities. Attr-only `nodeAttrs` accept only `*`, individual users, defined groups, tags, and `autogroup:member` targets with the `funnel` attribute as non-authorization metadata. Posture, routing, services, IP sets, application capabilities, malformed capabilities, and unknown semantics reject the refresh.
 
 The adapter is fixture-tested for paths, OAuth lifecycle, concurrency, one `401` retry, redaction, conversion, partial-response rejection, and hardened transport. It remains labeled preview until live scopes, token lifetime/refresh/revocation, response shapes, owner mapping, policy negatives, and reachability pass.
 

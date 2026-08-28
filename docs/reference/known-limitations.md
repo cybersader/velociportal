@@ -4,11 +4,13 @@ This page describes the current implementation and approved deployment boundary,
 
 ## Policy support
 
-- **Legacy ACL rules only.** Both providers use `legacy_acl_visibility_v1` and evaluate `acls` entries with `action: "accept"`. Non-empty Grants, posture, IP-set, service-selector, and unknown access-control constructs fail the entire refresh rather than broadening visibility. SSH is reported but is never card evidence.
-- **Ports and protocols are ignored for visibility.** Destination ports are stripped and protocol fields are not modeled. A card may appear even when the real rule permits only another port or protocol. The selected control plane remains the enforcement boundary.
+- **Headscale remains legacy-ACL-only.** Headscale uses `legacy_acl_visibility_v1` and evaluates `acls` entries with `action: "accept"`.
+- **Tailscale Grants support is narrow.** Tailscale reports `network_access_visibility_v1` when accepted Grants participate. ACLs and Grants are additive, but only network `src`/`dst`/`ip` semantics are modeled. Posture, IP sets, services, non-empty `via`, application capabilities, malformed capabilities, and unknown semantics reject the refresh.
+- **Port/protocol precision differs by rule kind.** Legacy ACL destination ports are stripped and protocol fields remain unmodeled, so ACL-derived visibility can overstate a port-specific rule. Grant-derived visibility requires a capability that permits TCP to the exact NPM `forward_port`; valid UDP/ICMP/non-TCP-only Grants load but produce no HTTP card.
+- **Machine sources never become browser identities.** Valid source tags, IPs, CIDRs, host aliases, and supported autogroups may load so machine rules do not block a Tailscale snapshot, but they never match a human request. `tagOwners` and tags on owned nodes do not make a human a `tag:*` source. Destination tags still resolve through node addresses.
+- **Node attributes do not authorize.** Attr-only Tailscale `nodeAttrs` may load only for `*`, individual users, defined groups, tags, and `autogroup:member` targets with the `funnel` attribute; they never grant a card. Unknown attributes, malformed section types, and non-empty node-attribute application capabilities fail closed.
 - **`autogroup:internet` fails closed.** It is not treated as a wildcard.
-- **No human source-tag inference.** `tagOwners` and tags on owned nodes do not make a human a `tag:*` source. Tags resolve destinations only.
-- **Empty policy means zero cards; unsupported policy blocks refresh.** An empty policy or empty `acls` section is a complete zero-card snapshot. A non-empty unsupported access-control construct rejects the new snapshot; a warm process retains the exact previous snapshot and a cold process remains without one.
+- **Empty policy means zero cards; unsupported policy blocks refresh.** Empty access-rule sections are a complete zero-card snapshot. A non-empty unsupported construct rejects the new snapshot; a warm process retains the exact previous snapshot and a cold process remains without one.
 
 ## Service matching
 
@@ -24,7 +26,7 @@ This page describes the current implementation and approved deployment boundary,
 - **Implicit Headscale is temporary compatibility.** An absent selector defaults to Headscale only for the v0.2 line and emits a value-free warning. Explicit selection becomes mandatory in v0.3.
 - **Inactive known credentials are ignored.** Runtime warns only by variable name. Doctor and validation include active and inactive known credential material in redaction inputs. The setup wizard requires confirmation before deleting inactive known keys during a provider switch and leaves the file byte-for-byte unchanged on refusal or input abort.
 - **Tailscale is OAuth-only.** There is no API-key fallback, access-token variable, configurable API origin, or explicit tailnet variable. The OAuth credential's `-` alias selects the tailnet.
-- **Tailscale remains preview.** Fixture coverage is not live proof of scopes, token refresh/revocation, owner mapping, policy shape, or reachability.
+- **Tailscale remains preview.** Live OAuth/API connectivity and fixture coverage do not prove token refresh/revocation, complete safe-Grants behavior, owner mapping, two-identity parity, or reachability.
 
 ## Runtime upstream transport
 
@@ -69,7 +71,7 @@ This section applies only when `CONTROL_PLANE=headscale`. Tailscale SaaS mode st
 
 ## Validation status
 
-Schema-v2 validation reports record non-sensitive provider, policy-mode, support-level, and explicit/implicit selection metadata. They do not prove Docker confinement, identity injection, restart recovery, backup restore, join correctness, links, or per-user reachability.
+Schema-v3 validation reports record non-sensitive provider, policy-mode, support-level, explicit/implicit selection, access-rule counts, and `rule_kind`/`rule_index` provenance. They do not prove Docker confinement, identity injection, restart recovery, backup restore, join correctness, links, or per-user reachability.
 
 For Headscale, RC.1 failed the first live TrueNAS network-attachment gate and was rolled back safely; RC.2 corrects that topology but has not yet passed end-to-end acceptance. For Tailscale SaaS, live OAuth scopes, token refresh/revocation, API response shapes, owner mapping, unsupported-policy failures, and reachability have not yet been accepted.
 

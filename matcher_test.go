@@ -451,8 +451,15 @@ func TestMatchServicesTagsAndCIDR(t *testing.T) {
 func TestDestinationMatchEvidenceKinds(t *testing.T) {
 	mc := &matchContext{
 		hosts: map[string]string{
-			"webserver": "10.0.0.5",
-			"lan":       "10.0.0.0/24",
+			"webserver":          "10.0.0.5",
+			"lan":                "10.0.0.0/24",
+			"*":                  "10.0.0.200",
+			"10.0.0.1":           "10.0.0.200",
+			"10.0.0.0/24":        "10.0.0.200",
+			"autogroup:self":     "10.0.0.200",
+			"autogroup:internet": "10.0.0.200",
+			"tag:server":         "10.0.0.200",
+			"svc:web":            "10.0.0.200",
 		},
 		tagIPs: map[string][]string{
 			"tag:server": {"10.0.0.1"},
@@ -488,6 +495,12 @@ func TestDestinationMatchEvidenceKinds(t *testing.T) {
 			}
 		})
 	}
+
+	for _, selector := range []string{"autogroup:self", "autogroup:internet", "tag:server", "svc:web"} {
+		if evidence, matched := matchDestination(selector, "10.0.0.200", mc); matched {
+			t.Fatalf("reserved selector %q was shadowed by a host alias: %#v", selector, evidence)
+		}
+	}
 }
 
 func TestEvaluateServicesExplainsMatchServices(t *testing.T) {
@@ -518,11 +531,73 @@ func TestEvaluateServicesExplainsMatchServices(t *testing.T) {
 	if len(matches) != 2 {
 		t.Fatalf("evaluateServices() returned %d matches", len(matches))
 	}
-	if matches[0].SourceToken != "group:admin" || matches[0].Destination.Kind != destinationMatchTag || matches[0].ACLIndex != 0 {
+	if matches[0].SourceToken != "group:admin" || matches[0].Destination.Kind != destinationMatchTag || matches[0].RuleKind != accessRuleACL || matches[0].RuleIndex != 0 {
 		t.Fatalf("first evidence = %#v", matches[0])
 	}
-	if matches[1].SourceToken != "*" || matches[1].Destination.Kind != destinationMatchCIDR || matches[1].ACLIndex != 1 {
+	if matches[1].SourceToken != "*" || matches[1].Destination.Kind != destinationMatchCIDR || matches[1].RuleKind != accessRuleACL || matches[1].RuleIndex != 1 {
 		t.Fatalf("second evidence = %#v", matches[1])
+	}
+}
+
+func TestEvaluateServicesMatchesGrantTCPPortsAndSkipsTaggedSources(t *testing.T) {
+	tcp443, err := parseGrantIPCapability("tcp:443")
+	if err != nil {
+		t.Fatal(err)
+	}
+	udp53, err := parseGrantIPCapability("udp:53")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wildcard, err := parseGrantIPCapability("*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := &CacheData{
+		Policy: &Policy{
+			Groups: map[string][]string{"group:admin": {"alice@example.com"}},
+			Grants: []GrantRule{
+				{Src: []string{"group:admin"}, BrowserSrc: []string{"group:admin"}, Dst: []string{"tag:app"}, IPCapabilities: []grantIPCapability{tcp443}},
+				{Src: []string{"group:admin"}, BrowserSrc: []string{"group:admin"}, Dst: []string{"10.0.0.20"}, IPCapabilities: []grantIPCapability{udp53}},
+				{Src: []string{"tag:client"}, Dst: []string{"10.0.0.30"}, IPCapabilities: []grantIPCapability{wildcard}},
+				{Src: []string{"autogroup:member"}, Dst: []string{"10.0.0.40"}, IPCapabilities: []grantIPCapability{wildcard}},
+			},
+		},
+		Nodes: []Node{{Tags: []string{"tag:app"}, Addresses: []string{"10.0.0.10"}}},
+		ProxyHosts: []ProxyHost{
+			{ID: 1, DomainNames: []string{"app.example.com"}, ForwardScheme: "https", ForwardHost: "10.0.0.10", ForwardPort: 443, Enabled: true},
+			{ID: 2, DomainNames: []string{"dns.example.com"}, ForwardScheme: "https", ForwardHost: "10.0.0.20", ForwardPort: 53, Enabled: true},
+			{ID: 3, DomainNames: []string{"machine.example.com"}, ForwardScheme: "https", ForwardHost: "10.0.0.30", ForwardPort: 443, Enabled: true},
+			{ID: 4, DomainNames: []string{"role.example.com"}, ForwardScheme: "https", ForwardHost: "10.0.0.40", ForwardPort: 443, Enabled: true},
+		},
+	}
+
+	matches := evaluateServices(&Identity{Login: "alice@example.com"}, data)
+	if len(matches) != 1 {
+		t.Fatalf("evaluateServices() = %#v", matches)
+	}
+	if matches[0].Card.Domain != "app.example.com" || matches[0].RuleKind != accessRuleGrant || matches[0].RuleIndex != 0 {
+		t.Fatalf("grant evidence = %#v", matches[0])
+	}
+}
+
+func TestEvaluateServicesCombinesACLsAndGrants(t *testing.T) {
+	wildcard, err := parseGrantIPCapability("*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := &CacheData{
+		Policy: &Policy{
+			ACLs:   []ACLRule{{Action: "accept", Src: []string{"alice@example.com"}, Dst: []string{"10.0.0.10:443"}}},
+			Grants: []GrantRule{{Src: []string{"alice@example.com"}, BrowserSrc: []string{"alice@example.com"}, Dst: []string{"10.0.0.20"}, IPCapabilities: []grantIPCapability{wildcard}}},
+		},
+		ProxyHosts: []ProxyHost{
+			{ID: 1, DomainNames: []string{"legacy.example.com"}, ForwardHost: "10.0.0.10", ForwardPort: 443, Enabled: true},
+			{ID: 2, DomainNames: []string{"grant.example.com"}, ForwardHost: "10.0.0.20", ForwardPort: 8443, Enabled: true},
+		},
+	}
+	matches := evaluateServices(&Identity{Login: "alice@example.com"}, data)
+	if len(matches) != 2 || matches[0].RuleKind != accessRuleGrant || matches[1].RuleKind != accessRuleACL {
+		t.Fatalf("mixed matches = %#v", matches)
 	}
 }
 

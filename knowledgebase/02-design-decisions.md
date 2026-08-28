@@ -36,13 +36,16 @@ NPM is not the portal identity provider. Velociportal has no direct Authentik, A
 
 Use Go 1.22+, standard-library HTTP/JSON primitives, embedded server-rendered HTML, and an embedded htmx asset. Authorization-like visibility filtering happens server-side before HTML is rendered. Add dependencies only when necessary.
 
-## D6 — Legacy ACL matching only
+## D6 — Narrow normalized access-rule matching
 
-Both providers use `legacy_acl_visibility_v1`. Velociportal evaluates legacy `acls` entries with `action: "accept"` and resolves supported user/group sources and destination hosts, CIDRs, policy aliases, destination tags, wildcard, and `autogroup:self` against NPM `forward_host`. Non-empty Grants, posture, IP sets, service selectors, unknown access-control sections/actions, and unsafe selectors reject the complete refresh. SSH is reported separately and never becomes card evidence.
+Headscale remains legacy-ACL-only in `legacy_acl_visibility_v1`. Tailscale may combine legacy `acls` `accept` rules with a narrow network Grants subset; accepted non-empty Grants select `network_access_visibility_v1`. Both rule kinds normalize into provenance-aware access rules and resolve supported destinations against NPM `forward_host`.
+
+Grant `ip` capabilities accept wildcard, port/range, protocol wildcard, and protocol port/range forms. A Grant becomes HTTP card evidence only when one capability permits TCP to the exact NPM `forward_port`. Valid non-TCP-only Grants load but produce no card. Human logins, defined groups, and wildcard sources may become browser evidence. Valid tag, IP, CIDR, host-alias, and supported autogroup sources may load as machine/role rules but never map to a human browser identity; that classification is retained separately from the raw source strings. Attr-only `nodeAttrs` accept only `*`, individual users, defined groups, tags, and `autogroup:member` targets with the `funnel` attribute as non-authorization metadata.
 
 Locked exclusions:
 
-- Grants, SSH, posture, capabilities, protocols, and ports are not modeled for visibility.
+- Legacy ACL ports/protocols remain unmodeled; SSH never becomes card evidence.
+- Posture, IP sets, services, non-empty routing `via`, application capabilities, malformed capabilities, unknown semantics, and unsafe selectors reject the complete refresh.
 - `autogroup:internet` fails closed.
 - `tagOwners` and tags on owned nodes do not make a human a `tag:*` source.
 - NPM access lists are not visibility inputs.
@@ -111,6 +114,6 @@ Setup prompts for the provider first and only that provider's credentials. New f
 
 When a provider switch would remove inactive known credential keys, setup lists the key names and requires explicit confirmation. Refusal or input abort leaves the file byte-for-byte unchanged. Unknown keys remain, and setup never creates a plaintext credential backup. Runtime ignores inactive known credentials but warns only by variable name.
 
-## D16 — Validation schema v2 records support metadata
+## D16 — Validation schema v3 records access-rule provenance
 
-Validation reports include non-sensitive `provider`, `policy_mode`, `support_level`, and explicit/implicit selection. Headscale reports `supported`; Tailscale reports `preview`. Reports and Doctor never print tailnet data, OAuth client IDs, secrets, access tokens, Headscale keys, NPM credentials, or JWTs.
+Validation reports include non-sensitive `provider`, `policy_mode`, `support_level`, explicit/implicit selection, `access_rules`, and per-match `rule_kind` plus original `rule_index`. Headscale reports `supported`; Tailscale reports `preview`. Reports and Doctor never print tailnet data, OAuth client IDs, secrets, access tokens, Headscale keys, NPM credentials, or JWTs.

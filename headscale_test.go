@@ -95,6 +95,25 @@ func TestFetchPolicy_EmptyPolicy(t *testing.T) {
 	}
 }
 
+func TestFetchPolicy_RejectsModernTailscaleSections(t *testing.T) {
+	for name, body := range map[string]string{
+		"grants":    `{"policy":"{\"grants\":[{\"src\":[\"*\"],\"dst\":[\"*\"],\"ip\":[\"*\"]}]}"}`,
+		"nodeAttrs": `{"policy":"{\"nodeAttrs\":[{\"target\":[\"autogroup:member\"],\"attr\":[\"funnel\"]}]}"}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, client := newHeadscaleTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(body))
+			})
+
+			_, err := client.FetchPolicy(context.Background())
+			if err == nil || !strings.Contains(err.Error(), "not supported by this control plane") {
+				t.Fatalf("FetchPolicy error = %v", err)
+			}
+		})
+	}
+}
+
 func TestFetchPolicy_MissingEnvelopeField(t *testing.T) {
 	_, client := newHeadscaleTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

@@ -323,7 +323,7 @@ users:read
 
 Do not create an API key or paste an access token into the environment file. Velociportal always uses `https://api.tailscale.com/api/v2`, requests the credential's `-` tailnet alias, keeps tokens in memory, refreshes early, and retries once after `401`.
 
-Review the real tailnet policy before deployment. The preview supports only `legacy_acl_visibility_v1`. Non-empty Grants, posture, IP sets, service selectors, and unknown access-control constructs reject the entire refresh. SSH is not card evidence. Ports and protocols remain unmodeled for visibility.
+Review the real tailnet policy before deployment. ACL-only policies use `legacy_acl_visibility_v1`; accepted safe network Grants select `network_access_visibility_v1` and coexist additively with ACLs. Grant cards require TCP to the exact NPM backend port. Machine-source Grants and attr-only Funnel `nodeAttrs` may load but never become human card evidence. Posture, IP sets, services, non-empty routing `via`, application capabilities, malformed capabilities, and unknown semantics reject the entire refresh. SSH is not card evidence. Legacy ACL ports/protocols remain unmodeled.
 
 Ensure the two test users' exact Tailscale `loginName` values match the `Tailscale-User-Login` values supplied by Serve, and ensure NPM `forward_host` values align with supported policy destinations. Complete token refresh, revocation, owner-mapping, unsupported-policy, and reachability acceptance before changing the preview label.
 
@@ -400,7 +400,7 @@ Securely remove the temporary runtime-key file from the workstation after storin
 ### Provider metadata and credentials
 
 - [ ] `CONTROL_PLANE` is explicit.
-- [ ] Schema-v2 validation records the expected provider, `legacy_acl_visibility_v1`, support level, and `selection: explicit`.
+- [ ] Schema-v3 validation records the expected provider, policy mode, support level, access-rule provenance, and `selection: explicit`.
 - [ ] Inactive known provider credentials are absent from the selected environment file.
 - [ ] Doctor and validation expose no API key, OAuth client ID/secret, access token, NPM password, or JWT.
 
@@ -423,7 +423,8 @@ Skip this section in Headscale mode.
 - [ ] Policy, users, and devices reads succeed through the `-` alias.
 - [ ] Token refresh beyond normal expiry, revocation failure, and replacement recovery recorded.
 - [ ] Two real `loginName` values map unambiguously through device owner references.
-- [ ] Non-empty Grants, posture, IP-set, and service-selector policies fail the complete refresh.
+- [ ] ACL/Grant coexistence, exact TCP/backend-port checks, source-tag non-inference, and attr-only Funnel `nodeAttrs` match the live policy.
+- [ ] Posture, IP-set, service, routing, application-capability, malformed, and unknown semantics fail the complete refresh.
 - [ ] Cold-start failure and stale-snapshot retention/recovery recorded.
 - [ ] Support remains labeled preview.
 
