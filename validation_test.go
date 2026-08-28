@@ -157,7 +157,7 @@ func TestRunValidationCommandHeadscaleHTTPNoticeIsDeterministicNonFailingAndReda
 	if err := json.Unmarshal([]byte(first), &report); err != nil {
 		t.Fatalf("stdout is not JSON-only: %v\n%s", err, first)
 	}
-	if report.SchemaVersion != "2" || report.Status != "pass" {
+	if report.SchemaVersion != "3" || report.Status != "pass" {
 		t.Fatalf("report metadata = %#v", report)
 	}
 	if !strings.Contains(report.Scope, headscaleHTTPValidationScopeNotice) {
@@ -225,9 +225,22 @@ func TestRunValidationCommandReportsTailscalePreviewMetadataPrivately(t *testing
 	t.Setenv("TAILSCALE_OAUTH_CLIENT_SECRET", "private-oauth-client-secret")
 	setValidationBuildInfo(t, "v1.2.3", "revision-canary", "clean")
 	snapshot := validationTestSnapshot()
+	tcp443, err := parseGrantIPCapability("tcp:443")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tcp8080, err := parseGrantIPCapability("tcp:8080")
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot.Policy.ACLs = nil
+	snapshot.Policy.Grants = []GrantRule{
+		{Src: []string{"group:alpha"}, BrowserSrc: []string{"group:alpha"}, Dst: []string{"10.0.0.10"}, IPCapabilities: []grantIPCapability{tcp443}},
+		{Src: []string{"group:beta"}, BrowserSrc: []string{"group:beta"}, Dst: []string{"tag:beta"}, IPCapabilities: []grantIPCapability{tcp8080}},
+	}
 	snapshot.ControlPlane = ControlPlaneMetadata{
 		Provider:     controlPlaneTailscale,
-		PolicyMode:   legacyACLVisibilityV1,
+		PolicyMode:   networkAccessVisibilityV1,
 		SupportLevel: controlPlanePreview,
 	}
 	code, stdout, stderr := runValidationForTest([]string{
@@ -242,8 +255,11 @@ func TestRunValidationCommandReportsTailscalePreviewMetadataPrivately(t *testing
 	if err := json.Unmarshal([]byte(stdout), &report); err != nil {
 		t.Fatalf("json.Unmarshal() error = %v", err)
 	}
-	if report.ControlPlane.Provider != controlPlaneTailscale || report.ControlPlane.SupportLevel != controlPlanePreview || report.ControlPlane.Selection != "explicit" {
+	if report.SchemaVersion != "3" || report.ControlPlane.Provider != controlPlaneTailscale || report.ControlPlane.PolicyMode != networkAccessVisibilityV1 || report.ControlPlane.SupportLevel != controlPlanePreview || report.ControlPlane.Selection != "explicit" {
 		t.Fatalf("control-plane metadata = %#v", report.ControlPlane)
+	}
+	if report.Snapshot.AccessRules != 2 || len(report.Identities) != 2 || len(report.Identities[0].Services) != 1 || len(report.Identities[1].Services) != 1 || report.Identities[0].Services[0].RuleKind != accessRuleGrant || report.Identities[0].Services[0].RuleIndex != 0 || report.Identities[1].Services[0].RuleKind != accessRuleGrant || report.Identities[1].Services[0].RuleIndex != 1 {
+		t.Fatalf("grant evidence = %#v", report)
 	}
 	for _, forbidden := range []string{"private-oauth-client-id", "private-oauth-client-secret"} {
 		if strings.Contains(stdout+stderr, forbidden) {

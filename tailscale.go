@@ -113,7 +113,7 @@ func (c *TailscaleClient) Load(ctx context.Context, progress controlPlaneProgres
 	if err != nil {
 		return nil, &controlPlaneLoadError{Provider: c.Provider(), Stage: controlPlaneStagePolicy, Err: err}
 	}
-	reportControlPlaneProgress(progress, controlPlaneStagePolicy, len(policyResult.Policy.ACLs))
+	reportControlPlaneProgress(progress, controlPlaneStagePolicy, policyResult.Policy.accessRuleCount())
 
 	users, err := c.fetchUsers(ctx)
 	if err != nil {
@@ -132,7 +132,7 @@ func (c *TailscaleClient) Load(ctx context.Context, progress controlPlaneProgres
 		Nodes:  nodes,
 		Metadata: ControlPlaneMetadata{
 			Provider:     c.Provider(),
-			PolicyMode:   legacyACLVisibilityV1,
+			PolicyMode:   policyResult.PolicyMode,
 			SupportLevel: controlPlanePreview,
 			SSHPresent:   policyResult.SSHPresent,
 		},
@@ -475,6 +475,14 @@ func tailscaleErrorExcerpt(body []byte) string {
 	return strings.TrimSpace(strconv.QuoteToASCII(string(body)))
 }
 
+type redactedError struct {
+	message string
+	cause   error
+}
+
+func (e *redactedError) Error() string { return e.message }
+func (e *redactedError) Unwrap() error { return e.cause }
+
 func (c *TailscaleClient) redactError(err error) error {
 	return c.redactErrorWith(err)
 }
@@ -499,5 +507,18 @@ func (c *TailscaleClient) redactErrorWith(err error, extraTokens ...string) erro
 			secrets = append(secrets, encoded)
 		}
 	}
-	return fmt.Errorf("%s", sanitizeDoctorError(err, secrets))
+	message := sanitizeDoctorError(err, secrets)
+	var unsupported *unsupportedPolicyError
+	if errors.As(err, &unsupported) {
+		section := ""
+		if unsupported.Section != "" {
+			section = sanitizeDoctorError(errors.New(unsupported.Section), secrets)
+		}
+		reason := sanitizeDoctorError(errors.New(unsupported.Reason), secrets)
+		return &redactedError{
+			message: message,
+			cause:   &unsupportedPolicyError{Section: section, Reason: reason},
+		}
+	}
+	return errors.New(message)
 }

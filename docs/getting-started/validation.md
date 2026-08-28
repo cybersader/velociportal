@@ -2,7 +2,7 @@
 
 Velociportal's automated tests prove its supported parser and matcher behavior. They do **not** prove that your selected control plane, NPM `forward_host` values, and identity-proxy route describe the same services. Headscale is the supported implementation path; Tailscale SaaS remains a labeled preview.
 
-The `validate` command turns one live upstream snapshot into an explainable, privacy-controlled report. It compares at least two labeled identities and shows why supported ACL destinations did—or did not—join to NPM proxy hosts.
+The `validate` command turns one live upstream snapshot into an explainable, privacy-controlled report. It compares at least two labeled identities and shows why supported access-rule destinations did—or did not—join to NPM proxy hosts.
 
 <div class="vp-chip-row" aria-label="Validation scope">
 <span class="vp-chip vp-chip--supported">Live API snapshot</span>
@@ -11,7 +11,7 @@ The `validate` command turns one live upstream snapshot into an explainable, pri
 </div>
 
 !!! warning "Visibility evidence, not authorization proof"
-    The report evaluates `legacy_acl_visibility_v1`. It cannot impersonate a human tailnet identity, prove that Tailscale Serve injected a verified login, or establish that a visible service is reachable. The selected control plane, Serve, NPM, and the backend remain the enforcement boundaries.
+    The report evaluates the selected supported mode: Headscale `legacy_acl_visibility_v1`, or Tailscale `legacy_acl_visibility_v1`/`network_access_visibility_v1`. It cannot impersonate a human tailnet identity, prove that Tailscale Serve injected a verified login, or establish that a visible service is reachable. The selected control plane, Serve, NPM, and the backend remain the enforcement boundaries.
 
 ## Quickstart acceptance comes first
 
@@ -19,7 +19,7 @@ For the production one-service bundle, record these manual results before using 
 
 - The selected Compose interface/version is 2.33.1+ and Docker Engine is 28.0+.
 - The immutable Velociportal image tag and digest, plus evidence that deployment pulled it rather than reusing a cached tag.
-- `CONTROL_PLANE` is explicit and the schema-v2 report records the expected provider, `legacy_acl_visibility_v1`, support label, and `selection: explicit`.
+- `CONTROL_PLANE` is explicit and the schema-v3 report records the expected provider, policy mode, support label, access-rule provenance, and `selection: explicit`.
 - `velociportal-upstreams` exists as a normal private bridge (`Internal=false`); NPM uses its exact alias. Headscale also uses its exact alias only in Headscale mode.
 - The raw Velociportal host port is unreachable through the NAS LAN address. In Headscale mode, every current or previous Headscale host publication is also unreachable.
 - In Headscale mode, the external NPM endpoint, WebSocket/upgrade behavior, authorization-header logging posture, separate keys, and expired bootstrap key all pass.
@@ -28,7 +28,7 @@ For the production one-service bundle, record these manual results before using 
 - Two real human identities receive intentionally different card sets.
 - A caller-supplied `Tailscale-User-Login` sent through Serve does not change the authenticated identity.
 - Every card is compared with actual selected-control-plane and NPM reachability.
-- Tailscale preview acceptance proves unsupported Grants, posture, IP-set, and service policies fail closed.
+- Tailscale preview acceptance proves supported ACL/Grant coexistence and exact TCP/backend-port matching, while posture, IP-set, service, routing, application-capability, malformed, and unknown semantics fail closed.
 - NPM certificate/configuration and Headscale/policy backups have a tested restore path.
 
 The [TrueNAS Quickstart](../guides/truenas-scale.md) defines the canonical topology. The remaining sections use the local-source `make validate` workflow for deeper join evidence; they are advanced diagnostics rather than a prerequisite for importing the production Compose bundle. Tailnet HTTP over WireGuard prevents ordinary on-path LAN/router/ISP interception but does not remove endpoint, NPM, host, or control-plane compromise from scope.
@@ -64,7 +64,7 @@ Summary privacy is the default. It emits deterministic opaque service IDs such a
 - domains and card URLs;
 - node names and addresses;
 - NPM forward targets;
-- raw ACL source and destination values;
+- raw access-rule source and destination values;
 - credentials, JWTs, configuration values, and upstream payloads.
 
 Summary output is **not anonymous**. An opaque access matrix can still reveal operational relationships, so store and share it deliberately.
@@ -101,7 +101,7 @@ make validate VALIDATE_ARGS="\
 unset VP_USER_A VP_USER_B
 ```
 
-Private output can include internal domains, forward hosts, ports, ACL selectors, group names, and generated URLs. It still omits identity logins and credentials. The command prints a warning to stderr so redirected report data remains parseable.
+Private output can include internal domains, forward hosts, ports, access-rule selectors, rule provenance, group names, and generated URLs. It still omits identity logins and credentials. The command prints a warning to stderr so redirected report data remains parseable.
 
 !!! danger "Do not publish private reports"
     Private validation output maps internal topology and policy relationships. Keep it owner-readable, do not attach it to public issues, and remove it after the join decision is recorded.
@@ -123,20 +123,29 @@ unset VP_USER_A VP_USER_B
 
 The file mode is controlled by your shell's `umask`. A dirty or unknown build deliberately produces `review_required`; tie evidence to a clean revision before treating it as source-traceable. Record the tested image digest separately because source metadata alone does not make the container byte-for-byte reproducible.
 
-Schema v2 adds this non-sensitive metadata:
+Schema v3 records access-rule counts and provenance in addition to control-plane metadata:
 
 ```json
 {
   "control_plane": {
-    "provider": "headscale",
-    "policy_mode": "legacy_acl_visibility_v1",
-    "support_level": "supported",
+    "provider": "tailscale",
+    "policy_mode": "network_access_visibility_v1",
+    "support_level": "preview",
     "selection": "explicit"
-  }
+  },
+  "snapshot": {
+    "access_rules": 4
+  },
+  "identities": [{
+    "services": [{
+      "rule_kind": "grant",
+      "rule_index": 1
+    }]
+  }]
 }
 ```
 
-Tailscale reports use `provider: "tailscale"` and `support_level: "preview"`. Existing v0.2 Headscale configuration without `CONTROL_PLANE` records `selection: "implicit"`, emits a deprecation warning, and adds a non-failing finding; set the selector explicitly before retaining acceptance evidence.
+Headscale reports use `provider: "headscale"`, `policy_mode: "legacy_acl_visibility_v1"`, and `support_level: "supported"`. Tailscale ACL-only policies also report the legacy mode; accepted Grants select `network_access_visibility_v1`. Existing v0.2 Headscale configuration without `CONTROL_PLANE` records `selection: "implicit"`, emits a deprecation warning, and adds a non-failing finding; set the selector explicitly before retaining acceptance evidence.
 
 ## Complete the real validation worksheet
 
@@ -149,7 +158,7 @@ Record opaque labels and outcomes—not passwords, API tokens, raw response bodi
 - [ ] Compose interface/version recorded and confirmed as 2.33.1+ (TrueNAS, Dockge, Dokploy, or CLI)
 - [ ] Docker Engine version recorded and confirmed as 28.0+
 - [ ] Selected provider, provider/runtime versions, NPM version, and Tailscale app version recorded
-- [ ] Schema-v2 `provider`, `policy_mode`, `support_level`, and explicit selection recorded
+- [ ] Schema-v3 `provider`, `policy_mode`, `support_level`, and explicit selection recorded
 - [ ] `velociportal-upstreams` recorded as `Internal=false` with `npm.velociportal.internal`; Headscale alias recorded only for Headscale mode
 - [ ] Headscale retained outbound Docker DNS, DERP retrieval, and `/health` after attachment
 - [ ] NPM retained its existing listeners, outbound DNS/HTTPS, certificate operations, and management/API health after attachment
@@ -187,7 +196,9 @@ Skip this section in Headscale mode.
 - [ ] Doctor/errors contain no client ID, secret, rejected token, or replacement token
 - [ ] Two exact `loginName` values map unambiguously through real device owner references
 - [ ] Duplicate, blank, ambiguous, unresolved, paginated, or partial fixture cases remain fail-closed
-- [ ] Non-empty Grants, posture, IP-set, and service-selector policies fail the complete refresh
+- [ ] ACLs and accepted Grants coexist additively; Grant cards require TCP to the exact NPM backend port
+- [ ] Source-tag and other machine-source Grants load without becoming human cards; attr-only Funnel `nodeAttrs` never authorize
+- [ ] Posture, IP-set, service, routing, application-capability, malformed, and unknown semantics fail the complete refresh
 - [ ] Cold-start failure, stale-snapshot retention, and recovery are recorded
 - [ ] Tailscale support remains labeled preview in retained evidence
 
@@ -225,7 +236,7 @@ For representative visible **and hidden** service pairs, keep these observations
 
 Investigate both mismatch directions:
 
-- **visible but not control-plane-reachable** — possible ignored port/protocol, join, or infrastructure mismatch;
+- **visible but not control-plane-reachable** — possible legacy-ACL port/protocol overstatement, join, or infrastructure mismatch;
 - **hidden but control-plane-reachable** — possible unsupported policy construct, identity mismatch, or incomplete join.
 
 ## Decide the next engineering step
@@ -234,7 +245,7 @@ The first real exercise should end with one explicit decision:
 
 1. **Retain `forward_host`** — real values consistently match supported selected-control-plane destination forms.
 2. **Replace the join in a follow-up sprint** — real NPM values are systematically Docker names or another incompatible form.
-3. **Resolve an upstream blocker first** — for example NPM 2FA authentication, a changed API response shape, Grants-only policy, or an identity proxy that cannot establish trusted `Tailscale-User-*` headers.
+3. **Resolve an upstream blocker first** — for example NPM 2FA authentication, a changed API response shape, unsupported modern-policy semantics, or an identity proxy that cannot establish trusted `Tailscale-User-*` headers.
 
 Do not add ambient DNS guessing or a mapping database until the real report and worksheet show which relationship is actually missing.
 

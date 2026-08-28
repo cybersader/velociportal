@@ -134,15 +134,15 @@ func (c *HeadscaleClient) fetchPolicy(ctx context.Context) (*validatedPolicy, er
 	if strings.TrimSpace(*wrapper.Policy) == "" {
 		slog.Info("headscale: fetched policy (empty)",
 			"path", "/api/v1/policy", "duration", time.Since(start))
-		return &validatedPolicy{Policy: &Policy{}}, nil
+		return &validatedPolicy{Policy: &Policy{}, PolicyMode: legacyACLVisibilityV1}, nil
 	}
 
 	raw := []byte(*wrapper.Policy)
-	validated, err := validatePolicyDocument(raw)
+	validated, err := validateLegacyPolicyDocument(raw)
 	if err != nil {
 		standardized := standardizeHuJSON(raw)
 		if json.Valid(standardized) {
-			validated, err = validatePolicyDocument(standardized)
+			validated, err = validateLegacyPolicyDocument(standardized)
 		}
 		if err != nil {
 			return nil, fmt.Errorf("FetchPolicy: parse policy document: %w", err)
@@ -154,7 +154,7 @@ func (c *HeadscaleClient) fetchPolicy(ctx context.Context) (*validatedPolicy, er
 		"duration", time.Since(start),
 		"groups", len(validated.Policy.Groups),
 		"tagOwners", len(validated.Policy.TagOwners),
-		"acls", len(validated.Policy.ACLs))
+		"access_rules", validated.Policy.accessRuleCount())
 	return validated, nil
 }
 
@@ -218,7 +218,7 @@ func (c *HeadscaleClient) Load(ctx context.Context, progress controlPlaneProgres
 	if err != nil {
 		return nil, &controlPlaneLoadError{Provider: c.Provider(), Stage: controlPlaneStagePolicy, Err: err}
 	}
-	reportControlPlaneProgress(progress, controlPlaneStagePolicy, len(policyResult.Policy.ACLs))
+	reportControlPlaneProgress(progress, controlPlaneStagePolicy, policyResult.Policy.accessRuleCount())
 
 	nodes, err := call(ctx, c.FetchNodes)
 	if err != nil {
@@ -231,7 +231,7 @@ func (c *HeadscaleClient) Load(ctx context.Context, progress controlPlaneProgres
 		Nodes:  nodes,
 		Metadata: ControlPlaneMetadata{
 			Provider:     c.Provider(),
-			PolicyMode:   legacyACLVisibilityV1,
+			PolicyMode:   policyResult.PolicyMode,
 			SupportLevel: controlPlaneSupported,
 			SSHPresent:   policyResult.SSHPresent,
 		},

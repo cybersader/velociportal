@@ -27,7 +27,7 @@ Options:
 `
 
 const (
-	validationSchemaVersion              = "2"
+	validationSchemaVersion              = "3"
 	maxValidationIdentities              = 20
 	maxValidationLabelBytes              = 64
 	validationScopeNotice                = "Matcher evidence only: this report does not prove selected control-plane authorization, proxy identity injection, service reachability, or link correctness."
@@ -144,7 +144,7 @@ type ValidationControlPlane struct {
 }
 
 type ValidationSnapshot struct {
-	ACLRules          int `json:"acl_rules"`
+	AccessRules       int `json:"access_rules"`
 	Nodes             int `json:"nodes"`
 	ProxyHosts        int `json:"proxy_hosts"`
 	EnabledProxyHosts int `json:"enabled_proxy_hosts"`
@@ -178,7 +178,8 @@ type ValidationIdentityReport struct {
 
 type ValidationIdentityService struct {
 	ServiceID       string                  `json:"service_id"`
-	ACLIndex        int                     `json:"acl_index"`
+	RuleKind        accessRuleKind          `json:"rule_kind"`
+	RuleIndex       int                     `json:"rule_index"`
 	DestinationKind destinationMatchKind    `json:"destination_kind"`
 	Private         *ValidationPrivateMatch `json:"private,omitempty"`
 }
@@ -405,7 +406,7 @@ func buildValidationReport(snapshot *CacheData, identities []validationIdentityI
 		report.Findings = append(report.Findings, ValidationFinding{Severity: "review", Code: "incomplete-snapshot", Message: "Snapshot is incomplete."})
 		return report
 	}
-	report.Snapshot.ACLRules = len(snapshot.Policy.ACLs)
+	report.Snapshot.AccessRules = snapshot.Policy.accessRuleCount()
 	report.Snapshot.Nodes = len(snapshot.Nodes)
 	report.Snapshot.ProxyHosts = len(snapshot.ProxyHosts)
 	if !report.Build.SourceTraceable() {
@@ -462,7 +463,7 @@ func buildValidationReport(snapshot *CacheData, identities []validationIdentityI
 			addValidationFinding(&report, "notice", "additional-domains-not-rendered", serviceID, "Only the first NPM domain currently becomes a card.")
 		}
 		if len(matches) > 1 {
-			addValidationFinding(&report, "notice", "multiple-structural-match-paths", serviceID, "The forward target matches more than one supported ACL destination path.")
+			addValidationFinding(&report, "notice", "multiple-structural-match-paths", serviceID, "The forward target matches more than one supported access-rule destination path.")
 		}
 	}
 	if len(proxyHosts) > 0 {
@@ -481,7 +482,8 @@ func buildValidationReport(snapshot *CacheData, identities []validationIdentityI
 			}
 			entry := ValidationIdentityService{
 				ServiceID:       serviceID,
-				ACLIndex:        match.ACLIndex,
+				RuleKind:        match.RuleKind,
+				RuleIndex:       match.RuleIndex,
 				DestinationKind: match.Destination.Kind,
 			}
 			if privacy == validationPrivacyPrivate {
@@ -557,11 +559,11 @@ func structuralValidationMatches(proxyHost ProxyHost, snapshot *CacheData) ([]de
 	context := &matchContext{hosts: snapshot.Policy.Hosts, tagIPs: tagIPs}
 	matches := []destinationMatchEvidence{}
 	identityDependent := false
-	for _, acl := range snapshot.Policy.ACLs {
-		if acl.Action != "accept" {
+	for _, rule := range snapshot.Policy.accessRules() {
+		if !rule.permitsTCP(proxyHost.ForwardPort) {
 			continue
 		}
-		for _, selector := range acl.Dst {
+		for _, selector := range rule.Dst {
 			if stripPort(selector) == "autogroup:self" {
 				identityDependent = true
 				continue
@@ -749,7 +751,7 @@ func renderValidationText(writer io.Writer, report ValidationReport) error {
 		report.ControlPlane.Selection,
 	)
 	fmt.Fprintf(&output, "Build: version=%s revision=%s source_state=%s\n", report.Build.Version, report.Build.Revision, report.Build.SourceState)
-	fmt.Fprintf(&output, "Snapshot: %d ACL rules, %d nodes, %d proxy hosts, %d evaluated services\n", report.Snapshot.ACLRules, report.Snapshot.Nodes, report.Snapshot.ProxyHosts, report.Snapshot.EvaluatedServices)
+	fmt.Fprintf(&output, "Snapshot: %d access rules, %d nodes, %d proxy hosts, %d evaluated services\n", report.Snapshot.AccessRules, report.Snapshot.Nodes, report.Snapshot.ProxyHosts, report.Snapshot.EvaluatedServices)
 	fmt.Fprintln(&output)
 	fmt.Fprintln(&output, "Services:")
 	for _, service := range report.Services {
@@ -772,7 +774,7 @@ func renderValidationText(writer io.Writer, report ValidationReport) error {
 		fmt.Fprintf(&output, "  %s services=%v unique=%v\n", identity.Label, serviceIDs, identity.UniqueServices)
 		for _, service := range identity.Services {
 			if service.Private != nil {
-				fmt.Fprintf(&output, "    %s acl=%d source=%s destination=%s kind=%s resolved=%s\n", service.ServiceID, service.ACLIndex, service.Private.SourceToken, service.Private.DestinationSelector, service.DestinationKind, service.Private.ResolvedValue)
+				fmt.Fprintf(&output, "    %s rule=%s:%d source=%s destination=%s kind=%s resolved=%s\n", service.ServiceID, service.RuleKind, service.RuleIndex, service.Private.SourceToken, service.Private.DestinationSelector, service.DestinationKind, service.Private.ResolvedValue)
 			}
 		}
 	}

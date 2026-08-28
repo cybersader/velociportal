@@ -177,13 +177,13 @@ func runDoctorCommandWithDependencies(args []string, stdout, stderr io.Writer, d
 	progress := func(stage snapshotLoadStage, count int) {
 		switch stage {
 		case snapshotStageHeadscalePolicy:
-			fmt.Fprintf(stdout, "PASS Headscale policy: loaded %d ACL rules\n", count)
+			fmt.Fprintf(stdout, "PASS Headscale policy: loaded %d access rules\n", count)
 		case snapshotStageHeadscaleNodes:
 			fmt.Fprintf(stdout, "PASS Headscale nodes: loaded %d nodes\n", count)
 		case snapshotStageTailscaleOAuth:
 			fmt.Fprintln(stdout, "PASS Tailscale OAuth: access token acquired")
 		case snapshotStageTailscalePolicy:
-			fmt.Fprintf(stdout, "PASS Tailscale policy: loaded %d ACL rules\n", count)
+			fmt.Fprintf(stdout, "PASS Tailscale policy: loaded %d access rules\n", count)
 		case snapshotStageTailscaleUsers:
 			fmt.Fprintf(stdout, "PASS Tailscale users: loaded %d users\n", count)
 		case snapshotStageTailscaleDevices:
@@ -207,7 +207,7 @@ func runDoctorCommandWithDependencies(args []string, stdout, stderr io.Writer, d
 		fmt.Fprintln(stdout, "FAIL snapshot: loader returned an incomplete snapshot")
 		return 1
 	}
-	fmt.Fprintf(stdout, "PASS snapshot: complete (%d ACL rules, %d nodes, %d proxy hosts)\n", len(snapshot.Policy.ACLs), len(snapshot.Nodes), len(snapshot.ProxyHosts))
+	fmt.Fprintf(stdout, "PASS snapshot: complete (%d access rules, %d nodes, %d proxy hosts)\n", snapshot.Policy.accessRuleCount(), len(snapshot.Nodes), len(snapshot.ProxyHosts))
 	fmt.Fprintf(
 		stdout,
 		"PASS control plane metadata: provider=%s policy_mode=%s support_level=%s\n",
@@ -326,9 +326,9 @@ func reportDoctorJoinCoverage(writer io.Writer, snapshot *CacheData) {
 	case total == 0:
 		fmt.Fprintln(writer, "WARN supported join coverage: no enabled proxy hosts with domains to evaluate")
 	case matched == total:
-		fmt.Fprintf(writer, "PASS supported join coverage: %d/%d enabled proxy hosts match a supported ACL destination\n", matched, total)
+		fmt.Fprintf(writer, "PASS supported join coverage: %d/%d enabled proxy hosts match a supported access-rule destination\n", matched, total)
 	default:
-		fmt.Fprintf(writer, "WARN supported join coverage: %d/%d enabled proxy hosts match a supported ACL destination\n", matched, total)
+		fmt.Fprintf(writer, "WARN supported join coverage: %d/%d enabled proxy hosts match a supported access-rule destination\n", matched, total)
 	}
 	for _, pair := range unmatched {
 		fmt.Fprintf(writer, "WARN unmatched join: %q -> %q\n", pair.domain, pair.forwardHost)
@@ -359,7 +359,7 @@ func doctorJoinCoverage(snapshot *CacheData) (matched int, total int, unmatched 
 			continue
 		}
 		total++
-		if doctorProxyHostHasSupportedJoin(proxyHost.ForwardHost, snapshot.Policy.ACLs, matchData) {
+		if doctorProxyHostHasSupportedJoin(proxyHost, snapshot.Policy, matchData) {
 			matched++
 			continue
 		}
@@ -382,13 +382,13 @@ func doctorJoinCoverage(snapshot *CacheData) (matched int, total int, unmatched 
 	return matched, total, unmatched
 }
 
-func doctorProxyHostHasSupportedJoin(forwardHost string, rules []ACLRule, matchData *matchContext) bool {
-	for _, rule := range rules {
-		if rule.Action != "accept" {
+func doctorProxyHostHasSupportedJoin(proxyHost ProxyHost, policy *Policy, matchData *matchContext) bool {
+	for _, rule := range policy.accessRules() {
+		if !rule.permitsTCP(proxyHost.ForwardPort) {
 			continue
 		}
 		for _, destination := range rule.Dst {
-			if matchDst(stripPort(destination), forwardHost, matchData) {
+			if matchDst(stripPort(destination), proxyHost.ForwardHost, matchData) {
 				return true
 			}
 		}

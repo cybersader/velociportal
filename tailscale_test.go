@@ -29,11 +29,18 @@ type tailscaleFixture struct {
 	tokenHits atomic.Int32
 	mu        sync.Mutex
 	paths     []string
+	policy    any
 }
 
 func newTailscaleFixture(t *testing.T) *tailscaleFixture {
 	t.Helper()
-	fixture := &tailscaleFixture{now: time.Date(2026, time.August, 27, 12, 0, 0, 0, time.UTC)}
+	fixture := &tailscaleFixture{
+		now: time.Date(2026, time.August, 27, 12, 0, 0, 0, time.UTC),
+		policy: map[string]any{
+			"groups": map[string][]string{"group:admin": {"alice@example.com"}},
+			"acls":   []map[string]any{{"action": "accept", "src": []string{"group:admin"}, "dst": []string{"tag:app:443"}}},
+		},
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/v2/oauth/token", func(w http.ResponseWriter, r *http.Request) {
 		fixture.tokenHits.Add(1)
@@ -56,10 +63,7 @@ func newTailscaleFixture(t *testing.T) *tailscaleFixture {
 	})
 	mux.HandleFunc("/api/v2/tailnet/-/acl", func(w http.ResponseWriter, r *http.Request) {
 		fixture.recordPath(r)
-		writeJSON(t, w, map[string]any{
-			"groups": map[string][]string{"group:admin": {"alice@example.com"}},
-			"acls":   []map[string]any{{"action": "accept", "src": []string{"group:admin"}, "dst": []string{"tag:app:443"}}},
-		})
+		writeJSON(t, w, fixture.policy)
 	})
 	mux.HandleFunc("/api/v2/tailnet/-/users", func(w http.ResponseWriter, r *http.Request) {
 		fixture.recordPath(r)
@@ -123,6 +127,26 @@ func TestTailscaleLoadUsesApprovedEndpointsAndMapsOwners(t *testing.T) {
 	}
 	if fixture.tokenHits.Load() != 1 {
 		t.Fatalf("token requests = %d, want 1", fixture.tokenHits.Load())
+	}
+}
+
+func TestTailscaleLoadSupportsSafeGrantsAndNodeAttrs(t *testing.T) {
+	fixture := newTailscaleFixture(t)
+	fixture.policy = map[string]any{
+		"groups": map[string][]string{"group:admin": {"alice@example.com"}},
+		"grants": []map[string]any{
+			{"src": []string{"group:admin"}, "dst": []string{"100.64.0.10"}, "ip": []string{"tcp:443"}},
+			{"src": []string{"tag:client"}, "dst": []string{"tag:server"}, "ip": []string{"*"}},
+		},
+		"nodeAttrs": []map[string]any{{"target": []string{"autogroup:member"}, "attr": []string{"funnel"}}},
+	}
+
+	result, err := fixture.client.Load(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if result.Metadata.PolicyMode != networkAccessVisibilityV1 || len(result.Policy.Grants) != 2 || result.Policy.accessRuleCount() != 2 {
+		t.Fatalf("result = %#v", result)
 	}
 }
 
@@ -233,6 +257,32 @@ func TestTailscaleLoadPreservesTypedStageAfterRedaction(t *testing.T) {
 		if strings.Contains(err.Error(), secret) {
 			t.Fatalf("Load() error exposed %q: %v", secret, err)
 		}
+	}
+}
+
+func TestTailscaleLoadPreservesUnsupportedPolicyClassification(t *testing.T) {
+	const selector = "svc:secret-internal-app"
+	mux := http.NewServeMux()
+	mux.HandleFunc("/oauth/token", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(t, w, map[string]any{"access_token": "private-access-token", "expires_in": 3600})
+	})
+	mux.HandleFunc("/tailnet/-/acl", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(t, w, map[string]any{
+			"grants": []map[string]any{{"src": []string{"*"}, "dst": []string{selector}, "ip": []string{"*"}}},
+		})
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	client := newTailscaleClientForTest(server.URL, "private-client-id", "private-client-secret", server.Client(), time.Now)
+
+	_, err := client.Load(context.Background(), nil)
+	var unsupported *unsupportedPolicyError
+	if !errors.As(err, &unsupported) {
+		t.Fatalf("Load() error type = %T, want wrapped *unsupportedPolicyError: %v", err, err)
+	}
+	summary := sanitizeValidationRuntimeError(err, validationPrivacySummary, nil)
+	if strings.Contains(summary, selector) || summary != `selected control-plane policy section "grants" uses unsupported access-control semantics` {
+		t.Fatalf("summary error = %q", summary)
 	}
 }
 
