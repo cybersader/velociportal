@@ -64,14 +64,16 @@ Exact requested scopes:
 |--------|------|---------|
 | POST | `/oauth/token` | Acquire a bearer token; retain only in memory, coalesce refreshes, refresh about five minutes early, retry one request after `401`. |
 | GET | `/tailnet/-/acl` | Read policy; use `legacy_acl_visibility_v1` for ACL-only input or `network_access_visibility_v1` when the accepted safe Grants subset participates. |
-| GET | `/tailnet/-/users` | Read exact IDs and `loginName` values used for owner resolution. |
+| GET | `/tailnet/-/users` | Read exact IDs, `loginName`, `type`, and `role`; construct authoritative per-login Grant-role membership. |
 | GET | `/tailnet/-/devices` | Read device IDs, owner references, addresses, names, and tags. |
 
-Owner mapping must resolve each untagged device to exactly one user login matching `Tailscale-User-Login`. Blank, duplicate, ambiguous, or unresolved identities reject the entire refresh. Tagged devices may omit a human owner. Users/devices responses that advertise pagination or partial data are rejected rather than published incompletely.
+The complete users response is authoritative for Grant-role membership. Exact `loginName`, `type`, and `role` values are required. A direct member receives `autogroup:member` plus exactly its API role from the supported human-role set; a shared user receives none. The mapping is Grant-only, has no hierarchy or login normalization, and is never inferred from devices, device ownership, node tags, or `tagOwners`.
 
-Policy conversion accepts additive legacy ACLs plus the narrow network Grants subset. A Grant becomes HTTP card evidence only when its `ip` capability permits TCP to the exact NPM backend port. Machine/tag/IP/CIDR/host/autogroup sources may load but never become human identities. Attr-only `nodeAttrs` accept only `*`, individual users, defined groups, tags, and `autogroup:member` targets with the `funnel` attribute as non-authorization metadata. Posture, routing, services, IP sets, application capabilities, malformed capabilities, and unknown semantics reject the refresh.
+Device-owner mapping remains separate and must resolve each untagged device to exactly one user login matching `Tailscale-User-Login`. Blank, duplicate, ambiguous, malformed, or unresolved identities reject the entire refresh. Tagged devices may omit a human owner. Users/devices responses that advertise pagination or partial data are rejected rather than published incompletely.
 
-The adapter is fixture-tested for paths, OAuth lifecycle, concurrency, one `401` retry, redaction, conversion, partial-response rejection, and hardened transport. It remains labeled preview until live scopes, token lifetime/refresh/revocation, response shapes, owner mapping, policy negatives, and reachability pass.
+Policy conversion accepts additive legacy ACLs plus the narrow network Grants subset. A Grant becomes HTTP card evidence only when its `ip` capability permits TCP to the exact NPM backend port. Machine/tag/IP/CIDR/host selectors and machine autogroups, including `autogroup:shared` and `autogroup:tagged`, remain non-human. Supported role autogroups become human Grant sources only through the exact Users API mapping. Attr-only `nodeAttrs` accept only `*`, individual users, defined groups, tags, and `autogroup:member` targets with the `funnel` attribute as non-authorization metadata. Posture, routing, services, IP sets, application capabilities, malformed capabilities, and unknown semantics reject the refresh.
+
+The adapter is fixture-tested for paths, OAuth lifecycle, concurrency, one `401` retry, redaction, conversion, authoritative role membership, separate owner mapping, partial-response rejection, and hardened transport. Immutable `v0.2.0-rc.2` contains safe Grants but live acceptance exposed the missing role-membership path. `v0.2.0-rc.3` is the next preview candidate; Tailscale remains preview until live scopes, token lifetime/refresh/revocation, role and owner mapping, policy negatives, two identities, and reachability pass.
 
 ## Nginx Proxy Manager (NPM) API — the service registry
 

@@ -12,11 +12,12 @@ import (
 const upstreamTimeout = 10 * time.Second
 
 type CacheData struct {
-	Policy       *Policy
-	Nodes        []Node
-	ProxyHosts   []ProxyHost
-	ControlPlane ControlPlaneMetadata
-	UpdatedAt    time.Time
+	Policy                    *Policy
+	Nodes                     []Node
+	ProxyHosts                []ProxyHost
+	GrantRoleSelectorsByLogin map[string][]string
+	ControlPlane              ControlPlaneMetadata
+	UpdatedAt                 time.Time
 }
 
 type Cache struct {
@@ -145,11 +146,12 @@ func loadSnapshotWithProgress(ctx context.Context, controlPlane ControlPlane, np
 	reportSnapshotProgress(progress, snapshotStageNPMProxyHosts, len(proxyHosts))
 
 	return &CacheData{
-		Policy:       controlResult.Policy,
-		Nodes:        controlResult.Nodes,
-		ProxyHosts:   proxyHosts,
-		ControlPlane: controlResult.Metadata,
-		UpdatedAt:    time.Now(),
+		Policy:                    controlResult.Policy,
+		Nodes:                     controlResult.Nodes,
+		ProxyHosts:                proxyHosts,
+		GrantRoleSelectorsByLogin: controlResult.GrantRoleSelectorsByLogin,
+		ControlPlane:              controlResult.Metadata,
+		UpdatedAt:                 time.Now(),
 	}, nil
 }
 

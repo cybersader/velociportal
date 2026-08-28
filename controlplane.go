@@ -39,9 +39,10 @@ type ControlPlaneMetadata struct {
 }
 
 type ControlPlaneResult struct {
-	Policy   *Policy
-	Nodes    []Node
-	Metadata ControlPlaneMetadata
+	Policy                    *Policy
+	Nodes                     []Node
+	GrantRoleSelectorsByLogin map[string][]string
+	Metadata                  ControlPlaneMetadata
 }
 
 type controlPlaneLoadStage string
@@ -564,7 +565,7 @@ const (
 )
 
 func (kind grantSourceKind) browserEligible() bool {
-	return kind == grantSourceWildcard || kind == grantSourceHuman || kind == grantSourceGroup
+	return kind == grantSourceWildcard || kind == grantSourceHuman || kind == grantSourceGroup || kind == grantSourceRole
 }
 
 func (kind grantSourceKind) supportsSelf() bool {
@@ -601,7 +602,7 @@ func validateGrantSourceSelector(selector string, policy *Policy) (grantSourceKi
 	}
 	if strings.HasPrefix(selector, "autogroup:") {
 		role := strings.TrimPrefix(selector, "autogroup:")
-		if grantHumanRoleAutogroups[role] {
+		if tailscaleHumanRoles[role] {
 			return grantSourceRole, nil
 		}
 		if grantSourceAutogroups[role] {
@@ -623,7 +624,7 @@ func validateGrantSourceSelector(selector string, policy *Policy) (grantSourceKi
 	return "", errors.New("selector class is not supported")
 }
 
-var grantHumanRoleAutogroups = map[string]bool{
+var tailscaleHumanRoles = map[string]bool{
 	"admin": true, "member": true, "owner": true, "it-admin": true,
 	"network-admin": true, "billing-admin": true, "auditor": true,
 }

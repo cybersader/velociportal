@@ -56,7 +56,7 @@ Velociportal uses the OAuth credential's `-` tailnet alias:
 | Method | Path | Purpose |
 |---|---|---|
 | `GET` | `/tailnet/-/acl` | Read policy for the selected tailnet |
-| `GET` | `/tailnet/-/users` | Resolve exact user IDs and `loginName` values |
+| `GET` | `/tailnet/-/users` | Resolve exact user IDs, `loginName`, `type`, and `role`; build authoritative per-login Grant-role membership |
 | `GET` | `/tailnet/-/devices` | Read device IDs, owners, addresses, names, and tags |
 
 Each request has an independent timeout. The hardened client requires normal certificate and hostname verification, TLS 1.2 or newer, bounded response headers and bodies, no redirects, and no environment proxy.
@@ -68,8 +68,8 @@ The policy validator reports `legacy_acl_visibility_v1` for ACL-only input and `
 - legacy `acls` `accept` rules remain supported; their destination ports and protocols are not modeled;
 - safe network Grants are additive with ACLs and must carry non-empty `src`, `dst`, and `ip` arrays;
 - Grant capabilities accept wildcard, port/range, protocol wildcard, and protocol port/range forms; card evidence requires TCP to the exact NPM `forward_port`;
-- exact humans, defined groups, and `*` may become browser card sources;
-- valid tag, IP, CIDR, host-alias, and supported autogroup sources may load but never map to a human browser identity;
+- exact humans, defined groups, `*`, and Users-API-authoritative human-role autogroups may become Grant browser card sources;
+- valid tags, IPs, CIDRs, host aliases, `autogroup:tagged`, `autogroup:shared`, and other machine selectors may load but never map to a human browser identity;
 - attr-only `nodeAttrs` accept only `*`, individual users, defined groups, tags, and `autogroup:member` targets with the `funnel` attribute, and never authorize cards;
 - postures, IP sets, services, non-empty `via`, application capabilities, malformed capabilities, and unknown semantics fail the refresh;
 - SSH is not card evidence and is reported separately; and
@@ -77,20 +77,24 @@ The policy validator reports `legacy_acl_visibility_v1` for ACL-only input and `
 
 Headscale remains legacy-ACL-only. This Tailscale subset is intentionally narrower than the full policy language, and Tailscale remains the enforcement boundary.
 
-## User and device conversion
+## User role and device conversion
 
-User `loginName` is the exact matcher-facing identity because Serve supplies `Tailscale-User-Login` in that form. Device owner references may identify a user by API ID or exact login, but the mapping must resolve uniquely.
+User `loginName` is the exact matcher-facing identity because Serve supplies `Tailscale-User-Login` in that form. The complete Users API response is authoritative for Grant-role membership: a user with `type: "member"` receives `autogroup:member` plus exactly `autogroup:<role>` for `owner`, `admin`, `member`, `it-admin`, `network-admin`, `billing-admin`, or `auditor`; the duplicate is removed for the `member` role. A user with `type: "shared"` receives no human Grant-role selectors.
+
+Role membership is consulted only for Grant sources. It requires exact `loginName` equality, has no role hierarchy, and does not case-fold or fall back to local-part, short-login, or bare-login forms. It is never inferred from devices, device ownership, node tags, or `tagOwners`. Legacy ACLs and `nodeAttrs` do not consume this mapping.
 
 Velociportal rejects:
 
 - blank or duplicate user IDs;
 - blank or duplicate login names;
+- missing, null, non-string, blank, padded, or unsupported user `type` values;
+- missing, null, non-string, blank, padded, or unsupported user `role` values;
 - an ID that collides ambiguously with another user's login;
 - unresolved or ambiguous device owners;
 - blank or duplicate device IDs; and
 - untagged devices without an owner.
 
-Tagged devices without a human owner are retained for destination tag resolution. Addresses and tags are trimmed, deduplicated, and sorted. Unrelated user profile fields and device posture data are not retained as snapshot state; the posture-related OAuth scope permits the devices read required by the current API boundary but posture conditions are not evaluated.
+Device owner references may identify a user by API ID or exact login, but that separate mapping must resolve uniquely and is used only to construct node ownership, including supported destination and `autogroup:self` behavior. It never creates Users API role membership. Tagged devices without a human owner are retained for destination tag resolution. Addresses and tags are trimmed, deduplicated, and sorted. Unrelated user profile fields and device posture data are not retained as snapshot state; the posture-related OAuth scope permits the devices read required by the current API boundary but posture conditions are not evaluated.
 
 ## Pagination and completeness
 
@@ -100,6 +104,6 @@ A control-plane failure or NPM failure prevents the entire new snapshot from rep
 
 ## Support status
 
-Automated fixtures cover endpoint paths, OAuth token reuse and refresh, concurrent refresh coalescing, one retry after `401`, owner mapping, duplicate and partial-response rejection, transport hardening, response limits, and credential redaction.
+Automated fixtures cover endpoint paths, OAuth token reuse and refresh, concurrent refresh coalescing, one retry after `401`, authoritative user-role membership, separate device-owner mapping, duplicate and partial-response rejection, transport hardening, response limits, and credential redaction.
 
-A live tailnet has confirmed OAuth and basic policy/users/devices connectivity, but not token lifetime, revocation, complete safe-Grants behavior, two-identity owner mapping, or reachability. Complete the [Tailscale SaaS live acceptance](../guides/tailscale-saas-npm.md#live-acceptance-required) before calling the adapter supported.
+Published `v0.2.0-rc.2` is immutable and contains the safe-Grants correction. Live acceptance confirmed OAuth, policy/users/devices, NPM, Serve, and destination/TCP matching, then exposed the missing authoritative role-membership path that omitted expected role-derived cards. `v0.2.0-rc.3` is the next preview candidate. Token lifetime, revocation, two-identity role and owner mapping, unsupported-policy negatives, and reachability still require live acceptance before the adapter can be called supported.
