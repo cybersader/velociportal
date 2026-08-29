@@ -34,6 +34,7 @@ type Config struct {
 	NPMEmail                    string
 	NPMPassword                 string
 	ServiceMetadataFile         string
+	ServiceHealthFile           string
 	ListenAddr                  string
 	PollInterval                time.Duration
 	TrustedProxyCIDR            *net.IPNet
@@ -188,6 +189,12 @@ func loadConfigFrom(lookup configLookup) (*Config, error) {
 	}
 	serviceMetadataFile = strings.TrimSpace(serviceMetadataFile)
 
+	serviceHealthFile, err := lookupOr(lookup, "SERVICE_HEALTH_FILE", "")
+	if err != nil {
+		return nil, fmt.Errorf("loadConfig: %w", err)
+	}
+	serviceHealthFile = strings.TrimSpace(serviceHealthFile)
+
 	_, trustedProxyCIDR, err := net.ParseCIDR(strings.TrimSpace(values["TRUSTED_PROXY_CIDR"]))
 	if err != nil {
 		return nil, fmt.Errorf("loadConfig: invalid TRUSTED_PROXY_CIDR: %w", err)
@@ -209,6 +216,7 @@ func loadConfigFrom(lookup configLookup) (*Config, error) {
 		NPMEmail:                    strings.TrimSpace(values["NPM_EMAIL"]),
 		NPMPassword:                 values["NPM_PASSWORD"],
 		ServiceMetadataFile:         serviceMetadataFile,
+		ServiceHealthFile:           serviceHealthFile,
 		ListenAddr:                  listenAddr,
 		PollInterval:                interval,
 		TrustedProxyCIDR:            trustedProxyCIDR,
@@ -468,6 +476,22 @@ func runServer(cfg *Config) error {
 	)
 	cache.Start(ctx)
 
+	protectedHealthURLs := serviceHealthProtectedURLs(cfg)
+	healthPoller := NewServiceHealthPoller(
+		cache,
+		serviceHealthConfigLoaderForPath(cfg.ServiceHealthFile),
+		func(config *ServiceHealthConfig) serviceHealthProber {
+			engine, engineErr := newServiceProbeEngine(config, protectedHealthURLs)
+			if engineErr != nil {
+				slog.Error("service health probe engine initialization failed")
+				return nil
+			}
+			return engine
+		},
+		slog.Default(),
+	)
+	healthPoller.Start(ctx)
+
 	static, err := fs.Sub(assetsFS, "assets")
 	if err != nil {
 		return fmt.Errorf("run: %w", err)
@@ -476,8 +500,9 @@ func runServer(cfg *Config) error {
 	pollStale := cfg.PollInterval * 3
 
 	mux := http.NewServeMux()
-	mux.Handle("GET /", IdentityMiddleware(cfg.TrustedProxyCIDR, NewPortalHandler(cache)))
-	mux.Handle("GET /portal", IdentityMiddleware(cfg.TrustedProxyCIDR, NewPortalHandler(cache)))
+	portalHandler := IdentityMiddleware(cfg.TrustedProxyCIDR, NewPortalHandlerWithHealth(cache, healthPoller.Store()))
+	mux.Handle("GET /", portalHandler)
+	mux.Handle("GET /portal", portalHandler)
 	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServerFS(static)))
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		age := time.Since(cache.LastUpdated())

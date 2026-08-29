@@ -127,4 +127,12 @@ A wildcard-only host remains visible but non-clickable. Velociportal never inven
 
 Metadata cannot create a card, enable a disabled host, repair a host with no NPM domain, change `forward_host` or `forward_port`, replace access-rule evidence, or grant visibility. Unknown IDs produce only counts. The base image and production stack remain mount-free; the opt-in read-only overlay uses a fixed target and supplemental numeric group so TrueNAS permissions stay `950:950`, directory `0750`, and file `0640` without ownership or mode changes.
 
-NPM `meta.nginx_online` is route/configuration state, not backend health. The portal renders no health dot until separately bounded real probes exist. Future DNS/Tailscale hostname observations may become privacy-minimized, memory-only operator suggestions, but never authorization evidence or silent persisted mappings.
+NPM `meta.nginx_online` is route/configuration state, not backend health. Future DNS/Tailscale hostname observations may become privacy-minimized, memory-only operator suggestions, but never authorization evidence or silent persisted mappings.
+
+## D18 — Service health is explicit, direct-backend, and independent
+
+Velociportal probes only positive NPM proxy-host IDs listed in a strict versioned operator file. The current enabled NPM `forward_scheme`, `forward_host`, and `forward_port` plus a configured HTTP path define the target; service-metadata/browser URLs are never probe inputs. HTTP uses credential-free `GET` with explicit accepted status ranges. TCP connects and closes without application payload.
+
+Every DNS target requires an exact host or suffix allowlist match and every resolved address must fit an explicit CIDR. The complete answer set is validated before direct-IP dialing so mixed answers fail closed while HTTP Host and TLS SNI retain the original name. Unspecified, loopback, multicast, link-local, broadcast, IPv4-mapped bypasses, and exact/aliased NPM or selected-control-plane API sockets remain denied. Probe transports share no credentials, cookies, clients, or transports with control-plane/NPM APIs; redirects and environment proxies are disabled, headers and time are bounded, and HTTPS uses normal TLS 1.2+ verification.
+
+One non-overlapping scheduler uses a fixed worker pool and an independent atomic memory-only result map. Invalid health configuration starts no new probes and prior observations age to stale. Health joins by proxy-host ID only after normal identity/policy matching and never changes card creation, order, URL, link state, authorization, complete snapshot publication, cache freshness, or `/healthz`. Doctor may report one bounded cycle using only IDs, protocols, coarse states, durations/status classes, and counts.

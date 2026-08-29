@@ -1,0 +1,13 @@
+services:
+  velociportal:
+    environment:
+      SERVICE_HEALTH_FILE: /velociportal-health.json
+    group_add:
+      - ${VELOCIPORTAL_SERVICE_HEALTH_GID:?set VELOCIPORTAL_SERVICE_HEALTH_GID to the numeric group that can read the health file}
+    volumes:
+      - type: bind
+        source: ${VELOCIPORTAL_SERVICE_HEALTH_FILE:?set VELOCIPORTAL_SERVICE_HEALTH_FILE to a readable service health JSON file}
+        target: /velociportal-health.json
+        read_only: true
+        bind:
+          create_host_path: false

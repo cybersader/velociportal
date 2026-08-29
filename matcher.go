@@ -327,6 +327,45 @@ func buildMatchContext(login string, data *CacheData) *matchContext {
 	}
 }
 
+// structuralDestinationMatches returns identity-independent destination evidence
+// for a proxy host plus whether at least one supported destination depends on the
+// requesting identity. Source selectors are deliberately not evaluated here.
+func structuralDestinationMatches(proxyHost ProxyHost, snapshot *CacheData) ([]destinationMatchEvidence, bool) {
+	matches := []destinationMatchEvidence{}
+	if snapshot == nil || snapshot.Policy == nil {
+		return matches, false
+	}
+
+	mc := buildMatchContext("", snapshot)
+	identityDependent := false
+	for _, rule := range snapshot.Policy.accessRules() {
+		if !rule.permitsTCP(proxyHost.ForwardPort) {
+			continue
+		}
+		for _, selector := range rule.Dst {
+			if stripPort(selector) == "autogroup:self" {
+				identityDependent = true
+				continue
+			}
+			if evidence, matched := matchDestination(selector, proxyHost.ForwardHost, mc); matched {
+				matches = append(matches, evidence)
+			}
+		}
+	}
+	return matches, identityDependent
+}
+
+// enabledProxyHostHasSupportedDestinationMatch reports whether an enabled NPM
+// proxy host has at least one identity-independent destination match in a complete
+// snapshot. It does not evaluate sources and therefore does not authorize access.
+func enabledProxyHostHasSupportedDestinationMatch(proxyHost ProxyHost, snapshot *CacheData) bool {
+	if !proxyHost.Enabled || snapshot == nil || snapshot.Policy == nil {
+		return false
+	}
+	matches, _ := structuralDestinationMatches(proxyHost, snapshot)
+	return len(matches) > 0
+}
+
 func resolveServiceCard(proxyHost ProxyHost, metadata *ServiceMetadata) (ServiceCard, bool) {
 	domains := make([]string, 0, len(proxyHost.DomainNames))
 	concreteDomain := ""

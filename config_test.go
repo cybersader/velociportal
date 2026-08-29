@@ -321,6 +321,7 @@ func TestLoadConfigFromUsesDeterministicLookupOrder(t *testing.T) {
 		"LISTEN_ADDR",
 		"POLL_INTERVAL",
 		"SERVICE_METADATA_FILE",
+		"SERVICE_HEALTH_FILE",
 	}
 	if !reflect.DeepEqual(calls, want) {
 		t.Fatalf("lookup calls = %v, want %v", calls, want)
@@ -345,6 +346,36 @@ func TestLoadConfigFromReadsOptionalServiceMetadataFile(t *testing.T) {
 	}
 	if cfg.ServiceMetadataFile != "" {
 		t.Fatalf("ServiceMetadataFile = %q", cfg.ServiceMetadataFile)
+	}
+}
+
+func TestLoadConfigFromReadsOptionalServiceHealthFile(t *testing.T) {
+	values := validConfigValues()
+	values["SERVICE_HEALTH_FILE"] = "  /velociportal-service-health.json  "
+	cfg, err := loadConfigFrom(mapConfigLookup(values))
+	if err != nil {
+		t.Fatalf("loadConfigFrom() error = %v", err)
+	}
+	if cfg.ServiceHealthFile != "/velociportal-service-health.json" {
+		t.Fatalf("ServiceHealthFile = %q", cfg.ServiceHealthFile)
+	}
+
+	values["SERVICE_HEALTH_FILE"] = "   "
+	cfg, err = loadConfigFrom(mapConfigLookup(values))
+	if err != nil {
+		t.Fatalf("loadConfigFrom() with blank service health file error = %v", err)
+	}
+	if cfg.ServiceHealthFile != "" {
+		t.Fatalf("blank ServiceHealthFile = %q", cfg.ServiceHealthFile)
+	}
+
+	delete(values, "SERVICE_HEALTH_FILE")
+	cfg, err = loadConfigFrom(mapConfigLookup(values))
+	if err != nil {
+		t.Fatalf("loadConfigFrom() without service health file error = %v", err)
+	}
+	if cfg.ServiceHealthFile != "" {
+		t.Fatalf("absent ServiceHealthFile = %q", cfg.ServiceHealthFile)
 	}
 }
 
@@ -435,7 +466,7 @@ func TestLoadConfigRejectsMalformedRawComposeValueWithoutExposingIt(t *testing.T
 }
 
 func TestLoadConfigFromPropagatesOptionalLookupErrors(t *testing.T) {
-	for _, failureKey := range []string{"LISTEN_ADDR", "POLL_INTERVAL"} {
+	for _, failureKey := range []string{"LISTEN_ADDR", "POLL_INTERVAL", "SERVICE_METADATA_FILE", "SERVICE_HEALTH_FILE"} {
 		t.Run(failureKey, func(t *testing.T) {
 			values := validConfigValues()
 			lookup := func(key string) (string, bool, error) {

@@ -12,11 +12,16 @@ import (
 )
 
 type PortalHandler struct {
-	cache *Cache
+	cache  *Cache
+	health *ServiceHealthStore
 }
 
 func NewPortalHandler(cache *Cache) *PortalHandler {
-	return &PortalHandler{cache: cache}
+	return NewPortalHandlerWithHealth(cache, nil)
+}
+
+func NewPortalHandlerWithHealth(cache *Cache, health *ServiceHealthStore) *PortalHandler {
+	return &PortalHandler{cache: cache, health: health}
 }
 
 func (h *PortalHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -37,15 +42,21 @@ func (h *PortalHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	slog.Info("portal request", "cards", len(cards))
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := renderPortal(w, identity, cards); err != nil {
+	if err := renderPortal(w, identity, cards, h.health); err != nil {
 		slog.Error("render portal", "err", err)
 	}
 	slog.Debug("portal rendered", "duration", time.Since(start))
 }
 
-func renderPortal(w io.Writer, id *Identity, cards []ServiceCard) error {
+func renderPortal(w io.Writer, id *Identity, cards []ServiceCard, healthStores ...*ServiceHealthStore) error {
+	var health *ServiceHealthStore
+	if len(healthStores) > 0 {
+		health = healthStores[0]
+	}
+
 	var body strings.Builder
 	for _, card := range cards {
+		healthMarkup := renderServiceHealthStatus(health, card.ID)
 		scheme, linkable := cardURLScheme(card.URL)
 		if card.LinkState != serviceLinkReady {
 			linkable = false
@@ -53,12 +64,13 @@ func renderPortal(w io.Writer, id *Identity, cards []ServiceCard) error {
 		if linkable {
 			fmt.Fprintf(&body,
 				`<a class="card" href="%s" data-service="%s">`+
-					`<span class="card-head"><span class="card-name">%s</span></span>`+
+					`<span class="card-head"><span class="card-name">%s</span>%s</span>`+
 					`<span class="badge">%s</span>`+
 					`</a>`,
 				html.EscapeString(card.URL),
 				html.EscapeString(card.Name),
 				html.EscapeString(card.Name),
+				healthMarkup,
 				html.EscapeString(scheme),
 			)
 			continue
@@ -69,12 +81,13 @@ func renderPortal(w io.Writer, id *Identity, cards []ServiceCard) error {
 		}
 		fmt.Fprintf(&body,
 			`<article class="card card-unlinked" data-service="%s">`+
-				`<span class="card-head"><span class="card-name">%s</span></span>`+
+				`<span class="card-head"><span class="card-name">%s</span>%s</span>`+
 				`<span class="badge">link needed</span>`+
 				`<span class="card-note">Add a concrete service URL in Velociportal metadata.</span>`+
 				`</article>`,
 			html.EscapeString(card.Name),
 			html.EscapeString(card.Name),
+			healthMarkup,
 		)
 	}
 
@@ -95,6 +108,42 @@ func renderPortal(w io.Writer, id *Identity, cards []ServiceCard) error {
 		return fmt.Errorf("renderPortal: %w", err)
 	}
 	return nil
+}
+
+func renderServiceHealthStatus(store *ServiceHealthStore, proxyHostID int) string {
+	if store == nil {
+		return ""
+	}
+	result, ok := store.Get(proxyHostID)
+	if !ok {
+		return ""
+	}
+
+	label := "unknown"
+	className := "unknown"
+	switch result.State {
+	case ServiceHealthStateReachable:
+		label = "reachable"
+		className = "reachable"
+	case ServiceHealthStateAuthRequired:
+		label = "authentication required"
+		className = "auth-required"
+	case ServiceHealthStateResponseError:
+		label = "response error"
+		className = "response-error"
+	case ServiceHealthStateUnreachable:
+		label = "unreachable"
+		className = "unreachable"
+	case ServiceHealthStateStale:
+		label = "stale"
+		className = "stale"
+	}
+	return fmt.Sprintf(
+		`<span class="health-status health-%s" aria-label="Service health: %s">%s</span>`,
+		className,
+		html.EscapeString(label),
+		html.EscapeString(label),
+	)
 }
 
 func cardURLScheme(raw string) (string, bool) {
@@ -127,6 +176,12 @@ const portalPage = `<!doctype html>
   --accent: #3b82f6;
   --badge-bg: #1f2733;
   --badge-text: #9aa4b2;
+  --health-reachable: #3fb950;
+  --health-auth: #d29922;
+  --health-response: #f0883e;
+  --health-unreachable: #f85149;
+  --health-stale: #8b949e;
+  --health-unknown: #6e7681;
 }
 @media (prefers-color-scheme: light) {
   :root {
@@ -139,8 +194,12 @@ const portalPage = `<!doctype html>
     --accent: #3b82f6;
     --badge-bg: #eef1f6;
     --badge-text: #5a6472;
-    --dot-online: #2ea043;
-    --dot-offline: #c2c8d0;
+    --health-reachable: #1a7f37;
+    --health-auth: #9a6700;
+    --health-response: #bc4c00;
+    --health-unreachable: #cf222e;
+    --health-stale: #57606a;
+    --health-unknown: #6e7781;
   }
 }
 :root[data-theme="light"] {
@@ -153,6 +212,12 @@ const portalPage = `<!doctype html>
   --accent: #3b82f6;
   --badge-bg: #eef1f6;
   --badge-text: #5a6472;
+  --health-reachable: #1a7f37;
+  --health-auth: #9a6700;
+  --health-response: #bc4c00;
+  --health-unreachable: #cf222e;
+  --health-stale: #57606a;
+  --health-unknown: #6e7781;
 }
 :root[data-theme="dark"] {
   --bg: #0f1115;
@@ -164,6 +229,12 @@ const portalPage = `<!doctype html>
   --accent: #3b82f6;
   --badge-bg: #1f2733;
   --badge-text: #9aa4b2;
+  --health-reachable: #3fb950;
+  --health-auth: #d29922;
+  --health-response: #f0883e;
+  --health-unreachable: #f85149;
+  --health-stale: #8b949e;
+  --health-unknown: #6e7681;
 }
 * { box-sizing: border-box; }
 body { margin: 0; font: 16px/1.5 system-ui, sans-serif; background: var(--bg); color: var(--text); }
@@ -183,6 +254,13 @@ a.card:hover, a.card:focus-visible { border-color: var(--accent); background: va
 .card-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
 .card-note { font-size: .82rem; line-height: 1.35; }
 .badge { align-self: flex-start; padding: .1rem .5rem; border-radius: 999px; font-size: .72rem; font-weight: 600; letter-spacing: .02em; text-transform: uppercase; background: var(--badge-bg); color: var(--badge-text); }
+.health-status { margin-left: auto; flex-shrink: 0; font-size: .72rem; font-weight: 650; line-height: 1.2; text-align: right; }
+.health-reachable { color: var(--health-reachable); }
+.health-auth-required { color: var(--health-auth); }
+.health-response-error { color: var(--health-response); }
+.health-unreachable { color: var(--health-unreachable); }
+.health-stale { color: var(--health-stale); }
+.health-unknown { color: var(--health-unknown); }
 .empty { grid-column: 1 / -1; text-align: center; padding: 4rem 1.5rem; color: var(--muted); }
 .empty-icon { font-size: 2.5rem; line-height: 1; margin-bottom: .5rem; opacity: .5; }
 .empty p { margin: 0; }

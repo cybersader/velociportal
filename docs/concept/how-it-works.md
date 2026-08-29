@@ -1,6 +1,6 @@
 # How it works
 
-Velociportal separates **control-plane refreshes**, **identity-aware portal requests**, and **service traffic**. Portal rendering reads one immutable in-memory snapshot and never waits on the selected control plane or NPM.
+Velociportal separates **control-plane refreshes**, **optional service-health observations**, **identity-aware portal requests**, and **service traffic**. Portal rendering reads immutable in-memory authorization/catalog and health snapshots and never waits on the selected control plane, NPM API, or a backend probe.
 
 ## Control plane: complete snapshot refresh
 
@@ -34,6 +34,17 @@ flowchart TD
 - Service metadata is presentation-only. It is loaded before upstream contact, keyed by an existing NPM proxy-host ID, and cannot create a service or alter policy evidence.
 - Startup performs an immediate refresh. If it fails and there is no earlier in-process snapshot, portal requests and `/healthz` remain unavailable until a later refresh succeeds.
 - The cache is not persisted. A process restart always starts cold.
+
+## Optional service-health observations
+
+A separate scheduler reloads the strict service-health file before each cycle. Only explicitly listed proxy-host IDs are considered, and only enabled NPM hosts with supported identity-independent destination evidence become probe jobs. This structural gate does not evaluate source selectors and does not authorize anyone.
+
+- Targets derive only from NPM `forward_scheme`, `forward_host`, and `forward_port`, plus the configured HTTP path. Presentation metadata and browser URLs are never inputs.
+- HTTP sends one credential-free `GET`; TCP connects and closes without payload. Probes do not share clients, cookies, headers, tokens, or transports with the selected control plane or NPM API.
+- DNS names require an exact host or suffix allowlist match. Every resolved address must fit an explicit CIDR, the complete answer set is validated, and the transport dials validated IPs directly while preserving HTTP Host and TLS SNI.
+- Loopback, unspecified, multicast, link-local, broadcast, NPM API, and selected-control-plane API sockets remain denied. HTTPS uses verified TLS 1.2 or newer; redirects and environment proxies are disabled.
+- A fixed worker pool runs non-overlapping cycles with bounded per-probe and total-cycle time. Results are memory-only coarse states and become `stale` after three configured intervals.
+- Invalid health configuration launches no new probes and leaves prior observations only until stale. It never blocks or replaces the authorization/catalog snapshot and never changes `/healthz`.
 
 ## Identity, control, and service sequence
 
@@ -83,8 +94,9 @@ sequenceDiagram
 5. Resolve supported policy groups and, for Tailscale Grants only, Users-API-authoritative role selectors for that exact login.
 6. Evaluate enabled NPM proxy hosts against normalized supported access rules. Grant-derived cards require TCP to the exact backend port.
 7. For each already-matched host, prefer the first concrete NPM frontend name. Keep wildcard-only hosts visible but unlinked, then apply any exact-ID name/URL presentation override.
-8. Sort matching cards and render HTML server-side without inferring backend health from NPM route state.
-9. Let embedded htmx refresh the card grid every 60 seconds without turning the app into an SPA.
+8. Join any configured coarse health observation by the already-authorized proxy-host ID. Health cannot change card count, order, URL, link state, or authorization.
+9. Sort matching cards and render HTML server-side without inferring backend health from NPM route state.
+10. Let embedded htmx refresh the card grid every 60 seconds without turning the app into an SPA.
 
 [See the accepted and rejected routes →](../reference/tailscale-headers.md)
 
@@ -111,4 +123,4 @@ Headscale remains legacy-ACL-only. The Tailscale preview also evaluates the narr
 - **`200`** when a complete snapshot exists and is no older than three poll intervals.
 - **`503`** when the cache is empty or stale.
 
-A successful health response means Velociportal has a recent complete snapshot. It does not prove that every rendered card is reachable, that each generated URL uses the correct public scheme, that an NPM route's backend application is running, or that the matcher reflects unsupported policy features.
+A successful health response means Velociportal has a recent complete authorization/catalog snapshot. It does not depend on the optional service-health scheduler and does not prove that every rendered card is reachable, that each generated URL uses the correct public scheme, that an unconfigured backend is running, or that the matcher reflects unsupported policy features. Even a `reachable` card label is a shared point-in-time observation, not authorization or end-to-end user-path proof.

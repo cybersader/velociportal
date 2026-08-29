@@ -15,6 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 COMPOSE_FILE = Path("deploy/compose.yaml")
 PRIVATE_CA_COMPOSE_FILE = Path("deploy/compose.private-ca.yaml")
 SERVICE_METADATA_COMPOSE_FILE = Path("deploy/compose.service-metadata.yaml")
+SERVICE_HEALTH_COMPOSE_FILE = Path("deploy/compose.service-health.yaml")
 RUNTIME_ENV_EXAMPLES = {
     "headscale": Path("deploy/velociportal.env.example"),
     "tailscale": Path("deploy/velociportal.tailscale.env.example"),
@@ -24,6 +25,8 @@ VERIFY_IMAGE = "ghcr.io/cybersader/velociportal:v0.0.0-verify"
 VERIFY_CA_FILE = ROOT / ".env.example"
 VERIFY_SERVICE_METADATA_FILE = ROOT / "deploy/service-metadata.example.json"
 VERIFY_SERVICE_METADATA_GID = "950"
+VERIFY_SERVICE_HEALTH_FILE = ROOT / "deploy/service-health.example.json"
+VERIFY_SERVICE_HEALTH_GID = "951"
 
 
 def fail(message: str) -> None:
@@ -180,8 +183,15 @@ def validate_bind_mount(mount: dict, *, source: str | Path, target: str, rendere
     )
 
 
-def validate_optional_mounts(service: dict, *, expect_private_ca: bool, expect_service_metadata: bool, rendered: bool) -> None:
-    expected_count = int(expect_private_ca) + int(expect_service_metadata)
+def validate_optional_mounts(
+    service: dict,
+    *,
+    expect_private_ca: bool,
+    expect_service_metadata: bool,
+    expect_service_health: bool,
+    rendered: bool,
+) -> None:
+    expected_count = int(expect_private_ca) + int(expect_service_metadata) + int(expect_service_health)
     volumes = service.get("volumes", [])
     require(isinstance(volumes, list) and len(volumes) == expected_count, "optional overlays added unexpected mounts")
 
@@ -193,6 +203,9 @@ def validate_optional_mounts(service: dict, *, expect_private_ca: bool, expect_s
             target="/etc/ssl/certs/velociportal-private-ca.crt",
             rendered=rendered,
         )
+
+    environment = service_environment(service)
+    expected_groups: list[str] = []
     if expect_service_metadata:
         source = VERIFY_SERVICE_METADATA_FILE if rendered else "${VELOCIPORTAL_SERVICE_METADATA_FILE:?set VELOCIPORTAL_SERVICE_METADATA_FILE to a readable service metadata JSON file}"
         validate_bind_mount(
@@ -201,20 +214,56 @@ def validate_optional_mounts(service: dict, *, expect_private_ca: bool, expect_s
             target="/velociportal-services.json",
             rendered=rendered,
         )
-        environment = service_environment(service)
         require(
             environment.get("SERVICE_METADATA_FILE") == "/velociportal-services.json",
             "service metadata overlay must set the fixed in-container path",
         )
-        groups = service.get("group_add")
-        expected_group = VERIFY_SERVICE_METADATA_GID if rendered else "${VELOCIPORTAL_SERVICE_METADATA_GID:?set VELOCIPORTAL_SERVICE_METADATA_GID to the numeric group that can read the metadata file}"
-        require(isinstance(groups, list) and [str(group) for group in groups] == [expected_group], "service metadata supplemental group changed unexpectedly")
+        expected_groups.append(
+            VERIFY_SERVICE_METADATA_GID
+            if rendered
+            else "${VELOCIPORTAL_SERVICE_METADATA_GID:?set VELOCIPORTAL_SERVICE_METADATA_GID to the numeric group that can read the metadata file}"
+        )
     else:
-        require("SERVICE_METADATA_FILE" not in service_environment(service), "base/CA-only service must not enable metadata")
+        require("SERVICE_METADATA_FILE" not in environment, "service must not enable metadata without its overlay")
+
+    if expect_service_health:
+        source = VERIFY_SERVICE_HEALTH_FILE if rendered else "${VELOCIPORTAL_SERVICE_HEALTH_FILE:?set VELOCIPORTAL_SERVICE_HEALTH_FILE to a readable service health JSON file}"
+        validate_bind_mount(
+            mount_by_target(service, "/velociportal-health.json"),
+            source=source,
+            target="/velociportal-health.json",
+            rendered=rendered,
+        )
+        require(
+            environment.get("SERVICE_HEALTH_FILE") == "/velociportal-health.json",
+            "service health overlay must set the fixed in-container path",
+        )
+        expected_groups.append(
+            VERIFY_SERVICE_HEALTH_GID
+            if rendered
+            else "${VELOCIPORTAL_SERVICE_HEALTH_GID:?set VELOCIPORTAL_SERVICE_HEALTH_GID to the numeric group that can read the health file}"
+        )
+    else:
+        require("SERVICE_HEALTH_FILE" not in environment, "service must not enable health probes without its overlay")
+
+    groups = service.get("group_add")
+    if expected_groups:
+        require(isinstance(groups, list), "optional file overlays must add supplemental groups")
+        require(
+            [str(group) for group in groups] == expected_groups,
+            "optional file supplemental groups changed unexpectedly",
+        )
+    else:
         require("group_add" not in service, "base/CA-only service must not add supplemental groups")
 
 
-def validate_raw_model(model: dict, *, expect_private_ca: bool, expect_service_metadata: bool = False) -> None:
+def validate_raw_model(
+    model: dict,
+    *,
+    expect_private_ca: bool,
+    expect_service_metadata: bool = False,
+    expect_service_health: bool = False,
+) -> None:
     require(model.get("name") == "velociportal-production", "production project name must not collide with repository Compose")
     service = only_service(model)
 
@@ -269,6 +318,7 @@ def validate_raw_model(model: dict, *, expect_private_ca: bool, expect_service_m
         service,
         expect_private_ca=expect_private_ca,
         expect_service_metadata=expect_service_metadata,
+        expect_service_health=expect_service_health,
         rendered=False,
     )
 
@@ -286,6 +336,7 @@ def validate_rendered_model(
     provider: str,
     expect_private_ca: bool,
     expect_service_metadata: bool = False,
+    expect_service_health: bool = False,
 ) -> None:
     require(model.get("name") == "velociportal-production", "rendered production project name changed unexpectedly")
     service = only_service(model)
@@ -354,6 +405,7 @@ def validate_rendered_model(
         service,
         expect_private_ca=expect_private_ca,
         expect_service_metadata=expect_service_metadata,
+        expect_service_health=expect_service_health,
         rendered=True,
     )
 
@@ -389,6 +441,8 @@ def verification_environment(runtime_env_example: Path) -> dict[str, str]:
     environment.pop("VELOCIPORTAL_CA_FILE", None)
     environment.pop("VELOCIPORTAL_SERVICE_METADATA_FILE", None)
     environment.pop("VELOCIPORTAL_SERVICE_METADATA_GID", None)
+    environment.pop("VELOCIPORTAL_SERVICE_HEALTH_FILE", None)
+    environment.pop("VELOCIPORTAL_SERVICE_HEALTH_GID", None)
     environment.update(
         {
             "VELOCIPORTAL_IMAGE": VERIFY_IMAGE,
@@ -455,87 +509,63 @@ def short_include_model(runtime_env_example: Path) -> dict:
 
 
 def main() -> int:
+    overlay_combinations = [
+        (expect_private_ca, expect_service_metadata, expect_service_health)
+        for expect_private_ca in (False, True)
+        for expect_service_metadata in (False, True)
+        for expect_service_health in (False, True)
+    ]
+
     for provider, runtime_env_example in RUNTIME_ENV_EXAMPLES.items():
         base_environment = verification_environment(runtime_env_example)
 
-        raw_base = compose_json(raw_config_arguments(COMPOSE_FILE), base_environment)
-        validate_raw_model(raw_base, expect_private_ca=False)
+        for expect_private_ca, expect_service_metadata, expect_service_health in overlay_combinations:
+            compose_files = [COMPOSE_FILE]
+            rendered_environment = base_environment.copy()
+            if expect_private_ca:
+                compose_files.append(PRIVATE_CA_COMPOSE_FILE)
+                rendered_environment["VELOCIPORTAL_CA_FILE"] = str(VERIFY_CA_FILE)
+            if expect_service_metadata:
+                compose_files.append(SERVICE_METADATA_COMPOSE_FILE)
+                rendered_environment.update(
+                    {
+                        "VELOCIPORTAL_SERVICE_METADATA_FILE": str(VERIFY_SERVICE_METADATA_FILE),
+                        "VELOCIPORTAL_SERVICE_METADATA_GID": VERIFY_SERVICE_METADATA_GID,
+                    }
+                )
+            if expect_service_health:
+                compose_files.append(SERVICE_HEALTH_COMPOSE_FILE)
+                rendered_environment.update(
+                    {
+                        "VELOCIPORTAL_SERVICE_HEALTH_FILE": str(VERIFY_SERVICE_HEALTH_FILE),
+                        "VELOCIPORTAL_SERVICE_HEALTH_GID": VERIFY_SERVICE_HEALTH_GID,
+                    }
+                )
 
-        rendered_base = compose_json(rendered_config_arguments(COMPOSE_FILE), base_environment)
-        validate_rendered_model(rendered_base, provider=provider, expect_private_ca=False)
+            raw_model = compose_json(raw_config_arguments(*compose_files), base_environment)
+            validate_raw_model(
+                raw_model,
+                expect_private_ca=expect_private_ca,
+                expect_service_metadata=expect_service_metadata,
+                expect_service_health=expect_service_health,
+            )
+
+            rendered_model = compose_json(
+                rendered_config_arguments(*compose_files),
+                rendered_environment,
+            )
+            validate_rendered_model(
+                rendered_model,
+                provider=provider,
+                expect_private_ca=expect_private_ca,
+                expect_service_metadata=expect_service_metadata,
+                expect_service_health=expect_service_health,
+            )
 
         included_base = short_include_model(runtime_env_example)
         validate_rendered_model(included_base, provider=provider, expect_private_ca=False)
 
-        raw_private_ca = compose_json(
-            raw_config_arguments(COMPOSE_FILE, PRIVATE_CA_COMPOSE_FILE),
-            base_environment,
-        )
-        validate_raw_model(raw_private_ca, expect_private_ca=True)
-
-        private_ca_environment = base_environment.copy()
-        private_ca_environment["VELOCIPORTAL_CA_FILE"] = str(VERIFY_CA_FILE)
-        rendered_private_ca = compose_json(
-            rendered_config_arguments(COMPOSE_FILE, PRIVATE_CA_COMPOSE_FILE),
-            private_ca_environment,
-        )
-        validate_rendered_model(
-            rendered_private_ca,
-            provider=provider,
-            expect_private_ca=True,
-        )
-
-        raw_service_metadata = compose_json(
-            raw_config_arguments(COMPOSE_FILE, SERVICE_METADATA_COMPOSE_FILE),
-            base_environment,
-        )
-        validate_raw_model(
-            raw_service_metadata,
-            expect_private_ca=False,
-            expect_service_metadata=True,
-        )
-
-        service_metadata_environment = base_environment.copy()
-        service_metadata_environment.update(
-            {
-                "VELOCIPORTAL_SERVICE_METADATA_FILE": str(VERIFY_SERVICE_METADATA_FILE),
-                "VELOCIPORTAL_SERVICE_METADATA_GID": VERIFY_SERVICE_METADATA_GID,
-            }
-        )
-        rendered_service_metadata = compose_json(
-            rendered_config_arguments(COMPOSE_FILE, SERVICE_METADATA_COMPOSE_FILE),
-            service_metadata_environment,
-        )
-        validate_rendered_model(
-            rendered_service_metadata,
-            provider=provider,
-            expect_private_ca=False,
-            expect_service_metadata=True,
-        )
-
-        combined_environment = service_metadata_environment.copy()
-        combined_environment["VELOCIPORTAL_CA_FILE"] = str(VERIFY_CA_FILE)
-        raw_combined = compose_json(
-            raw_config_arguments(COMPOSE_FILE, PRIVATE_CA_COMPOSE_FILE, SERVICE_METADATA_COMPOSE_FILE),
-            base_environment,
-        )
-        validate_raw_model(
-            raw_combined,
-            expect_private_ca=True,
-            expect_service_metadata=True,
-        )
-        rendered_combined = compose_json(
-            rendered_config_arguments(COMPOSE_FILE, PRIVATE_CA_COMPOSE_FILE, SERVICE_METADATA_COMPOSE_FILE),
-            combined_environment,
-        )
-        validate_rendered_model(
-            rendered_combined,
-            provider=provider,
-            expect_private_ca=True,
-            expect_service_metadata=True,
-        )
-
-    print("production Compose bundle verified for headscale and tailscale")
+    print("production Compose bundle verified for headscale and tailscale across all overlay combinations")
     return 0
 
 

@@ -93,7 +93,7 @@ Tailscale SaaS reports `legacy_acl_visibility_v1` for ACL-only policies and `net
 | Unknown fields, actions, selectors, sections, or malformed capabilities | Fail the entire refresh |
 | `autogroup:internet` | Fails closed |
 
-A failed control-plane or NPM stage never publishes a partial snapshot. A warm process retains the exact previous complete snapshot; a cold process has no snapshot and remains unhealthy.
+A failed control-plane or NPM stage never publishes a partial snapshot. A warm process retains the exact previous complete snapshot; a cold process has no snapshot and remains unhealthy. Optional service-health probes use a separate scheduler/result store and never alter provider snapshot publication, OAuth behavior, role mapping, or `/healthz`.
 
 ## User role and device mapping
 
@@ -125,7 +125,7 @@ Follow the [TrueNAS Quickstart](truenas-scale.md), choosing the Tailscale SaaS p
 6. Configure Tailscale Serve and the exact trusted proxy source.
 7. Run Doctor and schema-v3 validation, then complete live acceptance.
 
-The optional private-CA overlay can still be used when the NPM API uses a private public root. It does not change or replace verification of `api.tailscale.com`.
+The optional private-CA overlay can still be used when the NPM API uses a private public root. It does not change or replace verification of `api.tailscale.com`. The optional service-metadata and service-health overlays are provider-neutral; health still protects the fixed Tailscale API socket and never uses OAuth credentials.
 
 ## Rollback and switching
 

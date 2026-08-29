@@ -26,11 +26,15 @@ func newTestCache(data *CacheData) *Cache {
 // newTestHandler wraps a PortalHandler (fed the given cache data) in the real
 // IdentityMiddleware, trusting only 127.0.0.0/8 — the exact production wiring.
 func newTestHandler(data *CacheData) http.Handler {
+	return newTestHandlerWithHealth(data, nil)
+}
+
+func newTestHandlerWithHealth(data *CacheData, health *ServiceHealthStore) http.Handler {
 	_, trusted, err := net.ParseCIDR("127.0.0.0/8")
 	if err != nil {
 		panic(err)
 	}
-	return IdentityMiddleware(trusted, NewPortalHandler(newTestCache(data)))
+	return IdentityMiddleware(trusted, NewPortalHandlerWithHealth(newTestCache(data), health))
 }
 
 // doPortalRequest drives a single request through the middleware+handler stack.
@@ -352,6 +356,69 @@ func TestPortalHandler_WildcardDomainNeverBecomesLink(t *testing.T) {
 		if strings.Contains(body, forbidden) {
 			t.Fatalf("wildcard card emitted forbidden link markup %q", forbidden)
 		}
+	}
+}
+
+func TestPortalHandler_HealthJoinsOnlyAuthorizedCards(t *testing.T) {
+	store := NewServiceHealthStore()
+	store.publish(map[int]ServiceHealthResult{
+		1: {ProxyHostID: 1, State: ServiceHealthStateReachable, CheckedAt: time.Now()},
+		2: {ProxyHostID: 2, State: ServiceHealthStateAuthRequired, CheckedAt: time.Now()},
+		3: {ProxyHostID: 3, State: ServiceHealthStateStale, CheckedAt: time.Now()},
+	}, time.Hour)
+
+	rec := doPortalRequest(
+		newTestHandlerWithHealth(standardTestData(), store),
+		"127.0.0.1:12345",
+		"alice@example.com",
+	)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	body := rec.Body.String()
+	for _, expected := range []string{
+		`aria-label="Service health: reachable"`,
+		`aria-label="Service health: stale"`,
+	} {
+		if !strings.Contains(body, expected) {
+			t.Fatalf("authorized health status %q was not rendered", expected)
+		}
+	}
+	if strings.Contains(body, `aria-label="Service health: authentication required"`) {
+		t.Fatal("health for an unauthorized card was rendered")
+	}
+	if strings.Contains(body, "jenkins.example.com") {
+		t.Fatal("health integration changed card authorization")
+	}
+}
+
+func TestRenderServiceHealthStatusLabels(t *testing.T) {
+	tests := []struct {
+		state ServiceHealthState
+		label string
+		class string
+	}{
+		{ServiceHealthStateUnknown, "unknown", "health-unknown"},
+		{ServiceHealthStateReachable, "reachable", "health-reachable"},
+		{ServiceHealthStateAuthRequired, "authentication required", "health-auth-required"},
+		{ServiceHealthStateResponseError, "response error", "health-response-error"},
+		{ServiceHealthStateUnreachable, "unreachable", "health-unreachable"},
+		{ServiceHealthStateStale, "stale", "health-stale"},
+	}
+	for _, test := range tests {
+		t.Run(string(test.state), func(t *testing.T) {
+			store := NewServiceHealthStore()
+			store.publish(map[int]ServiceHealthResult{
+				1: {ProxyHostID: 1, State: test.state, CheckedAt: time.Now()},
+			}, time.Hour)
+			markup := renderServiceHealthStatus(store, 1)
+			if !strings.Contains(markup, test.label) || !strings.Contains(markup, test.class) {
+				t.Fatalf("markup = %q", markup)
+			}
+		})
+	}
+	if markup := renderServiceHealthStatus(NewServiceHealthStore(), 1); markup != "" {
+		t.Fatalf("unconfigured health markup = %q", markup)
 	}
 }
 
