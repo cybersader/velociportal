@@ -616,7 +616,7 @@ func TestEvaluateServicesMatchesAuthoritativeGrantRolesOnly(t *testing.T) {
 			{ID: 10, DomainNames: []string{"self.example.com"}, ForwardHost: "10.0.2.10", ForwardPort: 443, Enabled: true},
 		},
 		GrantRoleSelectorsByLogin: map[string][]string{
-			"owner@example.com":   {"autogroup:member", "autogroup:owner"},
+			"owner@example.com":   {"autogroup:admin", "autogroup:member", "autogroup:owner"},
 			"admin@example.com":   {"autogroup:admin", "autogroup:member"},
 			"member@example.com":  {"autogroup:member"},
 			"it@example.com":      {"autogroup:it-admin", "autogroup:member"},
@@ -630,7 +630,7 @@ func TestEvaluateServicesMatchesAuthoritativeGrantRolesOnly(t *testing.T) {
 		login string
 		want  []string
 	}{
-		"owner":         {login: "owner@example.com", want: []string{"member.example.com", "owner.example.com"}},
+		"owner":         {login: "owner@example.com", want: []string{"admin.example.com", "member.example.com", "owner.example.com"}},
 		"admin":         {login: "admin@example.com", want: []string{"admin.example.com", "member.example.com", "self.example.com"}},
 		"member":        {login: "member@example.com", want: []string{"member.example.com"}},
 		"it admin":      {login: "it@example.com", want: []string{"it.example.com", "member.example.com"}},

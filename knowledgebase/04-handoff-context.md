@@ -4,13 +4,13 @@
 
 ## Current stage
 
-**Published `v0.2.0-rc.2` is immutable at `ghcr.io/cybersader/velociportal@sha256:bf1b1324aa5cfd1a7f744d566546440543177b845c7d184a0318773632046019` and resolves to commit `159a9242b61f3f14d1d9ac4d6833e6fc80c4ed56`.** It contains the safe-Grants correction. Live acceptance proved OAuth/policy/users/devices connectivity, NPM startup, a complete healthy snapshot, declarative Serve ingress, and supported destination/TCP matching. The working tailnet policy was not changed.
+**Published `v0.2.0-rc.3` is immutable at `ghcr.io/cybersader/velociportal@sha256:db49ca3ea674f5e37d300853fd93c4b072f4826ff2be200890f8ff7ca277fdf9` and resolves to commit `1b260af8105b3243ca7c67f99d4ce8cf3753f291`.** Live TrueNAS acceptance confirmed that exact image, a complete healthy snapshot, declarative Serve ingress, and portal `200`. The working tailnet policy was not changed.
 
-That acceptance exposed the remaining source-side gap: the real human rule uses `autogroup:admin`, but RC.2 did not retain authoritative per-`loginName` Users API role membership, so expected role-derived cards were omitted. Branch `fix/tailscale-role-grants` implements exact Users API `loginName`/`type`/`role` validation, Grant-only role membership, and separate device-owner mapping. Direct members receive `autogroup:member` plus exactly their API role; shared users receive none; there is no hierarchy or device/tag/owner inference. Focused tests, the ordinary suite, vet, race tests, Compose verification, image smoke checks, and an independent read-only review pass; strict documentation verification remains before the source-control checkpoint.
+RC.3 still rendered zero cards for the real Owner identity. The Tailscale UI provided the missing authoritative fact: the Owner is automatically part of `autogroup:member`, `autogroup:owner`, and `autogroup:admin`. RC.3 emitted only member and owner, so its exact-role-only assumption was incorrect. Branch `fix/tailscale-owner-admin-membership` adds the Owner's Admin membership while retaining exact login, Grant-only isolation, shared-user exclusion, specialized-role isolation, and no device/tag/owner inference.
 
 The production topology remains one service on exactly two networks. NPM always uses the egress-capable `velociportal-upstreams`; Headscale mode also uses its private alias, while Tailscale SaaS uses the preferred default network for fixed-origin verified HTTPS egress. Browser ingress remains declarative Tailscale HTTP Serve on `:8081` to `http://127.0.0.1:18080`. The base bundle has no CA mount; `compose.private-ca.yaml` remains optional.
 
-`v0.2.0-rc.3` is the next preview candidate. Never replace or retag RC.2. Publication and the next TrueNAS app update require separate explicit approval. The live policy must not be rewritten. Two-identity role-card/reachability parity, token refresh/revocation, unsupported-policy negatives, stale/cold recovery, header replacement, and LAN-negative isolation remain pending.
+`v0.2.0-rc.4` is the next preview candidate. Never replace or retag RC.3. Publication and another TrueNAS app update require separate explicit approval. The live policy must not be rewritten. Two-identity role-card/reachability parity, token refresh/revocation, unsupported-policy negatives, stale/cold recovery, header replacement, and LAN-negative isolation remain pending.
 
 ## Locked direction
 
@@ -37,7 +37,7 @@ The production topology remains one service on exactly two networks. NPM always 
 - **Configuration:** `CONTROL_PLANE=headscale|tailscale`; absent selector defaults to Headscale with a v0.2 deprecation warning. Only active provider keys are required. Inactive known keys are ignored with key-name-only warnings and included in redaction inputs.
 - **Setup:** provider-first prompts, Headscale supported/Tailscale preview labels, selected-family-only credentials, explicit selector output, confirmed deletion of inactive known keys on switch, unknown-key preservation, and byte-identical refusal/abort behavior.
 - **Headscale client:** isolated transport with TLS 1.2 minimum when TLS is used, no environment proxy, no redirects, bounded headers/bodies, Bearer auth, policy wrapper parsing, limited huJSON normalization, and node parsing including current and legacy tag fields.
-- **Tailscale client:** fixed verified production origin, exact four OAuth scopes, `-` tailnet alias, in-memory token reuse/refresh/concurrency, one retry after `401`, policy/users/devices load, strict canonical user `type`/`role` validation, exact-login Grant-role selector construction, separate strict device-owner mapping, partial-response rejection, and credential/token redaction. Support level remains preview.
+- **Tailscale client:** fixed verified production origin, exact four OAuth scopes, `-` tailnet alias, in-memory token reuse/refresh/concurrency, one retry after `401`, policy/users/devices load, strict canonical user `type`/`role` validation, exact-login Grant-role selector construction including Owner-to-Admin automatic membership, separate strict device-owner mapping, partial-response rejection, and credential/token redaction. Support level remains preview.
 - **NPM client:** separate isolated transport with no environment proxy or redirects and bounded headers/bodies; credential JWT, proactive reauthentication, one retry on `401`, and proxy-host parsing.
 - **Diagnostics:** Doctor reports explicit/implicit selection, provider-specific OAuth/API progress, access-rule counts, policy mode, support label, and SSH separation without printing client IDs, tokens, secrets, or tailnet data. Validation schema v3 records non-sensitive provider/policy/support/selection metadata plus `access_rules`, `rule_kind`, and original `rule_index`; it warns on implicit Headscale and retains the Headscale HTTP route notice.
 - **Cache:** synchronous startup refresh followed by a ticker; per-stage timeouts; publish only when the complete selected-provider result and proxy hosts succeed; failed refresh keeps the exact previous complete snapshot.
@@ -52,7 +52,7 @@ The production topology remains one service on exactly two networks. NPM always 
 ## Known limitations that must remain explicit
 
 1. **One provider per process.** No multi-tailnet aggregation. Tailscale remains preview.
-2. **Narrow policy subset.** Headscale remains legacy-ACL-only. Tailscale accepts additive legacy ACLs plus safe network Grants and recognized attr-only `funnel` `nodeAttrs`; authoritative role membership applies only to Grants, uses exact login, has no hierarchy, and is never inferred from devices/tags/owners. Posture, routing, services, IP sets, applications, malformed capabilities, and unknown semantics reject refresh.
+2. **Narrow policy subset.** Headscale remains legacy-ACL-only. Tailscale accepts additive legacy ACLs plus safe network Grants and recognized attr-only `funnel` `nodeAttrs`; authoritative role membership applies only to Grants, uses exact login, includes Owner-to-Admin automatic membership, keeps specialized roles isolated, and is never inferred from devices/tags/owners. Posture, routing, services, IP sets, applications, malformed capabilities, and unknown semantics reject refresh.
 3. **Rule-kind-specific port behavior.** Legacy ACL ports/protocols remain unmodeled. Grants require TCP to the exact NPM backend port; non-TCP-only Grants produce no HTTP card.
 4. **Unproven join.** NPM `ForwardHost` is the join key, but real values may be Docker names while Headscale destinations resolve to IPs/tags.
 5. **NPM access lists unused.** The runtime does not fetch or use them for visibility.
@@ -66,11 +66,11 @@ The production topology remains one service on exactly two networks. NPM always 
 
 ## Next work
 
-1. Finish documentation and sequential verification of `fix/tailscale-role-grants`, including direct-member/shared-user semantics, no hierarchy, exact-login matching, Grant-only isolation, strict user-field failures, and private/summary validation evidence.
+1. Finish documentation and sequential verification of `fix/tailscale-owner-admin-membership`, including Owner-to-Admin automatic membership, direct-member/shared-user semantics, specialized-role isolation, exact-login matching, Grant-only isolation, and validation evidence.
 2. Commit/push/PR only at the source-control checkpoint; keep Tailscale labeled preview.
-3. Publish a new immutable `v0.2.0-rc.3` only after separate explicit approval; never replace or retag RC.2.
-4. Restage the protected TrueNAS bundle and update only Velociportal after a fresh TrueNAS change checkpoint. Do not change datasets, permissions, the live tailnet policy, NPM, Headscale, Tailscale, DNS, certificates, networks, or ports.
-5. Resume Tailscale live acceptance with the real policy: confirm the same Admin identity now receives `autogroup:admin`-derived cards, an ordinary member does not, shared/machine sources remain non-human, and two real identities differ as intended.
+3. Publish a new immutable `v0.2.0-rc.4` only after separate explicit approval; never replace or retag RC.3.
+4. Restage only the image pin and update only Velociportal after a fresh TrueNAS change checkpoint. Do not change datasets, permissions, the live tailnet policy, NPM, Headscale, Tailscale, DNS, certificates, networks, or ports.
+5. Resume Tailscale live acceptance with the real policy: confirm the Owner receives `autogroup:admin`-derived cards, an ordinary member does not, shared/machine sources remain non-human, and two real identities differ as intended.
 6. Complete card/reachability parity, unsupported-policy negatives, token refresh/revocation, stale/cold recovery, Serve header replacement, and LAN-negative raw-port isolation.
 7. Retain Tailscale `preview` until all live acceptance requirements pass. Headscale bootstrap/control-proxy/two-identity acceptance remains a separate path.
 

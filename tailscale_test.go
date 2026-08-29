@@ -174,7 +174,7 @@ func TestTailscaleUserRolesBuildGrantMembership(t *testing.T) {
 		t.Fatalf("Load() error = %v", err)
 	}
 	want := map[string][]string{
-		"owner@example.com":   {"autogroup:member", "autogroup:owner"},
+		"owner@example.com":   {"autogroup:admin", "autogroup:member", "autogroup:owner"},
 		"admin@example.com":   {"autogroup:admin", "autogroup:member"},
 		"member@example.com":  {"autogroup:member"},
 		"it@example.com":      {"autogroup:it-admin", "autogroup:member"},
