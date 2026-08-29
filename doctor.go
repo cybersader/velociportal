@@ -7,10 +7,12 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 )
 
 const doctorUsage = `Usage:
@@ -39,11 +41,21 @@ var (
 type doctorIdentityFlags []string
 
 type doctorDependencies struct {
-	newClients func(*Config) (ControlPlane, *NPMClient)
+	newClients             func(*Config) (ControlPlane, *NPMClient)
+	newServiceHealthProber func(*Config, *ServiceHealthConfig) serviceHealthProber
 }
 
 func defaultDoctorDependencies() doctorDependencies {
-	return doctorDependencies{newClients: newUpstreamClients}
+	return doctorDependencies{
+		newClients: newUpstreamClients,
+		newServiceHealthProber: func(cfg *Config, config *ServiceHealthConfig) serviceHealthProber {
+			engine, err := newServiceProbeEngine(config, serviceHealthProtectedURLs(cfg))
+			if err != nil {
+				return nil
+			}
+			return engine
+		},
+	}
 }
 
 func (values *doctorIdentityFlags) String() string {
@@ -182,8 +194,24 @@ func runDoctorCommandWithDependencies(args []string, stdout, stderr io.Writer, d
 		fmt.Fprintf(stdout, "PASS service metadata: loaded %d override(s)\n", len(metadata.Overrides))
 	}
 
+	healthConfig, healthConfigErr := serviceHealthConfigLoaderForPath(cfg.ServiceHealthFile)()
+	healthConfigFailed := healthConfigErr != nil || healthConfig == nil
+	if healthConfigErr != nil {
+		fmt.Fprintf(stdout, "FAIL service health configuration: %s\n", sanitizeDoctorError(healthConfigErr, secrets))
+	} else if healthConfig == nil {
+		fmt.Fprintln(stdout, "FAIL service health configuration: loader returned an incomplete result")
+	} else if !healthConfig.Enabled {
+		fmt.Fprintln(stdout, "PASS service health configuration: disabled")
+	} else {
+		fmt.Fprintf(stdout, "PASS service health configuration: loaded %d target(s)\n", len(healthConfig.Services))
+	}
+
+	defaults := defaultDoctorDependencies()
 	if dependencies.newClients == nil {
-		dependencies.newClients = newUpstreamClients
+		dependencies.newClients = defaults.newClients
+	}
+	if dependencies.newServiceHealthProber == nil {
+		dependencies.newServiceHealthProber = defaults.newServiceHealthProber
 	}
 	controlPlane, npm := dependencies.newClients(cfg)
 
@@ -238,9 +266,86 @@ func runDoctorCommandWithDependencies(args []string, stdout, stderr io.Writer, d
 
 	reportDoctorJoinCoverage(stdout, snapshot)
 	reportDoctorIdentityPreviews(stdout, identities, snapshot)
+	if healthConfig != nil && healthConfig.Enabled {
+		reportDoctorServiceHealth(stdout, cfg, healthConfig, snapshot, dependencies.newServiceHealthProber)
+	}
 	fmt.Fprintln(stdout, "WARN validation scope: join and card results are supported matcher previews, not proof of network authorization or reachability")
+	if healthConfigFailed {
+		fmt.Fprintln(stdout, "FAIL doctor: service health configuration is invalid")
+		return 1
+	}
 	fmt.Fprintln(stdout, "PASS doctor: required diagnostics completed")
 	return 0
+}
+
+func reportDoctorServiceHealth(
+	stdout io.Writer,
+	cfg *Config,
+	config *ServiceHealthConfig,
+	snapshot *CacheData,
+	newProber func(*Config, *ServiceHealthConfig) serviceHealthProber,
+) {
+	cache := &Cache{}
+	cache.data.Store(snapshot)
+	poller := NewServiceHealthPoller(
+		cache,
+		func() (*ServiceHealthConfig, error) { return config, nil },
+		func(config *ServiceHealthConfig) serviceHealthProber {
+			if newProber == nil {
+				return nil
+			}
+			return newProber(cfg, config)
+		},
+		newDoctorDiscardLogger(),
+	)
+	cycleLimit := config.Interval
+	if cycleLimit > 30*time.Second {
+		cycleLimit = 30 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), cycleLimit)
+	defer cancel()
+	poller.runCycle(ctx)
+
+	counts := make(map[ServiceHealthState]int)
+	for _, service := range config.Services {
+		result, ok := poller.Store().Get(service.ProxyHostID)
+		if !ok {
+			result = ServiceHealthResult{ProxyHostID: service.ProxyHostID, State: ServiceHealthStateUnknown}
+		}
+		counts[result.State]++
+		prefix := "WARN"
+		if result.State == ServiceHealthStateReachable {
+			prefix = "PASS"
+		}
+		statusClass := ""
+		if result.HTTPStatusClass > 0 {
+			statusClass = fmt.Sprintf(" status_class=%dxx", result.HTTPStatusClass)
+		}
+		fmt.Fprintf(
+			stdout,
+			"%s service health target %d (%s): %s duration=%s%s\n",
+			prefix,
+			service.ProxyHostID,
+			service.Type,
+			result.State,
+			result.Duration.Round(time.Millisecond),
+			statusClass,
+		)
+	}
+	fmt.Fprintf(
+		stdout,
+		"PASS service health summary: configured=%d reachable=%d auth_required=%d response_error=%d unreachable=%d unknown=%d\n",
+		len(config.Services),
+		counts[ServiceHealthStateReachable],
+		counts[ServiceHealthStateAuthRequired],
+		counts[ServiceHealthStateResponseError],
+		counts[ServiceHealthStateUnreachable],
+		counts[ServiceHealthStateUnknown],
+	)
+}
+
+func newDoctorDiscardLogger() *slog.Logger {
+	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
 func snapshotStageFailure(err error) (string, error) {

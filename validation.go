@@ -445,7 +445,7 @@ func buildValidationReport(snapshot *CacheData, identities []validationIdentityI
 		serviceID := fmt.Sprintf("service-%03d", index+1)
 		serviceIDs[proxyHost.ID] = serviceID
 		serviceIndexes[proxyHost.ID] = index
-		matches, identityDependent := structuralValidationMatches(proxyHost, snapshot)
+		matches, identityDependent := structuralDestinationMatches(proxyHost, snapshot)
 		kinds := uniqueDestinationKinds(matches)
 		card, renderable := resolveServiceCard(proxyHost, snapshot.ServiceMetadata)
 		service := ValidationService{
@@ -570,33 +570,6 @@ func validationProxyHosts(proxyHosts []ProxyHost) []ProxyHost {
 		return result[i].ForwardHost < result[j].ForwardHost
 	})
 	return result
-}
-
-func structuralValidationMatches(proxyHost ProxyHost, snapshot *CacheData) ([]destinationMatchEvidence, bool) {
-	tagIPs := make(map[string][]string)
-	for _, node := range snapshot.Nodes {
-		for _, tag := range nodeTags(node) {
-			tagIPs[tag] = append(tagIPs[tag], node.Addresses...)
-		}
-	}
-	context := &matchContext{hosts: snapshot.Policy.Hosts, tagIPs: tagIPs}
-	matches := []destinationMatchEvidence{}
-	identityDependent := false
-	for _, rule := range snapshot.Policy.accessRules() {
-		if !rule.permitsTCP(proxyHost.ForwardPort) {
-			continue
-		}
-		for _, selector := range rule.Dst {
-			if stripPort(selector) == "autogroup:self" {
-				identityDependent = true
-				continue
-			}
-			if evidence, matched := matchDestination(selector, proxyHost.ForwardHost, context); matched {
-				matches = append(matches, evidence)
-			}
-		}
-	}
-	return matches, identityDependent
 }
 
 func uniqueDestinationKinds(matches []destinationMatchEvidence) []destinationMatchKind {

@@ -381,7 +381,7 @@ Set `velociportal.env` from exactly one provider example.
 
     Do not add a Tailscale API URL, API key, access token, or explicit tailnet variable.
 
-The canonical base stack mounts no CA or service metadata file. In Headscale mode, HTTP is accepted because the hostname is the exact private Docker alias. The alias suffix does not prove network confinement; the acceptance checks below must prove that no raw LAN publication or unintended direct route exists.
+The canonical base stack mounts no CA, service metadata, or service health file. In Headscale mode, HTTP is accepted because the hostname is the exact private Docker alias. The alias suffix does not prove network confinement; the acceptance checks below must prove that no raw LAN publication or unintended direct route exists.
 
 ### Optional concrete service names and URLs
 
@@ -396,7 +396,24 @@ VELOCIPORTAL_SERVICE_METADATA_GID=950
 
 Keep the existing dataset permissions unchanged: directory `950:950`/`0750`, file `950:950`/`0640`. The overlay adds group `950` only to the Velociportal container, mounts the one file read-only at `/velociportal-services.json`, and refuses to create a missing host path. Do not `chmod`, `chown`, or alter dataset ACLs for this feature. A malformed configured file blocks a cold snapshot and a failed reload preserves the prior complete snapshot.
 
-Metadata changes only display names and browser URLs after policy matching. It cannot create a card, enable an NPM host, change `forward_host`/`forward_port`, or grant access. Wildcard-only services without metadata remain visible with `link needed`; they never produce `%2A` links. NPM `nginx_online` is not backend health, so the portal shows no online dot.
+Metadata changes only display names and browser URLs after policy matching. It cannot create a card, enable an NPM host, change `forward_host`/`forward_port`, or grant access. Wildcard-only services without metadata remain visible with `link needed`; they never produce `%2A` links. NPM `nginx_online` is not backend health.
+
+### Optional bounded service health
+
+Health is disabled unless an operator explicitly adds `compose.service-health.yaml` and a strict health file. Copy `service-health.example.json`, list only the existing NPM proxy-host IDs that should be probed, and choose the narrow backend CIDRs plus exact DNS names or suffixes required by those NPM `forward_host` values. Browser metadata URLs never become probe targets.
+
+Set these stack variables through the Compose UI:
+
+```text
+VELOCIPORTAL_SERVICE_HEALTH_FILE=/mnt/personal/docker-configs/velociportal/velociportal-health.json
+VELOCIPORTAL_SERVICE_HEALTH_GID=950
+```
+
+Keep the existing dataset permissions unchanged: directory `950:950`/`0750`, file `950:950`/`0640`. The overlay adds group `950` only to the Velociportal container, mounts the file read-only at `/velociportal-health.json`, and refuses to create a missing host path. Do not `chmod`, `chown`, or alter dataset ACLs. The private-CA, metadata, and health overlays can be stacked.
+
+HTTP probes use credential-free `GET` with configured paths and accepted statuses. TCP probes only connect and close. All DNS answers must pass the explicit CIDR policy before direct-IP dialing; loopback, unspecified, multicast, link-local, broadcast, NPM API, and selected-control-plane API sockets remain denied. Verified TLS, no redirects, no environment proxies, fixed workers, bounded timeouts, and memory-only coarse observations remain mandatory.
+
+Health joins only after the normal identity/policy card match. It cannot create, hide, enable, reorder, or authorize a card, and it never changes snapshot publication or `/healthz`. A malformed health file stops new probes, keeps previous observations only until stale, and does not block the policy/NPM snapshot.
 
 Redeploy the imported Compose project. Require:
 

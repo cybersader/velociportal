@@ -32,7 +32,8 @@ The current polling cache does **not** fetch access lists.
 - `forward_scheme` becomes the automatic card URL scheme after an HTTP/HTTPS allowlist check. An explicit service-metadata URL overrides only the browser target.
 - `forward_host` is the current access-rule destination join key.
 - `forward_port` is required for exact TCP capability matching when a Tailscale Grant supplies card evidence. Legacy ACL ports remain unmodeled.
-- `meta.nginx_online` is retained only as NPM route/configuration state in diagnostics. It is not backend application health and is not rendered as a health indicator.
+- For an explicitly configured health target, `forward_scheme`, `forward_host`, and `forward_port` also define the direct backend probe target. Presentation-metadata URLs never participate.
+- `meta.nginx_online` is retained only as NPM route/configuration state in diagnostics. It is not backend application health and never creates a health label.
 - `access_list_id` is parsed but not used in visibility matching.
 
 ## Optional presentation metadata

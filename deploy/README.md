@@ -23,6 +23,8 @@ Files:
 - `compose.private-ca.yaml` — optional bind-mount overlay for the public root certificate of a private certificate authority.
 - `compose.service-metadata.yaml` — optional read-only service name/URL metadata overlay with a fixed in-container path and supplemental read group.
 - `service-metadata.example.json` — strict version-1 metadata example keyed by an existing NPM proxy-host ID.
+- `compose.service-health.yaml` — optional read-only explicit health-probe overlay with a fixed in-container path and supplemental read group.
+- `service-health.example.json` — strict version-1 health example with bounded scheduling and topology allowlists.
 - `stack.env.example` — non-secret Compose interpolation values for the base stack.
 - `velociportal.env.example` — explicit Headscale application settings using raw quoted values.
 - `velociportal.tailscale.env.example` — OAuth-only Tailscale SaaS preview settings with no access token, API URL, or explicit tailnet.
@@ -69,7 +71,7 @@ Tailscale mode always uses OAuth client credentials against the fixed verified A
 
 ## Base and optional overlays
 
-The base stack requires no CA or metadata file and mounts no host path:
+The base stack requires no CA, metadata, or health file and mounts no host path:
 
 ```bash
 docker compose --env-file stack.env -f compose.yaml up --detach --wait
@@ -89,7 +91,17 @@ Use `compose.service-metadata.yaml` only when an existing NPM proxy host lacks t
 VELOCIPORTAL_SERVICE_METADATA_FILE=/absolute/host/path/velociportal-services.json VELOCIPORTAL_SERVICE_METADATA_GID=950 docker compose --env-file stack.env -f compose.yaml -f compose.service-metadata.yaml up --detach --wait
 ```
 
-The overlay mounts the file read-only at `/velociportal-services.json`, sets `SERVICE_METADATA_FILE` to that fixed target, refuses to create a missing source, and adds only the supplied numeric supplemental group. On the canonical TrueNAS dataset, preserve directory ownership/mode `950:950`/`0750` and file ownership/mode `950:950`/`0640`; the group is how the non-root container reads the file. Do not loosen or change dataset permissions for this feature. The private-CA and metadata overlays can be stacked by including both files.
+The overlay mounts the file read-only at `/velociportal-services.json`, sets `SERVICE_METADATA_FILE` to that fixed target, refuses to create a missing source, and adds only the supplied numeric supplemental group. On the canonical TrueNAS dataset, preserve directory ownership/mode `950:950`/`0750` and file ownership/mode `950:950`/`0640`; the group is how the non-root container reads the file. Do not loosen or change dataset permissions for this feature.
+
+Use `compose.service-health.yaml` only for proxy-host IDs that should receive shared backend observations. Copy and edit `service-health.example.json`, keep the service list explicit, and allow only the intended backend CIDRs plus exact DNS names or suffixes:
+
+```bash
+VELOCIPORTAL_SERVICE_HEALTH_FILE=/absolute/host/path/velociportal-health.json VELOCIPORTAL_SERVICE_HEALTH_GID=950 docker compose --env-file stack.env -f compose.yaml -f compose.service-health.yaml up --detach --wait
+```
+
+The overlay mounts the file read-only at `/velociportal-health.json`, sets `SERVICE_HEALTH_FILE` to that fixed target, refuses to create a missing source, and adds only the supplied numeric supplemental group. Probes derive targets only from current NPM backend fields; metadata/browser URLs are never probed. HTTP uses credential-free `GET`, TCP connects and closes without payload, DNS answers are validated before direct-IP dialing, TLS remains verified, and NPM/selected-control-plane API sockets are protected. Health never changes authorization, cards, the discovery snapshot, or `/healthz`. Preserve the same `950:950`/`0750`/`0640` ownership and modes rather than loosening permissions.
+
+The private-CA, metadata, and health overlays can be stacked in any combination by including the selected files.
 
 Follow the [TrueNAS Quickstart](../docs/guides/truenas-scale.md) rather than deploying these examples without completing the selected provider's credential/control-plane checks plus private-network, identity, LAN-negative, restart, backup/restore, join, and reachability gates. Tailscale remains preview until its dedicated live OAuth and policy acceptance passes. The base stack requires no manual CA lifecycle; the certificate on the canonical NPM Headscale endpoint comes from the operator's existing automated NPM lifecycle. If a pre-tailnet client does not trust it, stop rather than disabling verification.
 

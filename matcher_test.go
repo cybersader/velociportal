@@ -560,6 +560,124 @@ func TestDestinationMatchEvidenceKinds(t *testing.T) {
 	}
 }
 
+func TestStructuralDestinationMatchesPreservesValidationSemantics(t *testing.T) {
+	data := &CacheData{
+		Policy: &Policy{
+			Hosts: map[string]string{"app": "10.0.0.5"},
+			ACLs: []ACLRule{{
+				Action: "accept",
+				Src:    []string{"group:admin"},
+				Dst:    []string{"app:443", "tag:app:*", "autogroup:self:*"},
+			}},
+		},
+		Nodes: []Node{{Tags: []string{"tag:app"}, Addresses: []string{"10.0.0.5"}}},
+	}
+	proxyHost := ProxyHost{ForwardHost: "10.0.0.5", ForwardPort: 443, Enabled: true}
+
+	matches, identityDependent := structuralDestinationMatches(proxyHost, data)
+	if !identityDependent {
+		t.Fatal("structuralDestinationMatches() did not record autogroup:self as identity-dependent")
+	}
+	if len(matches) != 2 {
+		t.Fatalf("structuralDestinationMatches() = %#v, want two identity-independent paths", matches)
+	}
+	if matches[0].Kind != destinationMatchHostAlias || matches[1].Kind != destinationMatchTag {
+		t.Fatalf("structural destination kinds = %#v", matches)
+	}
+}
+
+func TestEnabledProxyHostHasSupportedDestinationMatch(t *testing.T) {
+	tcp443, err := parseGrantIPCapability("tcp:443")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name      string
+		proxyHost ProxyHost
+		data      *CacheData
+		want      bool
+	}{
+		{
+			name:      "enabled exact ACL destination",
+			proxyHost: ProxyHost{ForwardHost: "10.0.0.5", ForwardPort: 443, Enabled: true},
+			data: &CacheData{Policy: &Policy{ACLs: []ACLRule{{
+				Action: "accept",
+				Src:    []string{"group:unresolved"},
+				Dst:    []string{"10.0.0.5:443"},
+			}}}},
+			want: true,
+		},
+		{
+			name:      "enabled tag destination resolved by current nodes",
+			proxyHost: ProxyHost{ForwardHost: "10.0.0.6", ForwardPort: 443, Enabled: true},
+			data: &CacheData{
+				Policy: &Policy{ACLs: []ACLRule{{Action: "accept", Src: []string{"*"}, Dst: []string{"tag:app:*"}}}},
+				Nodes:  []Node{{Tags: []string{"tag:app"}, Addresses: []string{"10.0.0.6"}}},
+			},
+			want: true,
+		},
+		{
+			name:      "enabled Grant destination with matching TCP port",
+			proxyHost: ProxyHost{ForwardHost: "10.0.0.7", ForwardPort: 443, Enabled: true},
+			data: &CacheData{Policy: &Policy{Grants: []GrantRule{{
+				Src:            []string{"group:unresolved"},
+				Dst:            []string{"10.0.0.7"},
+				IPCapabilities: []grantIPCapability{tcp443},
+			}}}},
+			want: true,
+		},
+		{
+			name:      "Grant destination with different TCP port",
+			proxyHost: ProxyHost{ForwardHost: "10.0.0.7", ForwardPort: 8443, Enabled: true},
+			data: &CacheData{Policy: &Policy{Grants: []GrantRule{{
+				Src:            []string{"*"},
+				Dst:            []string{"10.0.0.7"},
+				IPCapabilities: []grantIPCapability{tcp443},
+			}}}},
+			want: false,
+		},
+		{
+			name:      "autogroup self remains identity-dependent",
+			proxyHost: ProxyHost{ForwardHost: "10.0.0.8", ForwardPort: 443, Enabled: true},
+			data: &CacheData{
+				Policy: &Policy{ACLs: []ACLRule{{Action: "accept", Src: []string{"*"}, Dst: []string{"autogroup:self:*"}}}},
+				Nodes:  []Node{{OwnerLogin: "alice@example.com", Addresses: []string{"10.0.0.8"}}},
+			},
+			want: false,
+		},
+		{
+			name:      "disabled matching proxy host",
+			proxyHost: ProxyHost{ForwardHost: "10.0.0.5", ForwardPort: 443, Enabled: false},
+			data: &CacheData{Policy: &Policy{ACLs: []ACLRule{{
+				Action: "accept",
+				Src:    []string{"*"},
+				Dst:    []string{"10.0.0.5:443"},
+			}}}},
+			want: false,
+		},
+		{
+			name:      "incomplete snapshot",
+			proxyHost: ProxyHost{ForwardHost: "10.0.0.5", ForwardPort: 443, Enabled: true},
+			data:      &CacheData{},
+			want:      false,
+		},
+		{
+			name:      "nil snapshot",
+			proxyHost: ProxyHost{ForwardHost: "10.0.0.5", ForwardPort: 443, Enabled: true},
+			want:      false,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := enabledProxyHostHasSupportedDestinationMatch(test.proxyHost, test.data); got != test.want {
+				t.Fatalf("enabledProxyHostHasSupportedDestinationMatch() = %v, want %v", got, test.want)
+			}
+		})
+	}
+}
+
 func TestEvaluateServicesExplainsMatchServices(t *testing.T) {
 	data := &CacheData{
 		Policy: &Policy{

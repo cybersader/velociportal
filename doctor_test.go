@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 const (
@@ -137,7 +138,7 @@ func setDoctorProcessConfig(t *testing.T, values map[string]string) {
 	t.Setenv(processEnvEncodingKey, "")
 	t.Setenv("CONTROL_PLANE", values["CONTROL_PLANE"])
 	keys := append(append([]string(nil), requiredConfigKeys...), tailscaleRequiredConfigKeys...)
-	keys = append(keys, "LISTEN_ADDR", "POLL_INTERVAL", "SERVICE_METADATA_FILE")
+	keys = append(keys, "LISTEN_ADDR", "POLL_INTERVAL", "SERVICE_METADATA_FILE", "SERVICE_HEALTH_FILE")
 	for _, key := range keys {
 		t.Setenv(key, values[key])
 	}
@@ -340,6 +341,79 @@ func TestRunDoctorCommandValidatesServiceMetadataBeforeUpstreams(t *testing.T) {
 	}
 	if fixture.policyHits.Load() != 0 || fixture.nodesHits.Load() != 0 || fixture.authHits.Load() != 0 || fixture.proxyHits.Load() != 0 {
 		t.Fatal("doctor contacted upstreams after service metadata failed")
+	}
+}
+
+func TestRunDoctorCommandContinuesDiagnosticsAfterInvalidServiceHealthConfig(t *testing.T) {
+	fixture := newDoctorHTTPFixture(t)
+	values := doctorFixtureConfig(fixture)
+	path := filepath.Join(t.TempDir(), "private-health.json")
+	if err := os.WriteFile(path, []byte(`{"version":1,"allowed_cidrs":["10.0.0.0/8"],"allowed_hosts":["private.example:443"],"services":[]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	values["SERVICE_HEALTH_FILE"] = path
+	setDoctorProcessConfig(t, values)
+
+	code, stdout, stderr := runDoctorForTest(nil, fixture)
+	if code != 1 || stderr != "" {
+		t.Fatalf("exit=%d stdout=%q stderr=%q", code, stdout, stderr)
+	}
+	for _, expected := range []string{
+		"FAIL service health configuration:",
+		"PASS snapshot: complete",
+		"FAIL doctor: service health configuration is invalid",
+	} {
+		if !strings.Contains(stdout, expected) {
+			t.Fatalf("stdout missing %q: %s", expected, stdout)
+		}
+	}
+	if strings.Contains(stdout, "private.example") || strings.Contains(stdout, path) {
+		t.Fatalf("doctor leaked service health configuration: %s", stdout)
+	}
+	if fixture.policyHits.Load() == 0 || fixture.authHits.Load() == 0 || fixture.proxyHits.Load() == 0 {
+		t.Fatal("doctor stopped before safe upstream diagnostics completed")
+	}
+}
+
+func TestRunDoctorCommandReportsOneBoundedServiceHealthCycle(t *testing.T) {
+	fixture := newDoctorHTTPFixture(t)
+	values := doctorFixtureConfig(fixture)
+	path := filepath.Join(t.TempDir(), "health.json")
+	if err := os.WriteFile(path, []byte(`{"version":1,"interval":"15s","timeout":"250ms","workers":1,"allowed_cidrs":["10.0.0.0/8"],"services":[{"proxy_host_id":1,"type":"http","path":"/health","accepted_statuses":[{"min":200,"max":299}]}]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	values["SERVICE_HEALTH_FILE"] = path
+	setDoctorProcessConfig(t, values)
+
+	baseDependencies := doctorFixtureDependencies(fixture)
+	dependencies := doctorDependencies{
+		newClients: baseDependencies.newClients,
+		newServiceHealthProber: func(*Config, *ServiceHealthConfig) serviceHealthProber {
+			return &fakeServiceHealthProber{results: map[int]ServiceHealthResult{
+				1: {
+					ProxyHostID:     1,
+					State:           ServiceHealthStateReachable,
+					CheckedAt:       time.Now(),
+					Duration:        12 * time.Millisecond,
+					HTTPStatusClass: 2,
+				},
+			}}
+		},
+	}
+	var stdout, stderr bytes.Buffer
+	code := runDoctorCommandWithDependencies(nil, &stdout, &stderr, dependencies)
+	if code != 0 || stderr.Len() != 0 {
+		t.Fatalf("exit=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+	for _, expected := range []string{
+		"PASS service health configuration: loaded 1 target(s)",
+		"PASS service health target 1 (http): reachable duration=12ms status_class=2xx",
+		"PASS service health summary: configured=1 reachable=1",
+		"PASS doctor: required diagnostics completed",
+	} {
+		if !strings.Contains(stdout.String(), expected) {
+			t.Fatalf("stdout missing %q: %s", expected, stdout.String())
+		}
 	}
 }
 

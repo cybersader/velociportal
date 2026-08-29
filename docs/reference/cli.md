@@ -97,10 +97,11 @@ Doctor reports stable `PASS`, `WARN`, and `FAIL` stages for:
 - Headscale policy/node API progress or Tailscale OAuth/policy/users/devices progress;
 - NPM authentication and proxy-host retrieval;
 - complete snapshot construction;
-- supported access-rule-to-`forward_host` join coverage, including exact Grant TCP/backend-port checks; and
-- optional matcher-backed identity previews.
+- supported access-rule-to-`forward_host` join coverage, including exact Grant TCP/backend-port checks;
+- optional matcher-backed identity previews; and
+- optional service-health configuration plus one bounded probe cycle with proxy-host IDs, coarse states, durations, HTTP status classes, and aggregate counts only.
 
-Doctor sanitizes and bounds upstream errors. It does not print Headscale keys, OAuth client IDs/secrets, current or rejected OAuth tokens, NPM credentials/JWTs, or complete configuration structs. A passing run is a preflight result, not proof that rendered cards equal real network authorization.
+Doctor sanitizes and bounds upstream errors. It does not print Headscale keys, OAuth client IDs/secrets, current or rejected OAuth tokens, NPM credentials/JWTs, health paths, backend hostnames/IPs, response bodies, raw network errors, or complete configuration structs. Service probe failures are warnings rather than snapshot failures; malformed service-health configuration fails Doctor after safe upstream diagnostics continue. A passing run is a preflight result, not proof that rendered cards equal real network authorization.
 
 ## Validate
 
@@ -170,7 +171,7 @@ Use the full [local-source and diagnostic workflow](../getting-started/setup.md)
 | `make run` | Run from source with `serve --env-file`; requires Go |
 | `make docker` | Build the local production-shaped scratch image |
 | `make docker-run` | Run the local image read-only with loopback-only publication |
-| `make production-compose-check` | Render Headscale and Tailscale provider examples, short-form includes, and base/CA/service-metadata/combined overlay variants while asserting the unchanged one-service/two-network, always-pull, no-build, loopback, raw-env, gateway-priority, healthcheck, and hardening shape |
+| `make production-compose-check` | Render Headscale and Tailscale provider examples, short-form includes, and all base/CA/service-metadata/service-health overlay combinations while asserting the unchanged one-service/two-network, always-pull, no-build, loopback, raw-env, gateway-priority, healthcheck, and hardening shape |
 | `make logs` | Follow repository Compose logs |
 | `make down` | Stop the repository Compose deployment |
 | `make verify` | Run Go, contributor and production Compose, image metadata, and in-image CLI checks; requires Go, Python 3, and Docker Compose |
@@ -186,6 +187,7 @@ make validate VALIDATE_ARGS="--identity user-a=${VP_USER_A} --identity user-b=${
 make health HEALTH_URL=http://127.0.0.1:8080/healthz
 make doctor PRIVATE_CA_FILE="$HOME/.local/share/velociportal/certs/rootCA.pem"
 make doctor SERVICE_METADATA_FILE="$HOME/.config/velociportal/services.json" SERVICE_METADATA_GID="$(id -g)"
+make doctor SERVICE_HEALTH_FILE="$HOME/.config/velociportal/health.json" SERVICE_HEALTH_GID="$(id -g)"
 make docker IMAGE=registry.example/velociportal:test
 ```
 
@@ -198,6 +200,8 @@ For validation, populate `VP_USER_A` and `VP_USER_B` with hidden `read -s` promp
 | `PRIVATE_CA_FILE` | empty | Opts into `docker-compose.private-ca.yml` and mounts only the public private-CA root read-only into runtime and tools containers |
 | `SERVICE_METADATA_FILE` | empty | Opts into `docker-compose.service-metadata.yml` and mounts one strict metadata JSON file read-only into runtime and tools containers |
 | `SERVICE_METADATA_GID` | empty | Numeric supplemental group that can read `SERVICE_METADATA_FILE`; required when the metadata overlay is selected |
+| `SERVICE_HEALTH_FILE` | empty | Opts into `docker-compose.service-health.yml` and mounts one strict health JSON file read-only into runtime and tools containers |
+| `SERVICE_HEALTH_GID` | empty | Numeric supplemental group that can read `SERVICE_HEALTH_FILE`; required when the health overlay is selected |
 | `DOCTOR_ARGS` | empty | Additional doctor options, such as repeated identity previews |
 | `VALIDATE_ARGS` | empty | Labeled identities plus optional privacy/format flags; never place credentials here |
 | `BUILD_VERSION` | `dev` | Build provenance included in validation reports |
@@ -209,7 +213,7 @@ For validation, populate `VP_USER_A` and `VP_USER_B` with hidden `read -s` promp
 | `HOST_UID` / `HOST_GID` | current operator IDs | Native-Docker ownership for files written through the setup bind mount |
 | `CONTAINER_UID` / `CONTAINER_GID` | host IDs, or `0:0` when rootless Docker is detected | Container identity for one-off tools; rootless container UID 0 maps to the unprivileged daemon owner |
 
-Do not commit a populated environment file or private service-name mapping. Registry names and image tags are not secrets, but credentials, API keys, passwords, private domains, and metadata URLs may be sensitive. Use separate Headscale operator and Velociportal runtime keys. `PRIVATE_CA_FILE` must identify only a public root certificate, never a private key. `SERVICE_METADATA_FILE` must be one strict JSON file; use `SERVICE_METADATA_GID` for read access instead of loosening ownership or modes. See [Optional native Headscale TLS](../guides/private-tls.md).
+Do not commit a populated environment file, private service-name mapping, or service-health topology. Registry names and image tags are not secrets, but credentials, API keys, passwords, private domains, metadata URLs, proxy-host IDs, paths, hosts, and CIDRs may be sensitive. Use separate Headscale operator and Velociportal runtime keys. `PRIVATE_CA_FILE` must identify only a public root certificate, never a private key. `SERVICE_METADATA_FILE` and `SERVICE_HEALTH_FILE` must each identify one strict JSON file; use their supplemental GID variables for read access instead of loosening ownership or modes. See [Optional native Headscale TLS](../guides/private-tls.md).
 
 ## Runtime environment
 
@@ -226,6 +230,7 @@ Do not commit a populated environment file or private service-name mapping. Regi
 | `LISTEN_ADDR` | No | Defaults to `127.0.0.1:8080`; Compose overrides it inside the container |
 | `POLL_INTERVAL` | No | Go duration from `5s` through `24h`; defaults to `30s` |
 | `SERVICE_METADATA_FILE` | No | Strict version-1 read-only JSON file with optional display-name/browser-URL overrides keyed by an existing NPM proxy-host ID; blank disables it |
+| `SERVICE_HEALTH_FILE` | No | Strict version-1 read-only JSON file for explicit proxy-host health probes, scheduling bounds, accepted HTTP statuses, and mandatory topology allowlists; blank disables probes |
 | `TRUSTED_PROXY_CIDR` | Yes | Exact source `/32`, `/128`, or the smallest intentionally trusted proxy subnet |
 
 Tailscale production configuration has no `TAILSCALE_API_URL`, `TAILSCALE_API_KEY`, `TAILSCALE_ACCESS_TOKEN`, or `TAILSCALE_TAILNET`. It always uses `https://api.tailscale.com/api/v2` and the OAuth credential's `-` tailnet alias. Inactive known provider variables are ignored at runtime with key-name-only warnings.

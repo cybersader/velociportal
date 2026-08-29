@@ -228,7 +228,23 @@ For every enabled NPM proxy host:
 - [ ] Prefer adding the real concrete name to the same NPM proxy host; record any explicit metadata URL used instead
 - [ ] Confirm metadata changes only presentation and does not alter the matched `forward_host`, `forward_port`, rule, or destination evidence
 - [ ] Note records with multiple domains; only the first valid concrete domain becomes the automatic link
-- [ ] Confirm stopped backends do not display a green/online indicator and treat `nginx_online` only as NPM route state
+- [ ] Confirm `nginx_online` remains NPM route state and does not create a health label
+
+### Optional service-health observations
+
+When the health overlay is enabled:
+
+- [ ] Confirm only explicitly configured positive proxy-host IDs receive a status label
+- [ ] Confirm unauthorized cards and their health states are absent for each identity
+- [ ] Confirm a stopped configured backend becomes `unreachable` or `response error`, never green
+- [ ] Confirm `401`/`403` becomes `authentication required` even if an accepted range would otherwise include it
+- [ ] Confirm HTTP uses the configured path without following redirects and TCP sends no payload
+- [ ] Confirm every DNS answer fits the explicit CIDRs and exact host/suffix policy; include mixed-answer and disallowed-address negatives
+- [ ] Confirm NPM and selected-control-plane API sockets cannot be selected directly or through an alias
+- [ ] Confirm invalid health configuration leaves the authorization/catalog snapshot and `/healthz` healthy while old observations age to `stale`
+- [ ] Confirm no health path, backend hostname/IP, response body, credential, or raw network error appears in Doctor or runtime logs
+
+Treat every label as a shared point-in-time backend observation, not proof that a particular user can reach the browser URL end to end.
 
 ### Reachability parity
 
