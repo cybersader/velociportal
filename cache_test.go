@@ -173,6 +173,53 @@ func TestLoadSnapshot_AllOrNothing(t *testing.T) {
 	}
 }
 
+func TestCache_ServiceMetadataReloadIsAtomic(t *testing.T) {
+	u := newTestUpstreams(t)
+	name := "First"
+	fail := false
+	loader := func() (*ServiceMetadata, error) {
+		if fail {
+			return nil, errors.New("metadata boom")
+		}
+		return &ServiceMetadata{Overrides: map[int]ServiceOverride{1: {Name: name}}}, nil
+	}
+	cache := NewCacheWithServiceMetadata(u.hs, u.npm, loader, time.Hour, discardLogger())
+
+	if err := cache.refresh(context.Background()); err != nil {
+		t.Fatalf("initial refresh error = %v", err)
+	}
+	first := cache.Get()
+	if got := first.ServiceMetadata.Overrides[1].Name; got != "First" {
+		t.Fatalf("initial metadata name = %q", got)
+	}
+
+	name = "Second"
+	if err := cache.refresh(context.Background()); err != nil {
+		t.Fatalf("second refresh error = %v", err)
+	}
+	second := cache.Get()
+	if second == first || second.ServiceMetadata.Overrides[1].Name != "Second" {
+		t.Fatalf("metadata was not atomically replaced: %#v", second.ServiceMetadata)
+	}
+
+	policyHits := u.policyHits.Load()
+	fail = true
+	err := cache.refresh(context.Background())
+	if err == nil {
+		t.Fatal("metadata failure returned nil error")
+	}
+	var loadErr *snapshotLoadError
+	if !errors.As(err, &loadErr) || loadErr.Stage != snapshotStageServiceMetadata {
+		t.Fatalf("metadata error = %v", err)
+	}
+	if cache.Get() != second {
+		t.Fatal("failed metadata refresh replaced the previous snapshot")
+	}
+	if got := u.policyHits.Load(); got != policyHits {
+		t.Fatalf("metadata failure contacted upstreams: policy hits %d -> %d", policyHits, got)
+	}
+}
+
 func TestCache_RefreshUpdatesData(t *testing.T) {
 	u := newTestUpstreams(t)
 	ctx, cancel := context.WithCancel(context.Background())

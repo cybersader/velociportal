@@ -20,11 +20,14 @@ DOCKER_ROOTLESS ?= $(shell docker info --format '{{json .SecurityOptions}}' 2>/d
 CONTAINER_UID ?= $(if $(DOCKER_ROOTLESS),0,$(HOST_UID))
 CONTAINER_GID ?= $(if $(DOCKER_ROOTLESS),0,$(HOST_GID))
 PRIVATE_CA_FILE ?=
+SERVICE_METADATA_FILE ?=
+SERVICE_METADATA_GID ?=
 
 PRIVATE_CA_COMPOSE = $(if $(strip $(PRIVATE_CA_FILE)),-f docker-compose.private-ca.yml)
-COMPOSE_ENV = IMAGE="$(IMAGE)" BUILD_VERSION="$(BUILD_VERSION)" GIT_REVISION="$(GIT_REVISION)" GIT_SOURCE_STATE="$(GIT_SOURCE_STATE)" VELOCIPORTAL_SUBNET="$(VELOCIPORTAL_SUBNET)" VELOCIPORTAL_GATEWAY="$(VELOCIPORTAL_GATEWAY)" PRIVATE_CA_FILE="$(PRIVATE_CA_FILE)"
-COMPOSE = ENV_FILE="$(ENV_FILE)" $(COMPOSE_ENV) docker compose -f docker-compose.yml $(PRIVATE_CA_COMPOSE)
-SETUP_COMPOSE = ENV_FILE=".env.example" $(COMPOSE_ENV) docker compose -f docker-compose.yml $(PRIVATE_CA_COMPOSE)
+SERVICE_METADATA_COMPOSE = $(if $(strip $(SERVICE_METADATA_FILE)),-f docker-compose.service-metadata.yml)
+COMPOSE_ENV = IMAGE="$(IMAGE)" BUILD_VERSION="$(BUILD_VERSION)" GIT_REVISION="$(GIT_REVISION)" GIT_SOURCE_STATE="$(GIT_SOURCE_STATE)" VELOCIPORTAL_SUBNET="$(VELOCIPORTAL_SUBNET)" VELOCIPORTAL_GATEWAY="$(VELOCIPORTAL_GATEWAY)" PRIVATE_CA_FILE="$(PRIVATE_CA_FILE)" VELOCIPORTAL_SERVICE_METADATA_FILE="$(SERVICE_METADATA_FILE)" VELOCIPORTAL_SERVICE_METADATA_GID="$(SERVICE_METADATA_GID)"
+COMPOSE = ENV_FILE="$(ENV_FILE)" $(COMPOSE_ENV) docker compose -f docker-compose.yml $(PRIVATE_CA_COMPOSE) $(SERVICE_METADATA_COMPOSE)
+SETUP_COMPOSE = ENV_FILE=".env.example" $(COMPOSE_ENV) docker compose -f docker-compose.yml $(PRIVATE_CA_COMPOSE) $(SERVICE_METADATA_COMPOSE)
 WORKSPACE_VOLUME = $(CURDIR):/workspace
 
 build:
@@ -139,6 +142,8 @@ production-compose-check:
 verify: fmt-check vet test docker production-compose-check
 	ENV_FILE=.env.example IMAGE="$(IMAGE)" docker compose -f docker-compose.yml --profile tools config --quiet
 	ENV_FILE=.env.example IMAGE="$(IMAGE)" PRIVATE_CA_FILE="$(CURDIR)/.env.example" docker compose -f docker-compose.yml -f docker-compose.private-ca.yml --profile tools config --quiet
+	ENV_FILE=.env.example IMAGE="$(IMAGE)" VELOCIPORTAL_SERVICE_METADATA_FILE="$(CURDIR)/deploy/service-metadata.example.json" VELOCIPORTAL_SERVICE_METADATA_GID=950 docker compose -f docker-compose.yml -f docker-compose.service-metadata.yml --profile tools config --quiet
+	ENV_FILE=.env.example IMAGE="$(IMAGE)" PRIVATE_CA_FILE="$(CURDIR)/.env.example" VELOCIPORTAL_SERVICE_METADATA_FILE="$(CURDIR)/deploy/service-metadata.example.json" VELOCIPORTAL_SERVICE_METADATA_GID=950 docker compose -f docker-compose.yml -f docker-compose.private-ca.yml -f docker-compose.service-metadata.yml --profile tools config --quiet
 	@test "$$(docker image inspect --format '{{json .Config.Healthcheck.Test}}' "$(IMAGE)")" = \
 		'["CMD","/velociportal","healthcheck"]' || { \
 		printf 'image %s does not contain the expected healthcheck command\n' "$(IMAGE)"; \

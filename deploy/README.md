@@ -21,6 +21,8 @@ Files:
 
 - `compose.yaml` — portable one-service base stack with no bind mounts.
 - `compose.private-ca.yaml` — optional bind-mount overlay for the public root certificate of a private certificate authority.
+- `compose.service-metadata.yaml` — optional read-only service name/URL metadata overlay with a fixed in-container path and supplemental read group.
+- `service-metadata.example.json` — strict version-1 metadata example keyed by an existing NPM proxy-host ID.
 - `stack.env.example` — non-secret Compose interpolation values for the base stack.
 - `velociportal.env.example` — explicit Headscale application settings using raw quoted values.
 - `velociportal.tailscale.env.example` — OAuth-only Tailscale SaaS preview settings with no access token, API URL, or explicit tailnet.
@@ -65,9 +67,9 @@ Both files set `CONTROL_PLANE` explicitly. Existing v0.2 Headscale files without
 
 Tailscale mode always uses OAuth client credentials against the fixed verified API origin. It has no access-token variable, API-key fallback, configurable API URL, or explicit tailnet variable.
 
-## Base and private-CA overlay
+## Base and optional overlays
 
-The base stack requires no CA file and mounts no host path:
+The base stack requires no CA or metadata file and mounts no host path:
 
 ```bash
 docker compose --env-file stack.env -f compose.yaml up --detach --wait
@@ -79,8 +81,16 @@ Use `compose.private-ca.yaml` only when an upstream certificate chains to a priv
 VELOCIPORTAL_CA_FILE=/absolute/host/path/rootCA.pem docker compose --env-file stack.env -f compose.yaml -f compose.private-ca.yaml up --detach --wait
 ```
 
-The overlay modifies only the existing Velociportal service. It adds one read-only bind at `/etc/ssl/certs/velociportal-private-ca.crt`, refuses to create a missing source path, and adds no service, network, or port. Never mount a CA private key, leaf private key, directory, or combined private-key bundle.
+The private-CA overlay modifies only the existing Velociportal service. It adds one read-only bind at `/etc/ssl/certs/velociportal-private-ca.crt`, refuses to create a missing source path, and adds no service, network, or port. Never mount a CA private key, leaf private key, directory, or combined private-key bundle.
+
+Use `compose.service-metadata.yaml` only when an existing NPM proxy host lacks the concrete browser name or URL Velociportal should display. Adding the real concrete hostname to the same NPM proxy host is preferred because NPM remains the service-name source of truth. The metadata file cannot create a card or change policy matching.
+
+```bash
+VELOCIPORTAL_SERVICE_METADATA_FILE=/absolute/host/path/velociportal-services.json VELOCIPORTAL_SERVICE_METADATA_GID=950 docker compose --env-file stack.env -f compose.yaml -f compose.service-metadata.yaml up --detach --wait
+```
+
+The overlay mounts the file read-only at `/velociportal-services.json`, sets `SERVICE_METADATA_FILE` to that fixed target, refuses to create a missing source, and adds only the supplied numeric supplemental group. On the canonical TrueNAS dataset, preserve directory ownership/mode `950:950`/`0750` and file ownership/mode `950:950`/`0640`; the group is how the non-root container reads the file. Do not loosen or change dataset permissions for this feature. The private-CA and metadata overlays can be stacked by including both files.
 
 Follow the [TrueNAS Quickstart](../docs/guides/truenas-scale.md) rather than deploying these examples without completing the selected provider's credential/control-plane checks plus private-network, identity, LAN-negative, restart, backup/restore, join, and reachability gates. Tailscale remains preview until its dedicated live OAuth and policy acceptance passes. The base stack requires no manual CA lifecycle; the certificate on the canonical NPM Headscale endpoint comes from the operator's existing automated NPM lifecycle. If a pre-tailnet client does not trust it, stop rather than disabling verification.
 
-No public image, `headscale-ops` artifact, or support claim is assumed until tagged releases are published and anonymously verified and real acceptance passes. Never substitute `latest`, a NAS source build, disabled verification, or recurring NAS shell operations.
+Published release-candidate images and `headscale-ops` artifacts do not imply a public support claim; real acceptance still must pass. Never substitute `latest`, a NAS source build, disabled verification, or recurring NAS shell operations.

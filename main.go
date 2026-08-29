@@ -33,6 +33,7 @@ type Config struct {
 	NPMURL                      string
 	NPMEmail                    string
 	NPMPassword                 string
+	ServiceMetadataFile         string
 	ListenAddr                  string
 	PollInterval                time.Duration
 	TrustedProxyCIDR            *net.IPNet
@@ -181,6 +182,12 @@ func loadConfigFrom(lookup configLookup) (*Config, error) {
 		return nil, fmt.Errorf("loadConfig: invalid POLL_INTERVAL: %w", err)
 	}
 
+	serviceMetadataFile, err := lookupOr(lookup, "SERVICE_METADATA_FILE", "")
+	if err != nil {
+		return nil, fmt.Errorf("loadConfig: %w", err)
+	}
+	serviceMetadataFile = strings.TrimSpace(serviceMetadataFile)
+
 	_, trustedProxyCIDR, err := net.ParseCIDR(strings.TrimSpace(values["TRUSTED_PROXY_CIDR"]))
 	if err != nil {
 		return nil, fmt.Errorf("loadConfig: invalid TRUSTED_PROXY_CIDR: %w", err)
@@ -201,6 +208,7 @@ func loadConfigFrom(lookup configLookup) (*Config, error) {
 		NPMURL:                      npmURL,
 		NPMEmail:                    strings.TrimSpace(values["NPM_EMAIL"]),
 		NPMPassword:                 values["NPM_PASSWORD"],
+		ServiceMetadataFile:         serviceMetadataFile,
 		ListenAddr:                  listenAddr,
 		PollInterval:                interval,
 		TrustedProxyCIDR:            trustedProxyCIDR,
@@ -451,7 +459,13 @@ func runServer(cfg *Config) error {
 	}
 	controlPlane, npm := newUpstreamClients(cfg)
 
-	cache := NewCache(controlPlane, npm, cfg.PollInterval, slog.Default())
+	cache := NewCacheWithServiceMetadata(
+		controlPlane,
+		npm,
+		serviceMetadataLoaderForPath(cfg.ServiceMetadataFile),
+		cfg.PollInterval,
+		slog.Default(),
+	)
 	cache.Start(ctx)
 
 	static, err := fs.Sub(assetsFS, "assets")

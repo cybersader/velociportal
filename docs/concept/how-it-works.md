@@ -9,17 +9,19 @@ flowchart TD
     accTitle: Complete snapshot refresh
     accDescr: Startup or a poll tick triggers the selected provider's complete policy and node/device load plus the NPM proxy-host fetch. If every stage succeeds, Velociportal atomically replaces the snapshot. If any stage fails, it keeps the previous complete snapshot.
 
-    Tick["Startup or poll tick"] --> Policy["Fetch selected-provider policy"]
+    Tick["Startup or poll tick"] --> Metadata["Load optional read-only<br/>service metadata"]
+    Metadata --> Policy["Fetch selected-provider policy"]
     Policy --> Inventory["Fetch nodes or<br/>users + devices"]
     Inventory --> Hosts["Authenticate to NPM<br/>fetch proxy hosts"]
     Hosts -->|"all stages succeeded"| Swap["Atomically replace<br/>complete snapshot"]
-    Policy -->|failure| Keep["Keep previous<br/>complete snapshot"]
+    Metadata -->|failure| Keep["Keep previous<br/>complete snapshot"]
+    Policy -->|failure| Keep
     Inventory -->|failure| Keep
     Hosts -->|failure| Keep
 
     class Tick core
     class Policy,Inventory control
-    class Hosts service
+    class Metadata,Hosts service
     class Swap accepted
     class Keep output
 ```
@@ -28,7 +30,8 @@ flowchart TD
 
 - The default poll interval is `30s`.
 - Each upstream call has a `10s` context timeout.
-- A refresh is **all-or-nothing**: the selected provider's complete policy/inventory load and NPM proxy hosts must all succeed before publication.
+- A refresh is **all-or-nothing**: optional configured service metadata, the selected provider's complete policy/inventory load, and NPM proxy hosts must all succeed before publication.
+- Service metadata is presentation-only. It is loaded before upstream contact, keyed by an existing NPM proxy-host ID, and cannot create a service or alter policy evidence.
 - Startup performs an immediate refresh. If it fails and there is no earlier in-process snapshot, portal requests and `/healthz` remain unavailable until a later refresh succeeds.
 - The cache is not persisted. A process restart always starts cold.
 
@@ -79,8 +82,9 @@ sequenceDiagram
 4. Preserve a fully qualified login exactly. Short or bare legacy forms are accepted only when the trusted header itself uses that form.
 5. Resolve supported policy groups and, for Tailscale Grants only, Users-API-authoritative role selectors for that exact login.
 6. Evaluate enabled NPM proxy hosts against normalized supported access rules. Grant-derived cards require TCP to the exact backend port.
-7. Sort matching cards and render HTML server-side.
-8. Let embedded htmx refresh the card grid every 60 seconds without turning the app into an SPA.
+7. For each already-matched host, prefer the first concrete NPM frontend name. Keep wildcard-only hosts visible but unlinked, then apply any exact-ID name/URL presentation override.
+8. Sort matching cards and render HTML server-side without inferring backend health from NPM route state.
+9. Let embedded htmx refresh the card grid every 60 seconds without turning the app into an SPA.
 
 [See the accepted and rejected routes →](../reference/tailscale-headers.md)
 
@@ -107,4 +111,4 @@ Headscale remains legacy-ACL-only. The Tailscale preview also evaluates the narr
 - **`200`** when a complete snapshot exists and is no older than three poll intervals.
 - **`503`** when the cache is empty or stale.
 
-A successful health response means Velociportal has a recent complete snapshot. It does not prove that every rendered card is reachable, that each generated URL uses the correct public scheme, or that the matcher reflects unsupported policy features.
+A successful health response means Velociportal has a recent complete snapshot. It does not prove that every rendered card is reachable, that each generated URL uses the correct public scheme, that an NPM route's backend application is running, or that the matcher reflects unsupported policy features.

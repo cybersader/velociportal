@@ -31,13 +31,13 @@ Follow the [TrueNAS Quickstart](https://cybersader.github.io/velociportal/guides
 6. Deploying Velociportal without a source build or recurring NAS shell.
 7. Running two-identity, header-replacement, restart, join, reachability, and LAN-negative acceptance.
 
-The production bundle lives under [`deploy/`](./deploy/). It requires Docker Compose 2.33.1+ and Docker Engine 28+, pulls one immutable published image, creates `velociportal-upstreams`, runs exactly one Velociportal container, and never builds source on the deployment host. The base stack mounts no CA certificate; the private-CA overlay is optional.
+The production bundle lives under [`deploy/`](./deploy/). It requires Docker Compose 2.33.1+ and Docker Engine 28+, pulls one immutable published image, creates `velociportal-upstreams`, runs exactly one Velociportal container, and never builds source on the deployment host. The base stack mounts no host paths; the private-CA and service-metadata overlays are optional.
 
 > [!IMPORTANT]
-> No usable public image, `headscale-ops` release, or support claim is implied until tagged artifacts are actually published, anonymously verified, and the real TrueNAS acceptance matrix passes.
+> Published release-candidate images and `headscale-ops` artifacts exist, but they do not imply a public support claim. The selected provider's full TrueNAS acceptance matrix must still pass.
 
 > [!NOTE]
-> Published `v0.2.0-rc.3` is immutable and adds authoritative per-`loginName` Grant-role membership. Live acceptance then exposed one narrower compatibility error: Tailscale automatically includes the Owner in `autogroup:admin`, while RC.3 retained only `autogroup:member` and `autogroup:owner`. `v0.2.0-rc.4` is the next preview candidate; the live policy remains unchanged.
+> Published `v0.2.0-rc.4` is immutable at `sha256:30a7567c169836e8ae6bbf6c2280227d403b52c79a760ee57a2764d154fae02d`. Live TrueNAS use confirmed the corrected Owner-to-Admin membership and rendered 48 policy-supported cards without changing the live policy. That exercise also exposed two presentation defects now addressed on the current development branch: wildcard-only NPM names must never become links, and NPM route state must never be presented as backend health.
 
 > [!WARNING]
 > The canonical browser route is tailnet-only HTTP Serve over WireGuard: `:8081 -> http://127.0.0.1:18080`. NPM is not portal identity. Official Tailscale can automate `*.ts.net` certificates, but Headscale automatic HTTPS Serve remains future upstream work tracked by [issue #2527](https://github.com/juanfont/headscale/issues/2527) and [PR #3300](https://github.com/juanfont/headscale/pull/3300). Tailnet HTTP Serve is not a release blocker.
@@ -79,9 +79,9 @@ Velociportal polls one selected control-plane result plus NPM on one ticker:
 2. **Tailscale preview mode:** OAuth, then `GET /tailnet/-/acl`, `/users`, and `/devices`
 3. **Both modes:** NPM `GET /api/nginx/proxy-hosts`
 
-A refresh replaces the cache only after the complete selected-provider load and NPM call succeed. Requests use the last complete in-process snapshot and never wait on an upstream API.
+A refresh replaces the cache only after the optional local service metadata, complete selected-provider load, and NPM call succeed. Requests use the last complete in-process snapshot and never wait on an upstream API.
 
-On each request, Velociportal accepts `Tailscale-User-Login` only from `TRUSTED_PROXY_CIDR`, resolves supported identity and group forms, evaluates normalized supported access rules against enabled NPM proxy hosts, and renders matching cards server-side. In Tailscale mode, `/users` supplies exact `loginName`, `type`, and `role` values for Grant-only role membership. A direct user receives `autogroup:member` plus its API role; the Owner also receives `autogroup:admin`, matching Tailscale's automatic membership. A `shared` user receives none. Role lookup requires exact login equality, and specialized roles do not imply one another. Membership is never inferred from devices, owners, tags, or `tagOwners`; machine/tag/shared selectors remain non-human. Legacy ACL ports/protocols remain unmodeled; accepted Tailscale Grants must permit TCP to the exact NPM backend port. The selected control plane, Tailscale Serve, NPM, and backends still enforce access.
+On each request, Velociportal accepts `Tailscale-User-Login` only from `TRUSTED_PROXY_CIDR`, resolves supported identity and group forms, evaluates normalized supported access rules against enabled NPM proxy hosts, and renders matching cards server-side. In Tailscale mode, `/users` supplies exact `loginName`, `type`, and `role` values for Grant-only role membership. A direct user receives `autogroup:member` plus its API role; the Owner also receives `autogroup:admin`, matching Tailscale's automatic membership. A `shared` user receives none. Role lookup requires exact login equality, and specialized roles do not imply one another. Membership is never inferred from devices, owners, tags, or `tagOwners`; machine/tag/shared selectors remain non-human. Legacy ACL ports/protocols remain unmodeled; accepted Tailscale Grants must permit TCP to the exact NPM backend port. After authorization evidence matches, Velociportal prefers the first concrete NPM frontend name, keeps wildcard-only services visible but unlinked, and can apply a strict name/URL override keyed by that existing NPM host ID. Presentation metadata never changes policy evidence. The selected control plane, Tailscale Serve, NPM, and backends still enforce access.
 
 ## What it is — and is not
 
@@ -108,7 +108,8 @@ On each request, Velociportal accepts `Tailscale-User-Login` only from `TRUSTED_
 - Trusted-source `Tailscale-User-*` identity middleware
 - Legacy ACL matching plus a narrow Tailscale Grants network subset with exact TCP/backend-port checks and Users-API-authoritative role-autogroup sources
 - Known attr-only Tailscale `nodeAttrs` accepted as non-authorization metadata; the supported `funnel` attribute never becomes card evidence
-- Server-rendered responsive portal, embedded htmx refresh, and NPM status indicators
+- Server-rendered responsive portal with embedded htmx refresh, truthful concrete-domain links, visible unlinked wildcard cards, and no false backend-health indicator
+- Strict optional name/URL service metadata applied only after policy matching
 - Non-root `FROM scratch` image and Engine-28+-gated loopback-only publication
 - Portable one-service production bundle and declarative Tailscale HTTP Serve template
 - Provider-aware setup/doctor UX with atomic confirmed credential switching and complete credential redaction
@@ -190,10 +191,12 @@ No CA state lives on pfSense/the router. Router replacement restores ordinary DN
 - [x] Model a narrow Tailscale Grants network subset with exact TCP/backend-port checks
 - [x] Derive Grant-role source membership solely from exact Tailscale Users API `loginName`/`type`/`role` data
 - [x] Publish and live-test immutable `v0.2.0-rc.3` without modifying `v0.2.0-rc.2`; record the Owner-to-Admin membership gap
-- [ ] Publish and live-test immutable `v0.2.0-rc.4` with Tailscale-compatible Owner membership
+- [x] Publish and live-test immutable `v0.2.0-rc.4` with Tailscale-compatible Owner membership; record the 48-card result and presentation defects
 - [ ] Expand modern-policy support only with additional fail-closed semantics and live evidence
-- [ ] Derive browser-facing URLs from NPM frontend fields
-- [ ] Add custom service metadata
+- [x] Prefer concrete NPM frontend names, preserve wildcard-only cards without broken links, and add strict optional name/URL metadata
+- [ ] Add bounded real backend health checks without treating NPM route state as health
+- [ ] Add privacy-minimized DNS/Tailscale observations as ephemeral operator suggestions
+- [ ] Add categories, local logos, ordering, personalization, and Tailscale SSH machine cards
 - [ ] Add Caddy and Traefik service-discovery adapters
 
 ## License

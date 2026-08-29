@@ -170,7 +170,7 @@ Use the full [local-source and diagnostic workflow](../getting-started/setup.md)
 | `make run` | Run from source with `serve --env-file`; requires Go |
 | `make docker` | Build the local production-shaped scratch image |
 | `make docker-run` | Run the local image read-only with loopback-only publication |
-| `make production-compose-check` | Render Headscale and Tailscale provider examples, short-form includes, and optional CA overlays while asserting the unchanged one-service/two-network, always-pull, no-build, loopback, raw-env, gateway-priority, healthcheck, and hardening shape |
+| `make production-compose-check` | Render Headscale and Tailscale provider examples, short-form includes, and base/CA/service-metadata/combined overlay variants while asserting the unchanged one-service/two-network, always-pull, no-build, loopback, raw-env, gateway-priority, healthcheck, and hardening shape |
 | `make logs` | Follow repository Compose logs |
 | `make down` | Stop the repository Compose deployment |
 | `make verify` | Run Go, contributor and production Compose, image metadata, and in-image CLI checks; requires Go, Python 3, and Docker Compose |
@@ -185,6 +185,7 @@ make doctor DOCTOR_ARGS="--identity ${VP_USER_A} --identity ${VP_USER_B}"
 make validate VALIDATE_ARGS="--identity user-a=${VP_USER_A} --identity user-b=${VP_USER_B}"
 make health HEALTH_URL=http://127.0.0.1:8080/healthz
 make doctor PRIVATE_CA_FILE="$HOME/.local/share/velociportal/certs/rootCA.pem"
+make doctor SERVICE_METADATA_FILE="$HOME/.config/velociportal/services.json" SERVICE_METADATA_GID="$(id -g)"
 make docker IMAGE=registry.example/velociportal:test
 ```
 
@@ -195,6 +196,8 @@ For validation, populate `VP_USER_A` and `VP_USER_B` with hidden `read -s` promp
 | `IMAGE` | `velociportal:latest` | Image build, Compose, and local container commands |
 | `ENV_FILE` | `.env` | Project-relative environment-file path used by guided and runtime commands; absolute paths and `..` components are rejected by Make wrappers so host and container cannot address different files |
 | `PRIVATE_CA_FILE` | empty | Opts into `docker-compose.private-ca.yml` and mounts only the public private-CA root read-only into runtime and tools containers |
+| `SERVICE_METADATA_FILE` | empty | Opts into `docker-compose.service-metadata.yml` and mounts one strict metadata JSON file read-only into runtime and tools containers |
+| `SERVICE_METADATA_GID` | empty | Numeric supplemental group that can read `SERVICE_METADATA_FILE`; required when the metadata overlay is selected |
 | `DOCTOR_ARGS` | empty | Additional doctor options, such as repeated identity previews |
 | `VALIDATE_ARGS` | empty | Labeled identities plus optional privacy/format flags; never place credentials here |
 | `BUILD_VERSION` | `dev` | Build provenance included in validation reports |
@@ -206,7 +209,7 @@ For validation, populate `VP_USER_A` and `VP_USER_B` with hidden `read -s` promp
 | `HOST_UID` / `HOST_GID` | current operator IDs | Native-Docker ownership for files written through the setup bind mount |
 | `CONTAINER_UID` / `CONTAINER_GID` | host IDs, or `0:0` when rootless Docker is detected | Container identity for one-off tools; rootless container UID 0 maps to the unprivileged daemon owner |
 
-Do not commit a populated environment file. Registry names and image tags are not secrets, but credentials, API keys, and passwords are. Use separate Headscale operator and Velociportal runtime keys. `PRIVATE_CA_FILE` is optional and must identify only a public root certificate for a verified-HTTPS alternative, never a CA private key or leaf private key. See [Optional native Headscale TLS](../guides/private-tls.md).
+Do not commit a populated environment file or private service-name mapping. Registry names and image tags are not secrets, but credentials, API keys, passwords, private domains, and metadata URLs may be sensitive. Use separate Headscale operator and Velociportal runtime keys. `PRIVATE_CA_FILE` must identify only a public root certificate, never a private key. `SERVICE_METADATA_FILE` must be one strict JSON file; use `SERVICE_METADATA_GID` for read access instead of loosening ownership or modes. See [Optional native Headscale TLS](../guides/private-tls.md).
 
 ## Runtime environment
 
@@ -222,6 +225,7 @@ Do not commit a populated environment file. Registry names and image tags are no
 | `NPM_PASSWORD` | Yes | NPM account password |
 | `LISTEN_ADDR` | No | Defaults to `127.0.0.1:8080`; Compose overrides it inside the container |
 | `POLL_INTERVAL` | No | Go duration from `5s` through `24h`; defaults to `30s` |
+| `SERVICE_METADATA_FILE` | No | Strict version-1 read-only JSON file with optional display-name/browser-URL overrides keyed by an existing NPM proxy-host ID; blank disables it |
 | `TRUSTED_PROXY_CIDR` | Yes | Exact source `/32`, `/128`, or the smallest intentionally trusted proxy subnet |
 
 Tailscale production configuration has no `TAILSCALE_API_URL`, `TAILSCALE_API_KEY`, `TAILSCALE_ACCESS_TOKEN`, or `TAILSCALE_TAILNET`. It always uses `https://api.tailscale.com/api/v2` and the OAuth credential's `-` tailnet alias. Inactive known provider variables are ignored at runtime with key-name-only warnings.
@@ -253,10 +257,11 @@ The scratch image has no shell or separate HTTP utility. Its static binary conta
 
 | Symptom | Check first |
 |---|---|
-| Startup rejects configuration | Missing required values, malformed URL/CIDR, or non-positive poll interval |
+| Startup rejects configuration | Missing required values, malformed URL/CIDR, or a non-positive poll interval |
 | `403 untrusted source` | Actual immediate peer seen inside the container versus `TRUSTED_PROXY_CIDR` |
 | `401 no identity` | Whether the trusted proxy injected `Tailscale-User-Login` |
-| `503` from health | The selected control-plane load and NPM proxy-host refresh must both complete successfully |
+| `503` from health | Configured service metadata, the selected control plane, and NPM must all load before a complete snapshot is published; `serve` keeps running and retries after refresh failures |
 | Empty portal with healthy snapshot | Identity/group spelling, accepted ACL/Grant sources, Grant TCP/backend-port capability, NPM `forward_host`, and documented matcher limits |
+| Visible `link needed` card | Add a concrete hostname to the same NPM proxy host when possible, or supply an exact-ID URL through the service-metadata overlay |
 
 See [Known Limitations](known-limitations.md) before interpreting a healthy process as proof of policy parity.

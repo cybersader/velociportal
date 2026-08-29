@@ -223,7 +223,12 @@ For every enabled NPM proxy host:
 - [ ] Confirm the destination is reachable through Headscale; for LAN IPs, record the advertised/approved route and client route acceptance
 - [ ] Record the supported selector kind that joined it, or mark it unmatched
 - [ ] Check every generated card's browser-facing scheme and hostname
-- [ ] Note records with multiple domains; only the first currently becomes a card
+- [ ] Confirm a wildcard followed by a concrete NPM name selects the concrete name
+- [ ] Confirm wildcard-only services remain visible with `link needed` and emit no `%2A`/wildcard `href`
+- [ ] Prefer adding the real concrete name to the same NPM proxy host; record any explicit metadata URL used instead
+- [ ] Confirm metadata changes only presentation and does not alter the matched `forward_host`, `forward_port`, rule, or destination evidence
+- [ ] Note records with multiple domains; only the first valid concrete domain becomes the automatic link
+- [ ] Confirm stopped backends do not display a green/online indicator and treat `nginx_online` only as NPM route state
 
 ### Reachability parity
 
@@ -247,6 +252,6 @@ The first real exercise should end with one explicit decision:
 2. **Replace the join in a follow-up sprint** — real NPM values are systematically Docker names or another incompatible form.
 3. **Resolve an upstream blocker first** — for example NPM 2FA authentication, a changed API response shape, unsupported modern-policy semantics, or an identity proxy that cannot establish trusted `Tailscale-User-*` headers.
 
-Do not add ambient DNS guessing or a mapping database until the real report and worksheet show which relationship is actually missing.
+Use an explicit exact-ID service metadata URL only for a confirmed presentation gap. Do not treat ambient DNS/Tailscale observations as authorization or persist them as a mapping database; any future observation feature must remain privacy-minimized, ephemeral, and operator-approved.
 
 No public support claim is warranted until the full control-path, private-bridge, identity, LAN-negative, restart, backup/restore, join, link, and reachability acceptance passes. Router replacement should require restoring ordinary DNS and routing only; no CA or durable application state belongs on the router.

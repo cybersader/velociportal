@@ -320,9 +320,31 @@ func TestLoadConfigFromUsesDeterministicLookupOrder(t *testing.T) {
 		"TAILSCALE_OAUTH_CLIENT_SECRET",
 		"LISTEN_ADDR",
 		"POLL_INTERVAL",
+		"SERVICE_METADATA_FILE",
 	}
 	if !reflect.DeepEqual(calls, want) {
 		t.Fatalf("lookup calls = %v, want %v", calls, want)
+	}
+}
+
+func TestLoadConfigFromReadsOptionalServiceMetadataFile(t *testing.T) {
+	values := validConfigValues()
+	values["SERVICE_METADATA_FILE"] = "  /velociportal-services.json  "
+	cfg, err := loadConfigFrom(mapConfigLookup(values))
+	if err != nil {
+		t.Fatalf("loadConfigFrom() error = %v", err)
+	}
+	if cfg.ServiceMetadataFile != "/velociportal-services.json" {
+		t.Fatalf("ServiceMetadataFile = %q", cfg.ServiceMetadataFile)
+	}
+
+	delete(values, "SERVICE_METADATA_FILE")
+	cfg, err = loadConfigFrom(mapConfigLookup(values))
+	if err != nil {
+		t.Fatalf("loadConfigFrom() without metadata error = %v", err)
+	}
+	if cfg.ServiceMetadataFile != "" {
+		t.Fatalf("ServiceMetadataFile = %q", cfg.ServiceMetadataFile)
 	}
 }
 

@@ -1,0 +1,26 @@
+services:
+  velociportal:
+    environment:
+      SERVICE_METADATA_FILE: /velociportal-services.json
+    group_add:
+      - ${VELOCIPORTAL_SERVICE_METADATA_GID:?set VELOCIPORTAL_SERVICE_METADATA_GID to the numeric group that can read the metadata file}
+    volumes:
+      - type: bind
+        source: ${VELOCIPORTAL_SERVICE_METADATA_FILE:?set VELOCIPORTAL_SERVICE_METADATA_FILE to a readable service metadata JSON file}
+        target: /velociportal-services.json
+        read_only: true
+        bind:
+          create_host_path: false
+
+  velociportal-tools:
+    environment:
+      SERVICE_METADATA_FILE: /velociportal-services.json
+    group_add:
+      - ${VELOCIPORTAL_SERVICE_METADATA_GID:?set VELOCIPORTAL_SERVICE_METADATA_GID to the numeric group that can read the metadata file}
+    volumes:
+      - type: bind
+        source: ${VELOCIPORTAL_SERVICE_METADATA_FILE:?set VELOCIPORTAL_SERVICE_METADATA_FILE to a readable service metadata JSON file}
+        target: /velociportal-services.json
+        read_only: true
+        bind:
+          create_host_path: false

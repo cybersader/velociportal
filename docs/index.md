@@ -52,7 +52,7 @@ HEADSCALE_URL=http://headscale.velociportal.internal:8080
 NPM_URL=http://npm.velociportal.internal:81
 ```
 
-Headscale HTTP is accepted only for the implementation's exact local/internal allowlist. Other locations require verified HTTPS. The base Compose bundle has no CA mount.
+Headscale HTTP is accepted only for the implementation's exact local/internal allowlist. Other locations require verified HTTPS. The base Compose bundle has no host mounts; private-CA and service-metadata mounts are explicit optional overlays.
 
 In Headscale mode, existing NPM provides the trusted HTTPS endpoint needed before a client joins the tailnet. Runtime Velociportal bypasses that control proxy; workstation-only `headscale-ops` stays HTTPS-only. Tailscale SaaS preview mode instead uses dedicated OAuth credentials against the fixed verified SaaS origin and does not require Headscale or the NPM Headscale control proxy.
 
