@@ -230,10 +230,14 @@ func validateTailscaleUsers(users []tailscaleUserDTO) (map[string][]string, erro
 		ids[id] = index
 		logins[login] = index
 		if userType == tailscaleUserTypeMember {
-			grantRoleSelectorsByLogin[login] = normalizeStrings([]string{
+			selectors := []string{
 				"autogroup:member",
 				"autogroup:" + role,
-			})
+			}
+			if role == "owner" {
+				selectors = append(selectors, "autogroup:admin")
+			}
+			grantRoleSelectorsByLogin[login] = normalizeStrings(selectors)
 		}
 	}
 	for id, idIndex := range ids {

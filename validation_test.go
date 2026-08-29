@@ -239,7 +239,7 @@ func TestRunValidationCommandReportsTailscalePreviewMetadataPrivately(t *testing
 		{Src: []string{"group:beta"}, BrowserSrc: []string{"group:beta"}, Dst: []string{"tag:beta"}, IPCapabilities: []grantIPCapability{tcp8080}},
 	}
 	snapshot.GrantRoleSelectorsByLogin = map[string][]string{
-		"alice@example.com": {"autogroup:admin", "autogroup:member"},
+		"alice@example.com": {"autogroup:admin", "autogroup:member", "autogroup:owner"},
 	}
 	snapshot.ControlPlane = ControlPlaneMetadata{
 		Provider:     controlPlaneTailscale,
@@ -310,7 +310,7 @@ func TestRunValidationCommandPrivateReportExplainsAuthoritativeRoleMatchWithoutL
 		},
 	}
 	snapshot.GrantRoleSelectorsByLogin = map[string][]string{
-		"alice@example.com": {"autogroup:admin", "autogroup:member"},
+		"alice@example.com": {"autogroup:admin", "autogroup:member", "autogroup:owner"},
 	}
 	snapshot.ControlPlane = ControlPlaneMetadata{
 		Provider:     controlPlaneTailscale,

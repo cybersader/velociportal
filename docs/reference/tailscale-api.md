@@ -79,9 +79,9 @@ Headscale remains legacy-ACL-only. This Tailscale subset is intentionally narrow
 
 ## User role and device conversion
 
-User `loginName` is the exact matcher-facing identity because Serve supplies `Tailscale-User-Login` in that form. The complete Users API response is authoritative for Grant-role membership: a user with `type: "member"` receives `autogroup:member` plus exactly `autogroup:<role>` for `owner`, `admin`, `member`, `it-admin`, `network-admin`, `billing-admin`, or `auditor`; the duplicate is removed for the `member` role. A user with `type: "shared"` receives no human Grant-role selectors.
+User `loginName` is the exact matcher-facing identity because Serve supplies `Tailscale-User-Login` in that form. The complete Users API response is authoritative for Grant-role membership: a user with `type: "member"` receives `autogroup:member` plus `autogroup:<role>` for `owner`, `admin`, `member`, `it-admin`, `network-admin`, `billing-admin`, or `auditor`; the duplicate is removed for the `member` role. The Owner additionally receives `autogroup:admin`, matching the automatic memberships shown by Tailscale. A user with `type: "shared"` receives no human Grant-role selectors.
 
-Role membership is consulted only for Grant sources. It requires exact `loginName` equality, has no role hierarchy, and does not case-fold or fall back to local-part, short-login, or bare-login forms. It is never inferred from devices, device ownership, node tags, or `tagOwners`. Legacy ACLs and `nodeAttrs` do not consume this mapping.
+Role membership is consulted only for Grant sources. It requires exact `loginName` equality and does not case-fold or fall back to local-part, short-login, or bare-login forms. Specialized roles do not imply one another. Membership is never inferred from devices, device ownership, node tags, or `tagOwners`. Legacy ACLs and `nodeAttrs` do not consume this mapping.
 
 Velociportal rejects:
 
@@ -106,4 +106,4 @@ A control-plane failure or NPM failure prevents the entire new snapshot from rep
 
 Automated fixtures cover endpoint paths, OAuth token reuse and refresh, concurrent refresh coalescing, one retry after `401`, authoritative user-role membership, separate device-owner mapping, duplicate and partial-response rejection, transport hardening, response limits, and credential redaction.
 
-Published `v0.2.0-rc.2` is immutable and contains the safe-Grants correction. Live acceptance confirmed OAuth, policy/users/devices, NPM, Serve, and destination/TCP matching, then exposed the missing authoritative role-membership path that omitted expected role-derived cards. `v0.2.0-rc.3` is the next preview candidate. Token lifetime, revocation, two-identity role and owner mapping, unsupported-policy negatives, and reachability still require live acceptance before the adapter can be called supported.
+Published `v0.2.0-rc.3` is immutable and adds authoritative role membership. Live acceptance confirmed the exact image, complete snapshot, Serve, and portal health, then exposed that RC.3 omitted the Owner's automatic `autogroup:admin` membership. `v0.2.0-rc.4` is the next preview candidate. Token lifetime, revocation, two-identity role and owner mapping, unsupported-policy negatives, and reachability still require live acceptance before the adapter can be called supported.

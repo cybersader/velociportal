@@ -48,7 +48,7 @@ Locked exclusions:
 - Posture, IP sets, services, non-empty routing `via`, application capabilities, malformed capabilities, unknown semantics, and unsafe selectors reject the complete refresh.
 - `autogroup:internet` fails closed.
 - `tagOwners` and tags on owned nodes do not make a human a `tag:*` source.
-- Users API role membership applies only to Grants. It does not authorize legacy ACL role sources or `nodeAttrs`, has no hierarchy, and is never inferred from devices, device owners, node tags, or `tagOwners`.
+- Users API role membership applies only to Grants. It does not authorize legacy ACL role sources or `nodeAttrs`. The Owner inherits `autogroup:admin` exactly as Tailscale reports; specialized roles do not imply one another. Membership is never inferred from devices, device owners, node tags, or `tagOwners`.
 - NPM access lists are not visibility inputs.
 - The `forward_host` join remains subject to real-deployment validation.
 
@@ -101,13 +101,13 @@ No CA private key, certificate lifecycle, application database, policy file, or 
 
 ## D13 — No public support claim before real acceptance
 
-Unit tests, fixtures, Compose rendering, and documentation builds are not production acceptance. Headscale support requires the canonical TrueNAS path to pass trusted NPM HTTPS checks, bootstrap/key separation, two distinct human identities, header replacement, LAN-negative raw-port tests, restart recovery, NPM join review, and comparison with actual reachability. Tailscale SaaS must remain preview until live OAuth scopes, token refresh/revocation, authoritative exact-login role mapping, direct-member/shared-user and no-hierarchy negatives, separate device-owner mapping, role-derived card evidence, unsupported-policy negatives, two identities, and actual reachability also pass.
+Unit tests, fixtures, Compose rendering, and documentation builds are not production acceptance. Headscale support requires the canonical TrueNAS path to pass trusted NPM HTTPS checks, bootstrap/key separation, two distinct human identities, header replacement, LAN-negative raw-port tests, restart recovery, NPM join review, and comparison with actual reachability. Tailscale SaaS must remain preview until live OAuth scopes, token refresh/revocation, authoritative exact-login role mapping, Owner-to-Admin automatic membership, direct-member/shared-user and specialized-role isolation negatives, separate device-owner mapping, role-derived card evidence, unsupported-policy negatives, two identities, and actual reachability also pass.
 
 ## D14 — Tailscale SaaS is fixed-origin OAuth-only preview
 
 Production uses `https://api.tailscale.com/api/v2`, the credential's `-` alias, and exactly `policy_file:read`, `devices:posture_attributes:read`, `devices:core:read`, and `users:read`. Add no API-key fallback, access-token environment variable, configurable API origin, explicit tailnet, insecure TLS, redirect following, or environment-proxy behavior.
 
-Access tokens remain in memory, refresh about five minutes early, coalesce concurrent refresh, and retry one request after `401`. Client IDs, secrets, rejected tokens, replacement tokens, and encoded forms are redaction inputs. The complete users response is authoritative for Grant-role membership: required canonical `type` and `role` fields are mapped by exact `loginName`; direct members receive `autogroup:member` plus exactly their API role, shared users receive none, and unknown or malformed values fail closed. There is no role hierarchy or device-derived inference. Device-owner conversion remains separate. Users/devices conversion rejects blank, duplicate, ambiguous, unresolved, paginated, or partial data rather than publishing an incomplete snapshot.
+Access tokens remain in memory, refresh about five minutes early, coalesce concurrent refresh, and retry one request after `401`. Client IDs, secrets, rejected tokens, replacement tokens, and encoded forms are redaction inputs. The complete users response is authoritative for Grant-role membership: required canonical `type` and `role` fields are mapped by exact `loginName`; direct members receive `autogroup:member` plus their API role, the Owner additionally receives `autogroup:admin`, shared users receive none, and unknown or malformed values fail closed. Specialized roles do not imply one another, and device-derived inference is forbidden. Device-owner conversion remains separate. Users/devices conversion rejects blank, duplicate, ambiguous, unresolved, paginated, or partial data rather than publishing an incomplete snapshot.
 
 ## D15 — Provider switching is explicit and atomic
 
