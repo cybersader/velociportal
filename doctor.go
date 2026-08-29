@@ -169,6 +169,19 @@ func runDoctorCommandWithDependencies(args []string, stdout, stderr io.Writer, d
 		fmt.Fprintln(stdout, headscaleHTTPDoctorWarning)
 	}
 
+	metadata, err := loadServiceMetadataSnapshot(serviceMetadataLoaderForPath(cfg.ServiceMetadataFile))
+	if err != nil {
+		stage, cause := snapshotStageFailure(err)
+		fmt.Fprintf(stdout, "FAIL %s: %s\n", stage, sanitizeDoctorError(cause, secrets))
+		fmt.Fprintf(stdout, "FAIL snapshot: not created because %s failed\n", stage)
+		return 1
+	}
+	if cfg.ServiceMetadataFile == "" {
+		fmt.Fprintln(stdout, "PASS service metadata: disabled")
+	} else {
+		fmt.Fprintf(stdout, "PASS service metadata: loaded %d override(s)\n", len(metadata.Overrides))
+	}
+
 	if dependencies.newClients == nil {
 		dependencies.newClients = newUpstreamClients
 	}
@@ -207,7 +220,11 @@ func runDoctorCommandWithDependencies(args []string, stdout, stderr io.Writer, d
 		fmt.Fprintln(stdout, "FAIL snapshot: loader returned an incomplete snapshot")
 		return 1
 	}
+	snapshot.ServiceMetadata = metadata
 	fmt.Fprintf(stdout, "PASS snapshot: complete (%d access rules, %d nodes, %d proxy hosts)\n", snapshot.Policy.accessRuleCount(), len(snapshot.Nodes), len(snapshot.ProxyHosts))
+	if unmatched := unmatchedServiceMetadataCount(metadata, snapshot.ProxyHosts); unmatched > 0 {
+		fmt.Fprintf(stdout, "WARN service metadata targets: %d override(s) do not match a current NPM proxy host ID\n", unmatched)
+	}
 	fmt.Fprintf(
 		stdout,
 		"PASS control plane metadata: provider=%s policy_mode=%s support_level=%s\n",
@@ -417,7 +434,26 @@ func reportDoctorIdentityPreviews(writer io.Writer, identities []string, snapsho
 		}
 		fmt.Fprintf(writer, "PASS identity preview %q: %d %s from the supported matcher\n", login, len(cards), pluralDoctorNoun(len(cards), "card", "cards"))
 		for _, card := range cards {
-			fmt.Fprintf(writer, "  CARD %q -> %q (npm_online=%t)\n", card.Domain, card.URL, card.Online)
+			fmt.Fprintf(
+				writer,
+				"  CARD %q -> %q (link_state=%s npm_route_online=%t)\n",
+				card.Domain,
+				card.URL,
+				card.LinkState,
+				npmRouteOnline(snapshot, card.ID),
+			)
 		}
 	}
+}
+
+func npmRouteOnline(snapshot *CacheData, proxyHostID int) bool {
+	if snapshot == nil {
+		return false
+	}
+	for _, proxyHost := range snapshot.ProxyHosts {
+		if proxyHost.ID == proxyHostID {
+			return proxyHost.Meta.NginxOnline
+		}
+	}
+	return false
 }

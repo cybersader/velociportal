@@ -18,8 +18,11 @@ This page describes the current implementation and approved deployment boundary,
 - **The join uses NPM `forward_host`.** Supported destinations include exact hosts/IPs, CIDRs, policy aliases, destination tags resolved to node IPs, `*`, and `autogroup:self`.
 - **The join is not proven against a real deployment.** NPM may store a Docker name while Headscale resolves an IP or tag. A matching RFC1918 address also requires an advertised, approved, and client-accepted subnet route.
 - **NPM access lists are not visibility inputs.** `access_list_id` is not used to decide cards.
-- **Card URLs reuse NPM's backend scheme.** An HTTPS frontend with an HTTP backend can produce an incorrect `http://` card. Validate every link.
-- **Only the first NPM domain becomes the card.** Additional domains are not rendered separately.
+- **Automatic card URLs reuse NPM's backend scheme.** An HTTPS frontend with an HTTP backend can produce an incorrect `http://` card. Add an explicit service-metadata URL when the public browser scheme differs.
+- **Only one concrete NPM domain becomes the automatic card link.** Velociportal selects the first valid concrete domain, even when a wildcard appears earlier. Additional domains are not rendered separately.
+- **Wildcard-only services are visible but unlinked.** Add the real concrete hostname to the same NPM proxy host when possible; otherwise use the strict service-metadata overlay. Velociportal never turns `*.example.com` into a `%2A` link and never silently drops an otherwise authorized service.
+- **Presentation metadata is not discovery or authorization.** Overrides are keyed by an existing NPM proxy-host ID and can change only the displayed name or browser URL. They cannot create cards, repair a missing NPM domain, change the policy join, or prove reachability.
+- **No backend health checks exist yet.** NPM `meta.nginx_online` describes NPM route/configuration state, not backend application health. The portal intentionally renders no green/online indicator until bounded real probes are implemented.
 
 ## Provider selection and credentials
 
@@ -27,7 +30,7 @@ This page describes the current implementation and approved deployment boundary,
 - **Implicit Headscale is temporary compatibility.** An absent selector defaults to Headscale only for the v0.2 line and emits a value-free warning. Explicit selection becomes mandatory in v0.3.
 - **Inactive known credentials are ignored.** Runtime warns only by variable name. Doctor and validation include active and inactive known credential material in redaction inputs. The setup wizard requires confirmation before deleting inactive known keys during a provider switch and leaves the file byte-for-byte unchanged on refusal or input abort.
 - **Tailscale is OAuth-only.** There is no API-key fallback, access-token variable, configurable API origin, or explicit tailnet variable. The OAuth credential's `-` alias selects the tailnet.
-- **Tailscale remains preview.** Immutable `v0.2.0-rc.3` contains authoritative role membership, but live acceptance exposed its omission of the Owner's automatic `autogroup:admin` membership. `v0.2.0-rc.4` is the next preview candidate; token refresh/revocation, role and owner mapping, two-identity parity, unsupported-policy negatives, and reachability still require live proof.
+- **Tailscale remains preview.** Immutable `v0.2.0-rc.4` includes the Owner's automatic `autogroup:admin` membership and produced 48 Owner cards in live TrueNAS use. Token refresh/revocation, separate owner mapping, two-identity parity, unsupported-policy negatives, and actual reachability still require live proof.
 
 ## Runtime upstream transport
 
@@ -74,6 +77,6 @@ This section applies only when `CONTROL_PLANE=headscale`. Tailscale SaaS mode st
 
 Schema-v3 validation reports record non-sensitive provider, policy-mode, support-level, explicit/implicit selection, access-rule counts, and `rule_kind`/`rule_index` provenance. They do not prove Docker confinement, identity injection, restart recovery, backup restore, join correctness, links, or per-user reachability.
 
-For Headscale, `v0.1.0-rc.1` failed the first live TrueNAS network-attachment gate and was rolled back safely; `v0.1.0-rc.2` corrects that topology but has not yet passed end-to-end acceptance. For Tailscale SaaS, immutable `v0.2.0-rc.3` passed live API, snapshot, Serve, and portal-health gates but omitted the Owner's automatic `autogroup:admin` membership; `v0.2.0-rc.4` is the next preview candidate. Token refresh/revocation, role and owner mapping, unsupported-policy failures, two identities, and reachability remain unaccepted.
+For Headscale, `v0.1.0-rc.1` failed the first live TrueNAS network-attachment gate and was rolled back safely; `v0.1.0-rc.2` corrects that topology but has not yet passed end-to-end acceptance. For Tailscale SaaS, immutable `v0.2.0-rc.4` passed live API, snapshot, Serve, portal-health, and corrected Owner-role gates and rendered 48 cards. That use exposed wildcard-link and false-health-indicator presentation defects addressed after RC.4. Token refresh/revocation, separate owner mapping, unsupported-policy failures, two identities, and reachability remain unaccepted.
 
 No public support claim is warranted until the selected provider's live checklist plus at least two real identities, LAN-negative Velociportal access, restart persistence, every NPM join, every card link, and actual control-plane reachability have been checked. Use the [real-deployment worksheet](../getting-started/validation.md).

@@ -449,6 +449,129 @@ func TestRunValidationCommandSummaryRedactsUnsupportedPolicySelectors(t *testing
 	}
 }
 
+func TestBuildValidationReportUsesResolvedServiceMetadata(t *testing.T) {
+	identities := []validationIdentityInput{
+		{Label: "alpha", Login: "alice@example.com"},
+		{Label: "beta", Login: "bob@example.com"},
+	}
+	generatedAt := time.Date(
+		2026,
+		time.August,
+		29,
+		12,
+		0,
+		0,
+		0,
+		time.UTC,
+	)
+
+	t.Run("wildcard remains visible without URL", func(t *testing.T) {
+		snapshot := validationTestSnapshot()
+		snapshot.ProxyHosts[0].DomainNames = []string{"*.private.example"}
+		report := buildValidationReport(
+			snapshot,
+			identities,
+			validationPrivacyPrivate,
+			"test",
+			generatedAt,
+		)
+
+		wildcardFinding := false
+		for _, finding := range report.Findings {
+			if finding.Code == "wildcard-card-needs-url" {
+				wildcardFinding = true
+			}
+		}
+		if !wildcardFinding {
+			t.Fatalf("wildcard finding missing: %#v", report.Findings)
+		}
+		for _, service := range report.Services {
+			if service.Private != nil &&
+				service.Private.ProxyHostID == 20 &&
+				service.Private.CardURL != "" {
+				t.Fatalf(
+					"wildcard private card URL = %q",
+					service.Private.CardURL,
+				)
+			}
+		}
+	})
+
+	t.Run("override supplies shared resolved URL", func(t *testing.T) {
+		const (
+			overrideName = "Private Override Name"
+			overrideURL  = "https://beta.private.example/dashboard"
+		)
+		snapshot := validationTestSnapshot()
+		snapshot.ProxyHosts[0].DomainNames = []string{"*.private.example"}
+		snapshot.ServiceMetadata = &ServiceMetadata{
+			Overrides: map[int]ServiceOverride{
+				20:  {Name: overrideName, URL: overrideURL},
+				999: {Name: "Unused Private Name"},
+			},
+		}
+
+		privateReport := buildValidationReport(
+			snapshot,
+			identities,
+			validationPrivacyPrivate,
+			"test",
+			generatedAt,
+		)
+		foundURL := false
+		for _, service := range privateReport.Services {
+			if service.Private != nil &&
+				service.Private.ProxyHostID == 20 {
+				foundURL = service.Private.CardURL == overrideURL
+			}
+		}
+		if !foundURL {
+			t.Fatalf(
+				"private report did not use override URL: %#v",
+				privateReport.Services,
+			)
+		}
+
+		summaryReport := buildValidationReport(
+			snapshot,
+			identities,
+			validationPrivacySummary,
+			"test",
+			generatedAt,
+		)
+		var output bytes.Buffer
+		if err := renderValidationReport(
+			&output,
+			summaryReport,
+			validationFormatJSON,
+		); err != nil {
+			t.Fatal(err)
+		}
+		text := output.String()
+		for _, privateValue := range []string{
+			overrideName,
+			overrideURL,
+			"Unused Private Name",
+			"*.private.example",
+		} {
+			if strings.Contains(text, privateValue) {
+				t.Fatalf(
+					"summary report exposed %q: %s",
+					privateValue,
+					text,
+				)
+			}
+		}
+		if !strings.Contains(text, `"code": "unused-service-metadata"`) ||
+			!strings.Contains(text, "1 service metadata override(s)") {
+			t.Fatalf("unused override count missing: %s", text)
+		}
+		if strings.Contains(text, `"code": "wildcard-card-needs-url"`) {
+			t.Fatalf("resolved wildcard retained link finding: %s", text)
+		}
+	})
+}
+
 func TestRunValidationCommandUsage(t *testing.T) {
 	if code, stdout, stderr := runValidationForTest([]string{"--help"}, validationDependencies{}); code != 0 || !strings.Contains(stdout, "LABEL=LOGIN") || stderr != "" {
 		t.Fatalf("help exit=%d stdout=%q stderr=%q", code, stdout, stderr)

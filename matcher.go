@@ -3,16 +3,25 @@ package main
 import (
 	"log/slog"
 	"net"
+	"net/url"
 	"sort"
 	"strings"
 )
 
+type serviceLinkState string
+
+const (
+	serviceLinkReady         serviceLinkState = "ready"
+	serviceLinkNeedsMetadata serviceLinkState = "needs_metadata"
+	serviceLinkInvalid       serviceLinkState = "invalid"
+)
+
 type ServiceCard struct {
-	ID     int    `json:"id"`
-	Name   string `json:"name"`
-	URL    string `json:"url"`
-	Domain string `json:"domain"`
-	Online bool   `json:"online"`
+	ID        int              `json:"id"`
+	Name      string           `json:"name"`
+	URL       string           `json:"url"`
+	Domain    string           `json:"domain"`
+	LinkState serviceLinkState `json:"link_state"`
 }
 
 type destinationMatchKind string
@@ -318,6 +327,74 @@ func buildMatchContext(login string, data *CacheData) *matchContext {
 	}
 }
 
+func resolveServiceCard(proxyHost ProxyHost, metadata *ServiceMetadata) (ServiceCard, bool) {
+	domains := make([]string, 0, len(proxyHost.DomainNames))
+	concreteDomain := ""
+	for _, raw := range proxyHost.DomainNames {
+		domain := strings.TrimSpace(raw)
+		if domain == "" {
+			continue
+		}
+		domains = append(domains, domain)
+		if concreteDomain == "" && validConcreteCardDomain(domain) {
+			concreteDomain = domain
+		}
+	}
+	if len(domains) == 0 {
+		return ServiceCard{}, false
+	}
+
+	card := ServiceCard{
+		ID:        proxyHost.ID,
+		Name:      domains[0],
+		Domain:    domains[0],
+		LinkState: serviceLinkNeedsMetadata,
+	}
+	if concreteDomain != "" {
+		card.Name = concreteDomain
+		card.Domain = concreteDomain
+	}
+
+	if metadata != nil {
+		if override, exists := metadata.Overrides[proxyHost.ID]; exists {
+			if override.Name != "" {
+				card.Name = override.Name
+			}
+			if override.URL != "" {
+				card.URL = override.URL
+				card.LinkState = serviceLinkReady
+				return card, true
+			}
+		}
+	}
+
+	if concreteDomain == "" {
+		return card, true
+	}
+	scheme := strings.ToLower(strings.TrimSpace(proxyHost.ForwardScheme))
+	if scheme == "" {
+		scheme = "https"
+	}
+	if scheme != "http" && scheme != "https" {
+		card.LinkState = serviceLinkInvalid
+		return card, true
+	}
+	card.URL = (&url.URL{Scheme: scheme, Host: concreteDomain}).String()
+	card.LinkState = serviceLinkReady
+	return card, true
+}
+
+func validConcreteCardDomain(domain string) bool {
+	if domain == "" || containsControl(domain) || strings.ContainsAny(domain, "*\\/?#@") || strings.ContainsAny(domain, " \t") {
+		return false
+	}
+	parsed, err := url.Parse("https://" + domain)
+	if err != nil || parsed.Host != domain || parsed.Hostname() == "" || parsed.User != nil || parsed.Path != "" || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return false
+	}
+	return true
+}
+
 func evaluateServices(identity *Identity, data *CacheData) []serviceMatchEvidence {
 	if data == nil || data.Policy == nil || identity == nil {
 		return []serviceMatchEvidence{}
@@ -355,19 +432,12 @@ func evaluateServices(identity *Identity, data *CacheData) []serviceMatchEvidenc
 				continue
 			}
 
-			domain := proxyHost.DomainNames[0]
-			scheme := proxyHost.ForwardScheme
-			if scheme == "" {
-				scheme = "https"
+			card, renderable := resolveServiceCard(proxyHost, data.ServiceMetadata)
+			if !renderable {
+				break
 			}
 			matches = append(matches, serviceMatchEvidence{
-				Card: ServiceCard{
-					ID:     proxyHost.ID,
-					Name:   domain,
-					URL:    scheme + "://" + domain,
-					Domain: domain,
-					Online: proxyHost.Meta.NginxOnline,
-				},
+				Card:        card,
 				ProxyHost:   proxyHost,
 				RuleKind:    rule.Kind,
 				RuleIndex:   rule.Index,
@@ -380,7 +450,12 @@ func evaluateServices(identity *Identity, data *CacheData) []serviceMatchEvidenc
 	}
 
 	sort.Slice(matches, func(i, j int) bool {
-		return strings.ToLower(matches[i].Card.Name) < strings.ToLower(matches[j].Card.Name)
+		left := strings.ToLower(matches[i].Card.Name)
+		right := strings.ToLower(matches[j].Card.Name)
+		if left != right {
+			return left < right
+		}
+		return matches[i].Card.ID < matches[j].Card.ID
 	})
 	return matches
 }

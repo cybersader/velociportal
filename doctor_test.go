@@ -137,7 +137,7 @@ func setDoctorProcessConfig(t *testing.T, values map[string]string) {
 	t.Setenv(processEnvEncodingKey, "")
 	t.Setenv("CONTROL_PLANE", values["CONTROL_PLANE"])
 	keys := append(append([]string(nil), requiredConfigKeys...), tailscaleRequiredConfigKeys...)
-	keys = append(keys, "LISTEN_ADDR", "POLL_INTERVAL")
+	keys = append(keys, "LISTEN_ADDR", "POLL_INTERVAL", "SERVICE_METADATA_FILE")
 	for _, key := range keys {
 		t.Setenv(key, values[key])
 	}
@@ -318,6 +318,28 @@ func TestRunDoctorCommandRejectsMalformedRawComposeSecret(t *testing.T) {
 	}
 	if fixture.policyHits.Load() != 0 || fixture.nodesHits.Load() != 0 || fixture.authHits.Load() != 0 || fixture.proxyHits.Load() != 0 {
 		t.Fatal("doctor contacted upstreams after configuration decoding failed")
+	}
+}
+
+func TestRunDoctorCommandValidatesServiceMetadataBeforeUpstreams(t *testing.T) {
+	fixture := newDoctorHTTPFixture(t)
+	values := doctorFixtureConfig(fixture)
+	path := filepath.Join(t.TempDir(), "private-services.json")
+	if err := os.WriteFile(path, []byte(`{"version":1,"services":[{"proxy_host_id":1,"url":"https://*.private.example/"}]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	values["SERVICE_METADATA_FILE"] = path
+	setDoctorProcessConfig(t, values)
+
+	code, stdout, stderr := runDoctorForTest(nil, fixture)
+	if code != 1 || !strings.Contains(stdout, "FAIL service metadata:") {
+		t.Fatalf("exit=%d stdout=%q stderr=%q", code, stdout, stderr)
+	}
+	if strings.Contains(stdout+stderr, "private.example") || strings.Contains(stdout+stderr, path) {
+		t.Fatalf("doctor leaked metadata: stdout=%q stderr=%q", stdout, stderr)
+	}
+	if fixture.policyHits.Load() != 0 || fixture.nodesHits.Load() != 0 || fixture.authHits.Load() != 0 || fixture.proxyHits.Load() != 0 {
+		t.Fatal("doctor contacted upstreams after service metadata failed")
 	}
 }
 

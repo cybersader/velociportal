@@ -302,6 +302,12 @@ func runValidationCommandWithDependencies(args []string, stdout, stderr io.Write
 		dependencies.loadSnapshot = defaultValidationDependencies().loadSnapshot
 	}
 
+	metadata, err := loadServiceMetadataSnapshot(serviceMetadataLoaderForPath(cfg.ServiceMetadataFile))
+	if err != nil {
+		fmt.Fprintf(stderr, "velociportal: validate: %s\n", sanitizeValidationRuntimeError(err, privacy, secrets))
+		return 1
+	}
+
 	controlPlane, npm := newUpstreamClients(cfg)
 	snapshot, err := dependencies.loadSnapshot(context.Background(), controlPlane, npm)
 	if err != nil {
@@ -309,6 +315,11 @@ func runValidationCommandWithDependencies(args []string, stdout, stderr io.Write
 		fmt.Fprintf(stderr, "velociportal: validate: %s\n", sanitizeValidationRuntimeError(err, privacy, secrets))
 		return 1
 	}
+	if snapshot == nil {
+		fmt.Fprintln(stderr, "velociportal: validate: snapshot loader returned no result")
+		return 1
+	}
+	snapshot.ServiceMetadata = metadata
 
 	report := buildValidationReport(snapshot, identities, privacy, configSource, dependencies.now().UTC())
 	report.ControlPlane.Selection = "explicit"
@@ -436,6 +447,7 @@ func buildValidationReport(snapshot *CacheData, identities []validationIdentityI
 		serviceIndexes[proxyHost.ID] = index
 		matches, identityDependent := structuralValidationMatches(proxyHost, snapshot)
 		kinds := uniqueDestinationKinds(matches)
+		card, renderable := resolveServiceCard(proxyHost, snapshot.ServiceMetadata)
 		service := ValidationService{
 			ID:                   serviceID,
 			ForwardHostClass:     classifyForwardHost(proxyHost.ForwardHost),
@@ -445,9 +457,9 @@ func buildValidationReport(snapshot *CacheData, identities []validationIdentityI
 			VisibleTo:            []string{},
 		}
 		if privacy == validationPrivacyPrivate {
-			scheme := proxyHost.ForwardScheme
-			if scheme == "" {
-				scheme = "https"
+			cardURL := ""
+			if renderable {
+				cardURL = card.URL
 			}
 			service.Private = &ValidationPrivateService{
 				ProxyHostID:   proxyHost.ID,
@@ -455,19 +467,30 @@ func buildValidationReport(snapshot *CacheData, identities []validationIdentityI
 				ForwardScheme: proxyHost.ForwardScheme,
 				ForwardHost:   proxyHost.ForwardHost,
 				ForwardPort:   proxyHost.ForwardPort,
-				CardURL:       scheme + "://" + proxyHost.DomainNames[0],
+				CardURL:       cardURL,
 			}
 		}
 		report.Services = append(report.Services, service)
+		switch {
+		case !renderable:
+			addValidationFinding(&report, "review", "card-domain-unavailable", serviceID, "The NPM proxy host has no usable domain for a card.")
+		case card.LinkState == serviceLinkNeedsMetadata:
+			addValidationFinding(&report, "review", "wildcard-card-needs-url", serviceID, "The card remains visible but needs an explicit concrete service URL.")
+		case card.LinkState == serviceLinkInvalid:
+			addValidationFinding(&report, "review", "browser-link-unavailable", serviceID, "The NPM browser target is not a supported HTTP or HTTPS URL.")
+		}
 		if len(proxyHost.DomainNames) > 1 {
-			addValidationFinding(&report, "notice", "additional-domains-not-rendered", serviceID, "Only the first NPM domain currently becomes a card.")
+			addValidationFinding(&report, "notice", "additional-domains-not-rendered", serviceID, "Only one concrete NPM domain becomes the automatic card link.")
 		}
 		if len(matches) > 1 {
 			addValidationFinding(&report, "notice", "multiple-structural-match-paths", serviceID, "The forward target matches more than one supported access-rule destination path.")
 		}
 	}
+	if unmatched := unmatchedServiceMetadataCount(snapshot.ServiceMetadata, proxyHosts); unmatched > 0 {
+		addValidationFinding(&report, "notice", "unused-service-metadata", "", fmt.Sprintf("%d service metadata override(s) do not match a current NPM proxy host ID.", unmatched))
+	}
 	if len(proxyHosts) > 0 {
-		addValidationFinding(&report, "notice", "browser-scheme-unverified", "", "Card URLs currently reuse NPM backend schemes; verify every public URL manually.")
+		addValidationFinding(&report, "notice", "browser-scheme-unverified", "", "Automatic card URLs reuse NPM backend schemes; verify every public URL manually or set an explicit service URL.")
 	}
 
 	identitySets := make(map[string]map[string]bool, len(identities))

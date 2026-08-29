@@ -14,6 +14,7 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[1]
 COMPOSE_FILE = Path("deploy/compose.yaml")
 PRIVATE_CA_COMPOSE_FILE = Path("deploy/compose.private-ca.yaml")
+SERVICE_METADATA_COMPOSE_FILE = Path("deploy/compose.service-metadata.yaml")
 RUNTIME_ENV_EXAMPLES = {
     "headscale": Path("deploy/velociportal.env.example"),
     "tailscale": Path("deploy/velociportal.tailscale.env.example"),
@@ -21,6 +22,8 @@ RUNTIME_ENV_EXAMPLES = {
 STACK_ENV_FILE = Path("deploy/stack.env.example")
 VERIFY_IMAGE = "ghcr.io/cybersader/velociportal:v0.0.0-verify"
 VERIFY_CA_FILE = ROOT / ".env.example"
+VERIFY_SERVICE_METADATA_FILE = ROOT / "deploy/service-metadata.example.json"
+VERIFY_SERVICE_METADATA_GID = "950"
 
 
 def fail(message: str) -> None:
@@ -139,45 +142,79 @@ def validate_rendered_networks(model: dict) -> None:
     )
 
 
-def validate_raw_ca_mount(service: dict) -> None:
-    volumes = service.get("volumes")
-    require(isinstance(volumes, list) and len(volumes) == 1, "private-CA overlay must add exactly one mount")
-    ca_mount = volumes[0]
-    require(ca_mount.get("type") == "bind", "private root must use a bind mount")
+def service_environment(service: dict) -> dict[str, str]:
+    environment = service.get("environment", {})
+    if isinstance(environment, dict):
+        return environment
+    require(isinstance(environment, list), "service environment must be a mapping or list")
+
+    normalized: dict[str, str] = {}
+    for entry in environment:
+        require(isinstance(entry, str) and "=" in entry, "environment list entries must contain equals signs")
+        key, value = entry.split("=", 1)
+        require(key != "" and key not in normalized, "environment list keys must be unique and nonempty")
+        normalized[key] = value
+    return normalized
+
+
+def mount_by_target(service: dict, target: str) -> dict:
+    volumes = service.get("volumes", [])
+    require(isinstance(volumes, list), "service volumes must be a list")
+    matches = [mount for mount in volumes if mount.get("target") == target]
+    require(len(matches) == 1, f"expected exactly one mount at {target}")
+    return matches[0]
+
+
+def validate_bind_mount(mount: dict, *, source: str | Path, target: str, rendered: bool) -> None:
+    require(mount.get("type") == "bind", f"{target} must use a bind mount")
+    if rendered:
+        require(Path(str(mount.get("source", ""))) == source, f"rendered source for {target} changed unexpectedly")
+    else:
+        require(mount.get("source") == source, f"raw source for {target} changed unexpectedly")
+    require(mount.get("target") == target, f"mount target {target} changed unexpectedly")
+    require(mount.get("read_only") is True, f"mount {target} must be read-only")
+    allowed_create = (None, False) if rendered else (False,)
     require(
-        ca_mount.get("source")
-        == "${VELOCIPORTAL_CA_FILE:?set VELOCIPORTAL_CA_FILE to a readable public CA certificate}",
-        "private root source must remain an explicitly required overlay value",
-    )
-    require(
-        ca_mount.get("target") == "/etc/ssl/certs/velociportal-private-ca.crt",
-        "private root target changed unexpectedly",
-    )
-    require(ca_mount.get("read_only") is True, "private root mount must be read-only")
-    require(
-        ca_mount.get("bind", {}).get("create_host_path") is False,
-        "missing private-root source must fail instead of creating a directory",
+        mount.get("bind", {}).get("create_host_path") in allowed_create,
+        f"mount {target} must not create a missing host path",
     )
 
 
-def validate_rendered_ca_mount(service: dict) -> None:
-    volumes = service.get("volumes")
-    require(isinstance(volumes, list) and len(volumes) == 1, "rendered private-CA overlay must add exactly one mount")
-    ca_mount = volumes[0]
-    require(ca_mount.get("type") == "bind", "rendered private root must use a bind mount")
-    require(Path(str(ca_mount.get("source", ""))) == VERIFY_CA_FILE, "rendered private-root source changed unexpectedly")
-    require(
-        ca_mount.get("target") == "/etc/ssl/certs/velociportal-private-ca.crt",
-        "rendered private root target changed unexpectedly",
-    )
-    require(ca_mount.get("read_only") is True, "rendered private-root mount must be read-only")
-    require(
-        ca_mount.get("bind", {}).get("create_host_path") in (None, False),
-        "rendered private-root bind must not enable missing source creation",
-    )
+def validate_optional_mounts(service: dict, *, expect_private_ca: bool, expect_service_metadata: bool, rendered: bool) -> None:
+    expected_count = int(expect_private_ca) + int(expect_service_metadata)
+    volumes = service.get("volumes", [])
+    require(isinstance(volumes, list) and len(volumes) == expected_count, "optional overlays added unexpected mounts")
+
+    if expect_private_ca:
+        source = VERIFY_CA_FILE if rendered else "${VELOCIPORTAL_CA_FILE:?set VELOCIPORTAL_CA_FILE to a readable public CA certificate}"
+        validate_bind_mount(
+            mount_by_target(service, "/etc/ssl/certs/velociportal-private-ca.crt"),
+            source=source,
+            target="/etc/ssl/certs/velociportal-private-ca.crt",
+            rendered=rendered,
+        )
+    if expect_service_metadata:
+        source = VERIFY_SERVICE_METADATA_FILE if rendered else "${VELOCIPORTAL_SERVICE_METADATA_FILE:?set VELOCIPORTAL_SERVICE_METADATA_FILE to a readable service metadata JSON file}"
+        validate_bind_mount(
+            mount_by_target(service, "/velociportal-services.json"),
+            source=source,
+            target="/velociportal-services.json",
+            rendered=rendered,
+        )
+        environment = service_environment(service)
+        require(
+            environment.get("SERVICE_METADATA_FILE") == "/velociportal-services.json",
+            "service metadata overlay must set the fixed in-container path",
+        )
+        groups = service.get("group_add")
+        expected_group = VERIFY_SERVICE_METADATA_GID if rendered else "${VELOCIPORTAL_SERVICE_METADATA_GID:?set VELOCIPORTAL_SERVICE_METADATA_GID to the numeric group that can read the metadata file}"
+        require(isinstance(groups, list) and [str(group) for group in groups] == [expected_group], "service metadata supplemental group changed unexpectedly")
+    else:
+        require("SERVICE_METADATA_FILE" not in service_environment(service), "base/CA-only service must not enable metadata")
+        require("group_add" not in service, "base/CA-only service must not add supplemental groups")
 
 
-def validate_raw_model(model: dict, *, expect_private_ca: bool) -> None:
+def validate_raw_model(model: dict, *, expect_private_ca: bool, expect_service_metadata: bool = False) -> None:
     require(model.get("name") == "velociportal-production", "production project name must not collide with repository Compose")
     service = only_service(model)
 
@@ -216,7 +253,7 @@ def validate_raw_model(model: dict, *, expect_private_ca: bool) -> None:
     require(env_files[0].get("format") == "raw", "application env file must use Compose raw format")
     require(env_files[0].get("required") is True, "application env file must remain required")
 
-    environment = service.get("environment", {})
+    environment = service_environment(service)
     require(
         environment.get("VELOCIPORTAL_ENV_FILE_ENCODING") == "go-quoted-v1",
         "runtime must enable go-quoted-v1 env decoding",
@@ -228,10 +265,12 @@ def validate_raw_model(model: dict, *, expect_private_ca: bool) -> None:
         "trusted proxy CIDR must remain an explicit deployment value",
     )
 
-    if expect_private_ca:
-        validate_raw_ca_mount(service)
-    else:
-        require("volumes" not in service, "base production service must not mount host paths")
+    validate_optional_mounts(
+        service,
+        expect_private_ca=expect_private_ca,
+        expect_service_metadata=expect_service_metadata,
+        rendered=False,
+    )
 
     healthcheck = service.get("healthcheck", {})
     require(
@@ -241,7 +280,13 @@ def validate_raw_model(model: dict, *, expect_private_ca: bool) -> None:
     validate_raw_networks(model)
 
 
-def validate_rendered_model(model: dict, *, provider: str, expect_private_ca: bool) -> None:
+def validate_rendered_model(
+    model: dict,
+    *,
+    provider: str,
+    expect_private_ca: bool,
+    expect_service_metadata: bool = False,
+) -> None:
     require(model.get("name") == "velociportal-production", "rendered production project name changed unexpectedly")
     service = only_service(model)
     require(service.get("image") == VERIFY_IMAGE, "rendered image reference does not match the verification input")
@@ -265,7 +310,7 @@ def validate_rendered_model(model: dict, *, provider: str, expect_private_ca: bo
         "rendered application publication must remain 127.0.0.1:18080:8080",
     )
 
-    environment = service.get("environment", {})
+    environment = service_environment(service)
     require(
         environment.get("CONTROL_PLANE") == f'"{provider}"',
         "raw env-file mode must preserve the explicit control-plane selector",
@@ -305,10 +350,12 @@ def validate_rendered_model(model: dict, *, provider: str, expect_private_ca: bo
         "rendered trusted source must equal the fixed bridge gateway /32",
     )
 
-    if expect_private_ca:
-        validate_rendered_ca_mount(service)
-    else:
-        require("volumes" not in service, "rendered base service must not mount host paths")
+    validate_optional_mounts(
+        service,
+        expect_private_ca=expect_private_ca,
+        expect_service_metadata=expect_service_metadata,
+        rendered=True,
+    )
 
     healthcheck = service.get("healthcheck", {})
     require(
@@ -340,6 +387,8 @@ def verification_environment(runtime_env_example: Path) -> dict[str, str]:
     # with ambient Compose or deployment overrides.
     environment.pop("COMPOSE_PROJECT_NAME", None)
     environment.pop("VELOCIPORTAL_CA_FILE", None)
+    environment.pop("VELOCIPORTAL_SERVICE_METADATA_FILE", None)
+    environment.pop("VELOCIPORTAL_SERVICE_METADATA_GID", None)
     environment.update(
         {
             "VELOCIPORTAL_IMAGE": VERIFY_IMAGE,
@@ -434,6 +483,56 @@ def main() -> int:
             rendered_private_ca,
             provider=provider,
             expect_private_ca=True,
+        )
+
+        raw_service_metadata = compose_json(
+            raw_config_arguments(COMPOSE_FILE, SERVICE_METADATA_COMPOSE_FILE),
+            base_environment,
+        )
+        validate_raw_model(
+            raw_service_metadata,
+            expect_private_ca=False,
+            expect_service_metadata=True,
+        )
+
+        service_metadata_environment = base_environment.copy()
+        service_metadata_environment.update(
+            {
+                "VELOCIPORTAL_SERVICE_METADATA_FILE": str(VERIFY_SERVICE_METADATA_FILE),
+                "VELOCIPORTAL_SERVICE_METADATA_GID": VERIFY_SERVICE_METADATA_GID,
+            }
+        )
+        rendered_service_metadata = compose_json(
+            rendered_config_arguments(COMPOSE_FILE, SERVICE_METADATA_COMPOSE_FILE),
+            service_metadata_environment,
+        )
+        validate_rendered_model(
+            rendered_service_metadata,
+            provider=provider,
+            expect_private_ca=False,
+            expect_service_metadata=True,
+        )
+
+        combined_environment = service_metadata_environment.copy()
+        combined_environment["VELOCIPORTAL_CA_FILE"] = str(VERIFY_CA_FILE)
+        raw_combined = compose_json(
+            raw_config_arguments(COMPOSE_FILE, PRIVATE_CA_COMPOSE_FILE, SERVICE_METADATA_COMPOSE_FILE),
+            base_environment,
+        )
+        validate_raw_model(
+            raw_combined,
+            expect_private_ca=True,
+            expect_service_metadata=True,
+        )
+        rendered_combined = compose_json(
+            rendered_config_arguments(COMPOSE_FILE, PRIVATE_CA_COMPOSE_FILE, SERVICE_METADATA_COMPOSE_FILE),
+            combined_environment,
+        )
+        validate_rendered_model(
+            rendered_combined,
+            provider=provider,
+            expect_private_ca=True,
+            expect_service_metadata=True,
         )
 
     print("production Compose bundle verified for headscale and tailscale")

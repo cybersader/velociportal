@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "services": [
+    {
+      "proxy_host_id": 42,
+      "name": "Example Service",
+      "url": "https://service.example.com/"
+    }
+  ]
+}

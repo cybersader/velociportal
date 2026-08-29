@@ -15,17 +15,19 @@ type CacheData struct {
 	Policy                    *Policy
 	Nodes                     []Node
 	ProxyHosts                []ProxyHost
+	ServiceMetadata           *ServiceMetadata
 	GrantRoleSelectorsByLogin map[string][]string
 	ControlPlane              ControlPlaneMetadata
 	UpdatedAt                 time.Time
 }
 
 type Cache struct {
-	data         atomic.Pointer[CacheData]
-	controlPlane ControlPlane
-	npm          *NPMClient
-	interval     time.Duration
-	logger       *slog.Logger
+	data                  atomic.Pointer[CacheData]
+	controlPlane          ControlPlane
+	npm                   *NPMClient
+	serviceMetadataLoader serviceMetadataLoader
+	interval              time.Duration
+	logger                *slog.Logger
 }
 
 type snapshotLoadStage string
@@ -38,6 +40,7 @@ const (
 	snapshotStageTailscaleUsers   snapshotLoadStage = "Tailscale users"
 	snapshotStageTailscaleDevices snapshotLoadStage = "Tailscale devices"
 	snapshotStageControlPlane     snapshotLoadStage = "control plane"
+	snapshotStageServiceMetadata  snapshotLoadStage = "service metadata"
 	snapshotStageNPMAuth          snapshotLoadStage = "NPM authentication"
 	snapshotStageNPMProxyHosts    snapshotLoadStage = "NPM proxy hosts"
 )
@@ -53,11 +56,19 @@ func (e *snapshotLoadError) Unwrap() error { return e.Err }
 type snapshotLoadProgress func(stage snapshotLoadStage, count int)
 
 func NewCache(controlPlane ControlPlane, npm *NPMClient, interval time.Duration, logger *slog.Logger) *Cache {
+	return NewCacheWithServiceMetadata(controlPlane, npm, serviceMetadataLoaderForPath(""), interval, logger)
+}
+
+func NewCacheWithServiceMetadata(controlPlane ControlPlane, npm *NPMClient, loader serviceMetadataLoader, interval time.Duration, logger *slog.Logger) *Cache {
+	if loader == nil {
+		loader = serviceMetadataLoaderForPath("")
+	}
 	return &Cache{
-		controlPlane: controlPlane,
-		npm:          npm,
-		interval:     interval,
-		logger:       logger,
+		controlPlane:          controlPlane,
+		npm:                   npm,
+		serviceMetadataLoader: loader,
+		interval:              interval,
+		logger:                logger,
 	}
 }
 
@@ -93,15 +104,36 @@ func (c *Cache) LastUpdated() time.Time {
 }
 
 func (c *Cache) refresh(ctx context.Context) error {
+	metadata, err := loadServiceMetadataSnapshot(c.serviceMetadataLoader)
+	if err != nil {
+		return fmt.Errorf("refresh: %w", err)
+	}
 	snapshot, err := loadSnapshot(ctx, c.controlPlane, c.npm)
 	if err != nil {
 		return fmt.Errorf("refresh: %w", err)
 	}
+	snapshot.ServiceMetadata = metadata
 	c.data.Store(snapshot)
 	c.logger.Info("cache refreshed",
 		"provider", snapshot.ControlPlane.Provider,
-		"nodes", len(snapshot.Nodes), "proxy_hosts", len(snapshot.ProxyHosts))
+		"nodes", len(snapshot.Nodes), "proxy_hosts", len(snapshot.ProxyHosts),
+		"service_overrides", len(metadata.Overrides),
+		"unmatched_service_overrides", unmatchedServiceMetadataCount(metadata, snapshot.ProxyHosts))
 	return nil
+}
+
+func loadServiceMetadataSnapshot(loader serviceMetadataLoader) (*ServiceMetadata, error) {
+	if loader == nil {
+		loader = serviceMetadataLoaderForPath("")
+	}
+	metadata, err := loader()
+	if err != nil {
+		return nil, &snapshotLoadError{Stage: snapshotStageServiceMetadata, Err: err}
+	}
+	if metadata == nil || metadata.Overrides == nil {
+		return nil, &snapshotLoadError{Stage: snapshotStageServiceMetadata, Err: fmt.Errorf("loader returned an incomplete result")}
+	}
+	return metadata, nil
 }
 
 func loadSnapshot(ctx context.Context, controlPlane ControlPlane, npm *NPMClient) (*CacheData, error) {
@@ -149,6 +181,7 @@ func loadSnapshotWithProgress(ctx context.Context, controlPlane ControlPlane, np
 		Policy:                    controlResult.Policy,
 		Nodes:                     controlResult.Nodes,
 		ProxyHosts:                proxyHosts,
+		ServiceMetadata:           emptyServiceMetadata(),
 		GrantRoleSelectorsByLogin: controlResult.GrantRoleSelectorsByLogin,
 		ControlPlane:              controlResult.Metadata,
 		UpdatedAt:                 time.Now(),

@@ -326,15 +326,72 @@ func TestMatchServices(t *testing.T) {
 		}
 	})
 
-	t.Run("online status propagates", func(t *testing.T) {
+	t.Run("NPM route state does not become card health", func(t *testing.T) {
 		cards := MatchServices(&Identity{Login: "alice@"}, data)
-		for _, c := range cards {
-			if c.Name == "grafana.example.com" && !c.Online {
-				t.Error("grafana should be online")
+		for _, card := range cards {
+			if card.LinkState != serviceLinkReady {
+				t.Errorf("card %q link state = %q", card.Name, card.LinkState)
 			}
-			if c.Name == "wiki.example.com" && c.Online {
-				t.Error("wiki should be offline")
-			}
+		}
+	})
+}
+
+func TestMatchServicesUsesTruthfulCardTargets(t *testing.T) {
+	base := &CacheData{
+		Policy: &Policy{ACLs: []ACLRule{{Action: "accept", Src: []string{"*"}, Dst: []string{"10.0.0.5:*"}}}},
+		ProxyHosts: []ProxyHost{{
+			ID:            42,
+			DomainNames:   []string{"*.rader.wiki"},
+			ForwardScheme: "https",
+			ForwardHost:   "10.0.0.5",
+			Enabled:       true,
+		}},
+		ServiceMetadata: emptyServiceMetadata(),
+	}
+
+	t.Run("wildcard-only remains visible and unlinked", func(t *testing.T) {
+		cards := MatchServices(&Identity{Login: "alice@example.com"}, base)
+		if len(cards) != 1 {
+			t.Fatalf("cards = %#v", cards)
+		}
+		if cards[0].Name != "*.rader.wiki" || cards[0].URL != "" || cards[0].LinkState != serviceLinkNeedsMetadata {
+			t.Fatalf("card = %#v", cards[0])
+		}
+	})
+
+	t.Run("first concrete domain wins over wildcard", func(t *testing.T) {
+		data := *base
+		data.ProxyHosts = append([]ProxyHost(nil), base.ProxyHosts...)
+		data.ProxyHosts[0].DomainNames = []string{"*.rader.wiki", "home.rader.wiki"}
+		cards := MatchServices(&Identity{Login: "alice@example.com"}, &data)
+		if len(cards) != 1 || cards[0].Name != "home.rader.wiki" || cards[0].URL != "https://home.rader.wiki" || cards[0].LinkState != serviceLinkReady {
+			t.Fatalf("cards = %#v", cards)
+		}
+	})
+
+	t.Run("explicit metadata resolves wildcard without changing evidence", func(t *testing.T) {
+		data := *base
+		data.ServiceMetadata = &ServiceMetadata{Overrides: map[int]ServiceOverride{
+			42: {Name: "Rader Wiki", URL: "https://wiki.rader.wiki/"},
+		}}
+		matches := evaluateServices(&Identity{Login: "alice@example.com"}, &data)
+		if len(matches) != 1 {
+			t.Fatalf("matches = %#v", matches)
+		}
+		if matches[0].Card.Name != "Rader Wiki" || matches[0].Card.URL != "https://wiki.rader.wiki/" || matches[0].Card.LinkState != serviceLinkReady {
+			t.Fatalf("card = %#v", matches[0].Card)
+		}
+		if matches[0].Destination.ResolvedValue != "10.0.0.5" || matches[0].ProxyHost.ForwardHost != "10.0.0.5" {
+			t.Fatalf("override changed match evidence: %#v", matches[0])
+		}
+	})
+
+	t.Run("metadata cannot create a card", func(t *testing.T) {
+		data := *base
+		data.ProxyHosts = nil
+		data.ServiceMetadata = &ServiceMetadata{Overrides: map[int]ServiceOverride{42: {URL: "https://wiki.rader.wiki/"}}}
+		if cards := MatchServices(&Identity{Login: "alice@example.com"}, &data); len(cards) != 0 {
+			t.Fatalf("cards = %#v", cards)
 		}
 	})
 }

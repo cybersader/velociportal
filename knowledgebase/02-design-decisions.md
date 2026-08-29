@@ -118,3 +118,13 @@ When a provider switch would remove inactive known credential keys, setup lists 
 ## D16 — Validation schema v3 records access-rule provenance
 
 Validation reports include non-sensitive `provider`, `policy_mode`, `support_level`, explicit/implicit selection, `access_rules`, and per-match `rule_kind` plus original `rule_index`. Headscale reports `supported`; Tailscale reports `preview`. Reports and Doctor never print tailnet data, OAuth client IDs, secrets, access tokens, Headscale keys, NPM credentials, or JWTs.
+
+## D17 — NPM names first; explicit metadata is presentation-only
+
+For an already policy-matched NPM proxy host, Velociportal uses the first valid concrete NPM domain as the automatic card name and browser host, even when a wildcard appears earlier. Adding the real concrete hostname to the same NPM proxy host is the preferred correction. A separate duplicate NPM host may create duplicate cards.
+
+A wildcard-only host remains visible but non-clickable. Velociportal never invents a wildcard URL, substitutes a root domain, or silently drops the service. A strict optional versioned JSON file may override only the displayed name and browser URL for an existing positive NPM proxy-host ID. It loads into the complete snapshot, reloads atomically, and fails before upstream contact when configured but invalid.
+
+Metadata cannot create a card, enable a disabled host, repair a host with no NPM domain, change `forward_host` or `forward_port`, replace access-rule evidence, or grant visibility. Unknown IDs produce only counts. The base image and production stack remain mount-free; the opt-in read-only overlay uses a fixed target and supplemental numeric group so TrueNAS permissions stay `950:950`, directory `0750`, and file `0640` without ownership or mode changes.
+
+NPM `meta.nginx_online` is route/configuration state, not backend health. The portal renders no health dot until separately bounded real probes exist. Future DNS/Tailscale hostname observations may become privacy-minimized, memory-only operator suggestions, but never authorization evidence or silent persisted mappings.

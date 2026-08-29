@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -44,45 +45,40 @@ func (h *PortalHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func renderPortal(w io.Writer, id *Identity, cards []ServiceCard) error {
 	var body strings.Builder
-	rendered := 0
-	for _, c := range cards {
-		// Scheme allowlist: only render cards whose URL is an http(s) link.
-		// A malicious NPM entry could otherwise inject a javascript:/data: URL.
-		if !strings.HasPrefix(c.URL, "http://") && !strings.HasPrefix(c.URL, "https://") {
-			slog.Warn("skipping card with disallowed URL scheme", "service", c.Name)
+	for _, card := range cards {
+		scheme, linkable := cardURLScheme(card.URL)
+		if card.LinkState != serviceLinkReady {
+			linkable = false
+		}
+		if linkable {
+			fmt.Fprintf(&body,
+				`<a class="card" href="%s" data-service="%s">`+
+					`<span class="card-head"><span class="card-name">%s</span></span>`+
+					`<span class="badge">%s</span>`+
+					`</a>`,
+				html.EscapeString(card.URL),
+				html.EscapeString(card.Name),
+				html.EscapeString(card.Name),
+				html.EscapeString(scheme),
+			)
 			continue
 		}
 
-		// The scheme shown on the badge is derived from the (already
-		// allowlisted) URL, so it can only ever be "http" or "https".
-		scheme := "https"
-		if strings.HasPrefix(c.URL, "http://") {
-			scheme = "http"
+		if card.LinkState == serviceLinkReady {
+			slog.Warn("rendering card with invalid browser URL as unlinked", "proxy_host_id", card.ID)
 		}
-
-		online := "false"
-		if c.Online {
-			online = "true"
-		}
-
 		fmt.Fprintf(&body,
-			`<a class="card" href="%s" data-service="%s" data-online="%s">`+
-				`<span class="card-head">`+
-				`<span class="status-dot" aria-hidden="true"></span>`+
-				`<span class="card-name">%s</span>`+
-				`</span>`+
-				`<span class="badge">%s</span>`+
-				`</a>`,
-			html.EscapeString(c.URL),
-			html.EscapeString(c.Name),
-			online,
-			html.EscapeString(c.Name),
-			html.EscapeString(scheme),
+			`<article class="card card-unlinked" data-service="%s">`+
+				`<span class="card-head"><span class="card-name">%s</span></span>`+
+				`<span class="badge">link needed</span>`+
+				`<span class="card-note">Add a concrete service URL in Velociportal metadata.</span>`+
+				`</article>`,
+			html.EscapeString(card.Name),
+			html.EscapeString(card.Name),
 		)
-		rendered++
 	}
 
-	if rendered == 0 {
+	if len(cards) == 0 {
 		body.WriteString(`<div class="empty">` +
 			`<div class="empty-icon" aria-hidden="true">&#9671;</div>` +
 			`<p>No services are available to your account.</p>` +
@@ -99,6 +95,17 @@ func renderPortal(w io.Writer, id *Identity, cards []ServiceCard) error {
 		return fmt.Errorf("renderPortal: %w", err)
 	}
 	return nil
+}
+
+func cardURLScheme(raw string) (string, bool) {
+	parsed, err := url.Parse(raw)
+	if err != nil || !parsed.IsAbs() || parsed.Opaque != "" || parsed.User != nil || parsed.Host == "" || parsed.Hostname() == "" || strings.Contains(parsed.Hostname(), "*") {
+		return "", false
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return "", false
+	}
+	return parsed.Scheme, true
 }
 
 const portalPage = `<!doctype html>
@@ -120,8 +127,6 @@ const portalPage = `<!doctype html>
   --accent: #3b82f6;
   --badge-bg: #1f2733;
   --badge-text: #9aa4b2;
-  --dot-online: #3fb950;
-  --dot-offline: #484f58;
 }
 @media (prefers-color-scheme: light) {
   :root {
@@ -148,8 +153,6 @@ const portalPage = `<!doctype html>
   --accent: #3b82f6;
   --badge-bg: #eef1f6;
   --badge-text: #5a6472;
-  --dot-online: #2ea043;
-  --dot-offline: #c2c8d0;
 }
 :root[data-theme="dark"] {
   --bg: #0f1115;
@@ -161,8 +164,6 @@ const portalPage = `<!doctype html>
   --accent: #3b82f6;
   --badge-bg: #1f2733;
   --badge-text: #9aa4b2;
-  --dot-online: #3fb950;
-  --dot-offline: #484f58;
 }
 * { box-sizing: border-box; }
 body { margin: 0; font: 16px/1.5 system-ui, sans-serif; background: var(--bg); color: var(--text); }
@@ -176,11 +177,11 @@ header { max-width: 1200px; margin: 0 auto; padding: 2rem 1.5rem 1rem; display: 
 main { max-width: 1200px; margin: 0 auto; padding: 1rem 1.5rem 2.5rem; }
 .grid { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); }
 .card { display: flex; flex-direction: column; gap: .55rem; padding: 1rem 1.1rem; border: 1px solid var(--border); border-radius: 12px; background: var(--card-bg); color: inherit; text-decoration: none; transition: border-color .15s, transform .15s, background-color .15s; }
-.card:hover { border-color: var(--accent); background: var(--card-hover-bg); transform: translateY(-2px); }
+a.card:hover, a.card:focus-visible { border-color: var(--accent); background: var(--card-hover-bg); transform: translateY(-2px); }
+.card-unlinked { color: var(--muted); }
 .card-head { display: flex; align-items: center; gap: .5rem; min-width: 0; }
-.card-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.status-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; background: var(--dot-offline); }
-.card[data-online="true"] .status-dot { background: var(--dot-online); box-shadow: 0 0 6px var(--dot-online); }
+.card-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
+.card-note { font-size: .82rem; line-height: 1.35; }
 .badge { align-self: flex-start; padding: .1rem .5rem; border-radius: 999px; font-size: .72rem; font-weight: 600; letter-spacing: .02em; text-transform: uppercase; background: var(--badge-bg); color: var(--badge-text); }
 .empty { grid-column: 1 / -1; text-align: center; padding: 4rem 1.5rem; color: var(--muted); }
 .empty-icon { font-size: 2.5rem; line-height: 1; margin-bottom: .5rem; opacity: .5; }

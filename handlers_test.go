@@ -281,9 +281,8 @@ func TestPortalHandler_XSSEscaping(t *testing.T) {
 }
 
 func TestPortalHandler_SchemeAllowlist(t *testing.T) {
-	// A malicious NPM entry with a javascript: scheme. MatchServices builds
-	// URL = "javascript://evil.example.com"; renderPortal's allowlist only emits
-	// cards whose URL begins with http:// or https://, so this card is skipped.
+	// A malicious NPM entry with a javascript: backend scheme remains visible as
+	// an informational card but never becomes a clickable browser URL.
 	data := &CacheData{
 		Policy: &Policy{
 			ACLs: []ACLRule{
@@ -307,13 +306,52 @@ func TestPortalHandler_SchemeAllowlist(t *testing.T) {
 	if strings.Contains(body, "javascript:") {
 		t.Error("rendered HTML must not contain a javascript: URL scheme")
 	}
-	if strings.Contains(body, "evil.example.com") {
-		t.Error("the disallowed-scheme card should be skipped entirely")
+	if !strings.Contains(body, "evil.example.com") || !strings.Contains(body, "link needed") {
+		t.Error("the disallowed-scheme card should remain visible and unlinked")
 	}
-	// The card is skipped at render time (renderPortal's allowlist), so no <a class="card">
-	// anchor is emitted for it.
-	if strings.Contains(body, `data-service="evil.example.com"`) {
+	if strings.Contains(body, `<a class="card"`) {
 		t.Error("no card anchor should be emitted for the disallowed-scheme host")
+	}
+	if strings.Contains(body, "data-online") || strings.Contains(body, "status-dot") {
+		t.Error("NPM route state must not be rendered as backend health")
+	}
+}
+
+func TestPortalHandler_WildcardDomainNeverBecomesLink(t *testing.T) {
+	data := &CacheData{
+		Policy: &Policy{
+			ACLs: []ACLRule{
+				{Action: "accept", Src: []string{"*"}, Dst: []string{"10.0.0.9:*"}},
+			},
+		},
+		ProxyHosts: []ProxyHost{
+			{ID: 1, DomainNames: []string{"*.rader.wiki"}, ForwardScheme: "https", ForwardHost: "10.0.0.9", Enabled: true},
+		},
+		UpdatedAt: time.Now(),
+	}
+
+	rec := doPortalRequest(
+		newTestHandler(data),
+		"127.0.0.1:12345",
+		"alice@example.com",
+	)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+
+	body := rec.Body.String()
+	if !strings.Contains(body, "*.rader.wiki") ||
+		!strings.Contains(body, "link needed") {
+		t.Fatal("wildcard card should remain visible and unlinked")
+	}
+	for _, forbidden := range []string{
+		`href="https://%2A.rader.wiki/"`,
+		`href="https://*.rader.wiki/"`,
+		`<a class="card"`,
+	} {
+		if strings.Contains(body, forbidden) {
+			t.Fatalf("wildcard card emitted forbidden link markup %q", forbidden)
+		}
 	}
 }
 

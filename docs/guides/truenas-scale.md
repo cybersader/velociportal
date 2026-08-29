@@ -381,7 +381,22 @@ Set `velociportal.env` from exactly one provider example.
 
     Do not add a Tailscale API URL, API key, access token, or explicit tailnet variable.
 
-The canonical base stack mounts no CA file. In Headscale mode, HTTP is accepted because the hostname is the exact private Docker alias. The alias suffix does not prove network confinement; the acceptance checks below must prove that no raw LAN publication or unintended direct route exists.
+The canonical base stack mounts no CA or service metadata file. In Headscale mode, HTTP is accepted because the hostname is the exact private Docker alias. The alias suffix does not prove network confinement; the acceptance checks below must prove that no raw LAN publication or unintended direct route exists.
+
+### Optional concrete service names and URLs
+
+Prefer adding the real concrete hostname alongside the wildcard on the **same NPM proxy host**. Velociportal selects the first valid concrete NPM name even when a wildcard appears earlier. Do not create a duplicate NPM proxy host solely for the dashboard because it can create a duplicate card.
+
+If NPM cannot or should not contain the desired browser target, copy `service-metadata.example.json`, key the entry by the existing NPM proxy-host ID, and add `compose.service-metadata.yaml` to the imported Compose files. Set these stack variables through the Compose UI:
+
+```text
+VELOCIPORTAL_SERVICE_METADATA_FILE=/mnt/personal/docker-configs/velociportal/velociportal-services.json
+VELOCIPORTAL_SERVICE_METADATA_GID=950
+```
+
+Keep the existing dataset permissions unchanged: directory `950:950`/`0750`, file `950:950`/`0640`. The overlay adds group `950` only to the Velociportal container, mounts the one file read-only at `/velociportal-services.json`, and refuses to create a missing host path. Do not `chmod`, `chown`, or alter dataset ACLs for this feature. A malformed configured file blocks a cold snapshot and a failed reload preserves the prior complete snapshot.
+
+Metadata changes only display names and browser URLs after policy matching. It cannot create a card, enable an NPM host, change `forward_host`/`forward_port`, or grant access. Wildcard-only services without metadata remain visible with `link needed`; they never produce `%2A` links. NPM `nginx_online` is not backend health, so the portal shows no online dot.
 
 Redeploy the imported Compose project. Require:
 

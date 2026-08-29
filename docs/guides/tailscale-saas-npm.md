@@ -6,10 +6,10 @@
 <span class="vp-chip vp-chip--security">Live acceptance pending</span>
 </div>
 
-Velociportal can select Tailscale SaaS as its single control plane while continuing to use Nginx Proxy Manager (NPM) as the service catalog. Published `v0.2.0-rc.3` is immutable and adds authoritative Grant-role membership. Live acceptance proved the exact image, complete snapshot, Serve ingress, and portal health, then exposed that RC.3 omitted the Owner's automatic `autogroup:admin` membership. `v0.2.0-rc.4` is the next candidate, and this path remains **preview** until the full SaaS acceptance matrix passes.
+Velociportal can select Tailscale SaaS as its single control plane while continuing to use Nginx Proxy Manager (NPM) as the service catalog. Published `v0.2.0-rc.4` is immutable at `sha256:30a7567c169836e8ae6bbf6c2280227d403b52c79a760ee57a2764d154fae02d`. Live TrueNAS use confirmed the corrected Owner-to-Admin membership, complete snapshot, Serve ingress, portal health, and 48 Owner cards. This path remains **preview** until the full SaaS acceptance matrix passes.
 
 !!! warning "Preview is not a support claim"
-    The adapter has automated coverage for OAuth, policy/user/device conversion, authoritative Grant-role membership, separate owner mapping, response limits, redaction, and fail-closed policy handling. RC.3 must not be replaced or retagged. RC.4 still requires token refresh, revocation, two human identities, actual reachability, and unsupported-policy negative tests.
+    The adapter has automated coverage for OAuth, policy/user/device conversion, authoritative Grant-role membership, separate owner mapping, response limits, redaction, and fail-closed policy handling. Every published RC is immutable. Token refresh, revocation, two human identities, separate owner mapping, actual reachability, and unsupported-policy negative tests remain pending.
 
 ## Architecture
 

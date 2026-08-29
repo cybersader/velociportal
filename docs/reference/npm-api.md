@@ -25,13 +25,27 @@ The current polling cache does **not** fetch access lists.
 }
 ```
 
-- `enabled` and the presence of a domain determine whether the record is considered.
-- The first `domain_names` entry becomes the card name and URL host.
-- `forward_scheme` becomes the card URL scheme after an HTTP/HTTPS allowlist check.
-- `forward_host` is the current ACL join key.
-- `meta.nginx_online` drives the status indicator.
-- `forward_port` is parsed but not used in visibility matching.
+- `enabled` and the presence of at least one domain determine whether the record can become a card.
+- The first valid concrete `domain_names` entry becomes the automatic card name and URL host. A wildcard may appear earlier without taking precedence.
+- A wildcard-only host remains visible after policy matching but is non-clickable until it has a concrete NPM name or an explicit service-metadata URL.
+- Adding the real concrete hostname to the same NPM proxy host is the preferred correction because NPM then remains the browser-name source of truth. Creating a duplicate proxy host can create duplicate cards.
+- `forward_scheme` becomes the automatic card URL scheme after an HTTP/HTTPS allowlist check. An explicit service-metadata URL overrides only the browser target.
+- `forward_host` is the current access-rule destination join key.
+- `forward_port` is required for exact TCP capability matching when a Tailscale Grant supplies card evidence. Legacy ACL ports remain unmodeled.
+- `meta.nginx_online` is retained only as NPM route/configuration state in diagnostics. It is not backend application health and is not rendered as a health indicator.
 - `access_list_id` is parsed but not used in visibility matching.
+
+## Optional presentation metadata
+
+A strict versioned JSON file can override the displayed name or browser URL for an existing NPM proxy-host ID. Metadata is applied only after policy matching and cannot create a card, enable a host, change `forward_host`/`forward_port`, or grant visibility. Unknown IDs produce only a count in diagnostics.
+
+Source priority is:
+
+1. A concrete hostname on the existing NPM proxy host.
+2. An explicit operator metadata URL/name when NPM cannot represent the desired browser target.
+3. Future DNS/Tailscale observations as non-authoritative suggestions only.
+
+Velociportal never invents a wildcard-derived URL.
 
 ## Access-list endpoint
 
