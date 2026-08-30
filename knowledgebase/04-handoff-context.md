@@ -4,13 +4,13 @@
 
 ## Current stage
 
-**Published `v0.2.0-rc.4` is immutable at `ghcr.io/cybersader/velociportal@sha256:30a7567c169836e8ae6bbf6c2280227d403b52c79a760ee57a2764d154fae02d`.** Live TrueNAS use confirmed the corrected Owner-to-Admin automatic membership, a complete healthy snapshot, declarative Serve ingress, portal `200`, and 48 cards for the real Owner identity without changing the live tailnet policy.
+**Published `v0.2.0-rc.5` is immutable at `ghcr.io/cybersader/velociportal@sha256:a043e2499c28ce9f66bb2a60c8c0f265e63fc449a0fb9213fd07879508a18402`.** Live TrueNAS use confirmed the corrected Owner-to-Admin automatic membership, a complete healthy snapshot, declarative Serve ingress, truthful wildcard-only cards, separate bounded health labels, portal `200`, and 48 cards for the real Owner identity without changing the live tailnet policy.
 
-That use exposed two narrower presentation defects: wildcard-only NPM `*.rader.wiki` became `https://%2A.rader.wiki/`, and NPM `meta.nginx_online` dots falsely implied backend applications were running. The merged truthful-card work fixes both and adds strict optional display-name/browser-URL metadata keyed by existing NPM proxy-host ID. Branch `feature/bounded-service-health` now implements explicit-opt-in direct-backend HTTP/TCP observations with strict topology allowlists, isolated credential-free transport, bounded scheduling, identity-filtered labels, and no authorization or `/healthz` effect.
+The current `feature/ephemeral-hostname-suggestions` branch adds a one-shot private operator command. It combines selected-control-plane node/device names with optional bounded hostname-only stdin, rejects whole ambiguous candidate/NPM graph components, and emits only a confirmed strict metadata-v1 proposal. It adds no DNS/log scan, runtime store, portal route, active-metadata mutation, authorization evidence, production mount, or `/healthz` effect.
 
 The production topology remains one service on exactly two networks. NPM always uses the egress-capable `velociportal-upstreams`; Headscale mode also uses its private alias, while Tailscale SaaS uses the preferred default network for fixed-origin verified HTTPS egress. Browser ingress remains declarative Tailscale HTTP Serve on `:8081` to `http://127.0.0.1:18080`. The base bundle has no host mount; `compose.private-ca.yaml`, `compose.service-metadata.yaml`, and `compose.service-health.yaml` are independent optional overlays.
 
-RC.4, RC.3, and every earlier published candidate remain immutable and must never be replaced or retagged. The current branch is repository-only work: no TrueNAS, NPM, Tailscale, DNS, dataset, permission, network, port, or policy changes have been made. Publication and any live app/overlay change require separate explicit approval. Two-identity role-card/reachability parity, token refresh/revocation, unsupported-policy negatives, stale/cold recovery, header replacement, and LAN-negative isolation remain pending.
+RC.5, RC.4, and every earlier published candidate remain immutable and must never be replaced or retagged. The current branch is repository-only work: no TrueNAS, NPM, Tailscale, DNS, dataset, permission, network, port, policy, or active-metadata changes have been made. Publication and any live proposal/metadata/app change require separate explicit approval. Two-identity role-card/reachability parity, token refresh/revocation, unsupported-policy negatives, stale/cold recovery, header replacement, LAN-negative isolation, and live hostname-proposal acceptance remain pending.
 
 ## Locked direction
 
@@ -47,7 +47,7 @@ RC.4, RC.3, and every earlier published candidate remain immutable and must neve
 - **Authoritative roles without machine inference:** supported human-role autogroups map to a browser identity only through exact Users API membership and only for Grants. Machine/tag/IP/CIDR/host selectors, `autogroup:shared`, `autogroup:tagged`, and other machine autogroups may load but never become human; neither device ownership, `tagOwners`, nor tags on owned nodes confer source membership. Only recognized attr-only `funnel` `nodeAttrs` load, and they never authorize.
 - **Portal:** embedded server-rendered HTML, escaped card content, HTTP/HTTPS scheme allowlist, first-concrete-NPM-domain selection, visible non-linkable wildcard cards, exact-ID display name/URL overrides, no NPM-derived health dots, identity-filtered accessible coarse health labels, responsive light/dark theme, and embedded htmx refresh.
 - **Service health:** strict version-1 explicit target file; HTTP GET/TCP connect-only probes derived only from current NPM backends; exact host/suffix plus all-answer CIDR validation; direct validated-IP dialing with Host/SNI preservation; hard-denied address classes and protected API sockets; no credentials, proxies, redirects, payload inspection, or persistence; fixed workers, non-overlap, timeout/cycle bounds, config reload, and stale transitions.
-- **Guided CLI:** environment-file-backed `serve`; hidden-secret `setup`; one-time exact-source `setup observe-proxy`; redacted upstream/join/health `doctor`; strict `validate` reports with labeled identity comparisons and summary/private privacy modes; configuration-free `healthcheck`; strict shared env-value decoding; and cooperating-writer directory locks.
+- **Guided CLI:** environment-file-backed `serve`; hidden-secret `setup`; one-time exact-source `setup observe-proxy`; redacted upstream/join/health `doctor`; strict `validate` reports; one-shot private `suggest-hostnames` with bounded provider/stdin candidates, graph ambiguity rejection, literal confirmation, and no-clobber `0600` proposal output; configuration-free `healthcheck`; strict shared env-value decoding; and cooperating-writer directory locks.
 - **Deployment:** unchanged one-service/two-network hardening, explicit Headscale env example, separate OAuth-only Tailscale env example, parameterized raw/rendered/short-include verification across all base/private-CA/service-metadata/service-health combinations; optional file overlays preserve TrueNAS `950:950`/`0750`/`0640` through supplemental numeric read groups rather than permission changes.
 
 ## Known limitations that must remain explicit
@@ -65,16 +65,17 @@ RC.4, RC.3, and every earlier published candidate remain immutable and must neve
 11. **Endpoint/control-plane compromise remains in scope.** WireGuard prevents ordinary on-path LAN/router/ISP interception, not compromise of clients, TrueNAS, Tailscale/Headscale control components, NPM, or trusted host workloads.
 12. **Presentation metadata is explicit and narrow.** It cannot create cards, alter joins, or grant visibility. Wildcard-only cards remain unlinked until NPM has a concrete name or metadata supplies a URL.
 13. **Backend health is narrow observational evidence.** It is explicit opt-in, shared, memory-only, and direct-backend. It is not NPM route state, authorization, browser-path proof, persistent history, or `/healthz` readiness.
-14. **No real end-to-end validation yet.** Fixtures and local probes are not production proof.
+14. **Hostname suggestions are private proposals only.** They use selected-provider names plus optional bounded hostname-only stdin, reject ambiguous graph components, vanish at process exit, and never update active metadata or authorization.
+15. **No real end-to-end validation yet.** Fixtures and local probes are not production proof.
 
 ## Next work
 
-1. Finish sequential verification of `feature/bounded-service-health`: full race/vet, all Compose combinations, strict MkDocs, static image/CLI checks, supplemental-group readability, and an independent SSRF/DNS-rebinding/credential-isolation/authorization-boundary review.
+1. Finish sequential verification of `feature/ephemeral-hostname-suggestions`: focused/provider/CLI tests, full race/vet, unchanged Compose shape, strict MkDocs, static image/CLI checks, and final non-effect/privacy audit.
 2. Commit/push/PR only at the source-control checkpoint; keep Tailscale labeled preview and never replace a published RC.
-3. Before any live deployment, present a separate TrueNAS checkpoint for the image/health overlay only. Do not change datasets, permissions, the live tailnet policy, NPM, Headscale, Tailscale, DNS, certificates, networks, or ports without separate approval.
-4. For the current wildcard service, prefer adding the real concrete hostname to the same NPM proxy host; use metadata only if that is unsuitable. Avoid a duplicate NPM host/card.
-5. Design privacy-minimized ephemeral hostname suggestions next, then organization/personalization and Tailscale SSH machine cards as separate tasks.
-6. Complete card/reachability parity, unsupported-policy negatives, token refresh/revocation, stale/cold recovery, Serve header replacement, and LAN-negative raw-port isolation. Retain Tailscale `preview` until all live acceptance requirements pass.
+3. Do not run the command against live TrueNAS or merge a generated proposal without a separate checkpoint. Do not change datasets, permissions, active metadata, the live tailnet policy, NPM, Headscale, Tailscale, DNS, certificates, networks, or ports without separate approval.
+4. Prefer adding the real concrete hostname to the same NPM proxy host; use an approved metadata proposal only if that is unsuitable. Avoid a duplicate NPM host/card.
+5. After this slice, design organization/personalization, Tailscale SSH machine cards, and guided zero-friction deployment as separate tasks.
+6. Complete card/reachability parity, unsupported-policy negatives, token refresh/revocation, stale/cold recovery, Serve header replacement, LAN-negative raw-port isolation, and live proposal/manual-merge non-effect checks. Retain Tailscale `preview` until all live acceptance requirements pass.
 
 ## Verification discipline
 

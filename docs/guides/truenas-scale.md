@@ -398,6 +398,22 @@ Keep the existing dataset permissions unchanged: directory `950:950`/`0750`, fil
 
 Metadata changes only display names and browser URLs after policy matching. It cannot create a card, enable an NPM host, change `forward_host`/`forward_port`, or grant access. Wildcard-only services without metadata remain visible with `link needed`; they never produce `%2A` links. NPM `nginx_online` is not backend health.
 
+#### Optional one-shot hostname proposal
+
+From a trusted administration environment that can reach the same provider and NPM APIs, the static binary can privately propose metadata for eligible wildcard-only hosts:
+
+```bash
+velociportal suggest-hostnames \
+  --env-file velociportal.env \
+  --privacy private \
+  --browser-scheme https \
+  --output hostname-proposal.json
+```
+
+The command uses selected-control-plane node/device names and, only when requested, bounded hostname-only stdin. Provider-visible names are untrusted suggestions and do not prove association with the NPM backend; verify each intended browser destination independently. The command does not scan DNS or logs, retain history, change NPM, update the active metadata file, or alter runtime card matching. Review the private hostname/ID list locally, type literal `yes`, then manually merge approved entries into the existing service-metadata file through the authenticated transfer/UI path.
+
+Keep the proposal owner-only and remove it after review. Do not add a recurring NAS shell task, new production mount, updater, or automatic merge. Preserve the existing TrueNAS dataset ownership, modes, and ACLs; if the manually merged metadata file already uses `950:950`/`0640`, keep those values unchanged.
+
 ### Optional bounded service health
 
 Health is disabled unless an operator explicitly adds `compose.service-health.yaml` and a strict health file. Copy `service-health.example.json`, list only the existing NPM proxy-host IDs that should be probed, and choose the narrow backend CIDRs plus exact DNS names or suffixes required by those NPM `forward_host` values. Browser metadata URLs never become probe targets.

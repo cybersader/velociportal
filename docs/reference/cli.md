@@ -11,6 +11,7 @@ velociportal setup [--env-file FILE]
 velociportal setup observe-proxy [options]
 velociportal doctor [options]
 velociportal validate [options]
+velociportal suggest-hostnames --privacy private --browser-scheme http|https [options]
 velociportal healthcheck [options]
 velociportal help [command]
 ```
@@ -26,12 +27,13 @@ velociportal help [command]
 | `velociportal doctor` | Validates configuration, upstreams, snapshot construction, and join coverage |
 | `velociportal doctor --identity LOGIN` | Also previews the cards produced for `LOGIN`; the option may be repeated |
 | `velociportal validate --identity LABEL=LOGIN ...` | Compares at least two labeled identities and emits explainable text or JSON join evidence |
+| `velociportal suggest-hostnames ...` | Privately reviews unambiguous hostname candidates and emits a strict metadata-v1 proposal after confirmation |
 | `velociportal healthcheck` | Probes `/healthz` without loading application configuration or credentials |
 | `velociportal help COMMAND` | Prints command-specific usage |
 
 Command exit codes are stable:
 
-- **`0`** — success; doctor warnings do not make the command fail, while validate requires no unresolved review findings.
+- **`0`** — success or a safe operator rejection/no-candidate result; doctor warnings do not make the command fail, while validate requires no unresolved review findings.
 - **`1`** — operational failure or a complete validation report that still requires operator review.
 - **`2`** — command-line usage error.
 
@@ -116,6 +118,27 @@ Validation loads one complete live snapshot, compares the supplied identity labe
 Use `--format json` for deterministic schema-v3 output. The report records `access_rules` plus per-match `rule_kind` and original `rule_index`; its `control_plane` object records `provider`, `policy_mode`, `support_level`, and whether selection was explicit or implicit, without including endpoints or credentials. A complete report returns `1` when findings such as an unmatched forward host, a zero-card identity, identical card sets, or an unknown/dirty build require review. Notices about known limitations do not by themselves fail the report. GNU Make converts any failed recipe into Make exit code `2`, so automation that needs the application's exact `0`/`1`/`2` distinction should invoke `velociportal validate` directly; Make users should inspect the report status and findings.
 
 Validation is still a visibility prediction. An implicit Headscale selector emits a deprecation warning and a non-failing report notice. When Headscale uses allowlisted HTTP, validation also emits a redacted route-confinement notice. Tailscale reports remain labeled `preview` until live SaaS acceptance passes. Follow the [real-deployment worksheet](../getting-started/validation.md) to verify the private upstream network, NPM control proxy, final identity path, `401`/`403` behavior, LAN-negative ports, browser-facing links, and actual selected-control-plane reachability.
+
+## Suggest hostnames
+
+```bash
+velociportal suggest-hostnames \
+  --env-file .env \
+  --privacy private \
+  --browser-scheme https \
+  --output hostname-proposal.json
+```
+
+This one-shot operator command loads the normal selected-control-plane policy/nodes or policy/users/devices data plus NPM proxy hosts. Headscale contributes node names; Tailscale contributes both device `name` and `hostname`. Those names are untrusted suggestions—not evidence that a device is associated with the NPM backend—so verify every browser destination independently before merging. Optional `--stdin-hostnames` accepts only a bounded newline-delimited hostname feed. It does not scan DNS, read resolver or proxy logs, query new APIs, or retain candidates after exit.
+
+Only enabled, structurally policy-matched, wildcard-only NPM hosts without an active metadata URL are eligible. Candidates must be canonical ASCII FQDNs and match an exact wildcard suffix on a label boundary. Velociportal models candidate-to-NPM matches as a bipartite graph and excludes every connected component that contains more than one hostname or proxy-host ID; it never picks a first, shortest, or preferred guess.
+
+The command always requires `--privacy private` and an explicit browser-facing `http` or `https` scheme. It prints the private review and confirmation prompt to stderr, keeps stdout empty until literal `yes`, and emits only strict service-metadata v1 JSON after approval. With `--stdin-hostnames`, stdin is the candidate feed and confirmation must come from the controlling terminal. EOF or a missing terminal fails before emission. As with any stdout stream, a downstream write failure after approval can leave a partial document; use `--output` when atomic file publication is required.
+
+`--output FILE` creates a new owner-only `0600` file atomically and refuses existing paths, symlinks, or the configured active `SERVICE_METADATA_FILE`. The proposal is a fragment for manual review and merge; the command never changes active metadata, runtime snapshots, cards, policy evidence, health, Compose, NPM, or DNS.
+
+!!! danger "Private topology"
+    Reviews and proposals contain internal hostnames and NPM proxy-host IDs. Keep them owner-readable, do not publish them, and remove rejected or superseded proposals.
 
 ## Healthcheck
 

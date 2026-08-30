@@ -135,6 +135,27 @@ func TestTailscaleLoadUsesApprovedEndpointsAndMapsOwners(t *testing.T) {
 	}
 }
 
+func TestTailscaleLoadHostnameSuggestionsCollectsNameAndHostname(t *testing.T) {
+	client, closeServer := tailscaleClientWithBodies(
+		t,
+		`{"users":[{"id":"user-1","loginName":"owner@example.com","type":"member","role":"member"}]}`,
+		`{"devices":[{"id":"device-1","name":"device.tailnet.ts.net","hostname":"service.internal.example.com","user":"user-1","addresses":["100.64.0.1"]}]}`,
+		"",
+	)
+	defer closeServer()
+
+	result, names, err := client.LoadHostnameSuggestions(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("LoadHostnameSuggestions() error = %v", err)
+	}
+	if len(result.Nodes) != 1 || result.Nodes[0].Name != "device.tailnet.ts.net" {
+		t.Fatalf("result nodes = %#v", result.Nodes)
+	}
+	if got, want := names, []string{"device.tailnet.ts.net", "service.internal.example.com"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("candidate names = %#v, want %#v", got, want)
+	}
+}
+
 func TestTailscaleLoadSupportsSafeGrantsAndNodeAttrs(t *testing.T) {
 	fixture := newTailscaleFixture(t)
 	fixture.policy = map[string]any{

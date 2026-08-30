@@ -26,6 +26,9 @@ func successfulCLICommands(serve func(configLookup) error) cliCommands {
 		validate: func([]string, io.Writer, io.Writer) int {
 			return 0
 		},
+		suggestHostnames: func([]string, io.Reader, io.Writer, io.Writer) int {
+			return 0
+		},
 		healthcheck: func([]string, io.Writer, io.Writer) int {
 			return 0
 		},
@@ -88,6 +91,7 @@ func TestCLIHelpForms(t *testing.T) {
 		{name: "help setup", args: []string{"help", "setup"}, contains: "observe-proxy"},
 		{name: "help doctor", args: []string{"help", "doctor"}, contains: "--identity LOGIN"},
 		{name: "help validate", args: []string{"help", "validate"}, contains: "LABEL=LOGIN"},
+		{name: "help suggest-hostnames", args: []string{"help", "suggest-hostnames"}, contains: "--privacy private"},
 		{name: "help healthcheck", args: []string{"help", "healthcheck"}, contains: "--timeout DURATION"},
 		{name: "serve short help", args: []string{"serve", "-h"}, contains: "velociportal serve"},
 		{name: "serve long help", args: []string{"serve", "--help"}, contains: "velociportal serve"},
@@ -129,6 +133,7 @@ func TestCLIUnknownAndUsageErrorsExitTwo(t *testing.T) {
 		{name: "setup positional arg", args: []string{"setup", "extra"}},
 		{name: "doctor positional arg", args: []string{"doctor", "extra"}},
 		{name: "validate positional arg", args: []string{"validate", "extra"}},
+		{name: "suggest-hostnames positional arg", args: []string{"suggest-hostnames", "extra"}},
 		{name: "healthcheck positional arg", args: []string{"healthcheck", "extra"}},
 	}
 
@@ -190,6 +195,19 @@ func TestCLICommandHandlersReceiveArgsAndStreams(t *testing.T) {
 		t.Fatalf("validate exit code = %d", code)
 	}
 
+	commands.suggestHostnames = func(args []string, gotStdin io.Reader, gotStdout, gotStderr io.Writer) int {
+		if !reflect.DeepEqual(args, []string{"--privacy", "private", "--browser-scheme", "https"}) {
+			t.Fatalf("suggest-hostnames args = %v", args)
+		}
+		if gotStdin != stdin || gotStdout != &stdout || gotStderr != &stderr {
+			t.Fatal("suggest-hostnames streams were not forwarded")
+		}
+		return 10
+	}
+	if code := runCLIWithCommands([]string{"suggest-hostnames", "--privacy", "private", "--browser-scheme", "https"}, stdin, &stdout, &stderr, commands); code != 10 {
+		t.Fatalf("suggest-hostnames exit code = %d", code)
+	}
+
 	commands.healthcheck = func(args []string, gotStdout, gotStderr io.Writer) int {
 		if !reflect.DeepEqual(args, []string{"--timeout", "1s"}) {
 			t.Fatalf("healthcheck args = %v", args)
@@ -205,7 +223,7 @@ func TestCLICommandHandlersReceiveArgsAndStreams(t *testing.T) {
 }
 
 func TestCLIUnavailableHandlersFailCleanly(t *testing.T) {
-	for _, commandName := range []string{"serve", "setup", "doctor", "validate", "healthcheck"} {
+	for _, commandName := range []string{"serve", "setup", "doctor", "validate", "suggest-hostnames", "healthcheck"} {
 		t.Run(commandName, func(t *testing.T) {
 			commands := successfulCLICommands(nil)
 			switch commandName {
@@ -217,6 +235,8 @@ func TestCLIUnavailableHandlersFailCleanly(t *testing.T) {
 				commands.doctor = nil
 			case "validate":
 				commands.validate = nil
+			case "suggest-hostnames":
+				commands.suggestHostnames = nil
 			case "healthcheck":
 				commands.healthcheck = nil
 			}
