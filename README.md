@@ -37,7 +37,7 @@ The production bundle lives under [`deploy/`](./deploy/). It requires Docker Com
 > Published release-candidate images and `headscale-ops` artifacts exist, but they do not imply a public support claim. The selected provider's full TrueNAS acceptance matrix must still pass.
 
 > [!NOTE]
-> Published `v0.2.0-rc.5` is immutable at `sha256:a043e2499c28ce9f66bb2a60c8c0f265e63fc449a0fb9213fd07879508a18402`. Live TrueNAS use confirmed truthful wildcard cards, separate bounded health labels, portal health, and 48 policy-supported cards without changing the live policy. The current development branch adds a one-shot private hostname-suggestion command; it does not change runtime matching or active metadata.
+> Published `v0.2.0-rc.5` is immutable at `sha256:a043e2499c28ce9f66bb2a60c8c0f265e63fc449a0fb9213fd07879508a18402`. Live TrueNAS use confirmed truthful wildcard cards, separate bounded health labels, portal health, and 48 policy-supported cards without changing the live policy. Merged main now includes a one-shot private hostname-suggestion command; it does not change runtime matching or active metadata.
 
 > [!WARNING]
 > The canonical browser route is tailnet-only HTTP Serve over WireGuard: `:8081 -> http://127.0.0.1:18080`. NPM is not portal identity. Official Tailscale can automate `*.ts.net` certificates, but Headscale automatic HTTPS Serve remains future upstream work tracked by [issue #2527](https://github.com/juanfont/headscale/issues/2527) and [PR #3300](https://github.com/juanfont/headscale/pull/3300). Tailnet HTTP Serve is not a release blocker.

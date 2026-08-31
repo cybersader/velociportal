@@ -6,11 +6,11 @@
 
 **Published `v0.2.0-rc.5` is immutable at `ghcr.io/cybersader/velociportal@sha256:a043e2499c28ce9f66bb2a60c8c0f265e63fc449a0fb9213fd07879508a18402`.** Live TrueNAS use confirmed the corrected Owner-to-Admin automatic membership, a complete healthy snapshot, declarative Serve ingress, truthful wildcard-only cards, separate bounded health labels, portal `200`, and 48 cards for the real Owner identity without changing the live tailnet policy.
 
-The current `feature/ephemeral-hostname-suggestions` branch adds a one-shot private operator command. It combines selected-control-plane node/device names with optional bounded hostname-only stdin, rejects whole ambiguous candidate/NPM graph components, and emits only a confirmed strict metadata-v1 proposal. It adds no DNS/log scan, runtime store, portal route, active-metadata mutation, authorization evidence, production mount, or `/healthz` effect.
+Merged main includes a one-shot private `suggest-hostnames` operator command. It combines selected-control-plane node/device names with optional bounded hostname-only stdin, rejects whole ambiguous candidate/NPM graph components, and emits only a confirmed strict metadata-v1 proposal. It adds no DNS/log scan, runtime store, portal route, active-metadata mutation, authorization evidence, production mount, or `/healthz` effect.
 
 The production topology remains one service on exactly two networks. NPM always uses the egress-capable `velociportal-upstreams`; Headscale mode also uses its private alias, while Tailscale SaaS uses the preferred default network for fixed-origin verified HTTPS egress. Browser ingress remains declarative Tailscale HTTP Serve on `:8081` to `http://127.0.0.1:18080`. The base bundle has no host mount; `compose.private-ca.yaml`, `compose.service-metadata.yaml`, and `compose.service-health.yaml` are independent optional overlays.
 
-RC.5, RC.4, and every earlier published candidate remain immutable and must never be replaced or retagged. The current branch is repository-only work: no TrueNAS, NPM, Tailscale, DNS, dataset, permission, network, port, policy, or active-metadata changes have been made. Publication and any live proposal/metadata/app change require separate explicit approval. Two-identity role-card/reachability parity, token refresh/revocation, unsupported-policy negatives, stale/cold recovery, header replacement, LAN-negative isolation, and live hostname-proposal acceptance remain pending.
+RC.5, RC.4, and every earlier published candidate remain immutable and must never be replaced or retagged. The merged hostname-suggestion work made no TrueNAS, NPM, Tailscale, DNS, dataset, permission, network, port, policy, or active-metadata changes. Publication and any live proposal/metadata/app change remain separate explicit checkpoints. Two-identity role-card/reachability parity, token refresh/revocation, unsupported-policy negatives, stale/cold recovery, header replacement, LAN-negative isolation, and live hostname-proposal acceptance remain pending.
 
 ## Locked direction
 
@@ -70,8 +70,8 @@ RC.5, RC.4, and every earlier published candidate remain immutable and must neve
 
 ## Next work
 
-1. Finish sequential verification of `feature/ephemeral-hostname-suggestions`: focused/provider/CLI tests, full race/vet, unchanged Compose shape, strict MkDocs, static image/CLI checks, and final non-effect/privacy audit.
-2. Commit/push/PR only at the source-control checkpoint; keep Tailscale labeled preview and never replace a published RC.
+1. Keep RC.6 publication and private live hostname-proposal acceptance as separate checkpoints; verify immutable image metadata before any TrueNAS image update.
+2. Keep Tailscale labeled preview and never replace or retag a published RC.
 3. Do not run the command against live TrueNAS or merge a generated proposal without a separate checkpoint. Do not change datasets, permissions, active metadata, the live tailnet policy, NPM, Headscale, Tailscale, DNS, certificates, networks, or ports without separate approval.
 4. Prefer adding the real concrete hostname to the same NPM proxy host; use an approved metadata proposal only if that is unsuitable. Avoid a duplicate NPM host/card.
 5. After this slice, design organization/personalization, Tailscale SSH machine cards, and guided zero-friction deployment as separate tasks.

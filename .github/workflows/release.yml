@@ -65,6 +65,7 @@ jobs:
         run: |
           ./velociportal healthcheck --help >/dev/null
           ./velociportal validate --help >/dev/null
+          ./velociportal suggest-hostnames --help >/dev/null
 
       - name: Validate Compose configuration
         run: |
@@ -116,6 +117,8 @@ jobs:
               "${image}" healthcheck --help >/dev/null
             docker run --rm --platform "linux/${arch}" --read-only --security-opt no-new-privileges \
               "${image}" validate --help >/dev/null
+            docker run --rm --platform "linux/${arch}" --read-only --security-opt no-new-privileges \
+              "${image}" suggest-hostnames --help >/dev/null
           done
 
       - name: Preserve the verified image artifact
