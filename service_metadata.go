@@ -94,6 +94,27 @@ func serviceMetadataFileError(err error) error {
 	}
 }
 
+func serializeServiceMetadataDocument(services []serviceMetadataEntry) ([]byte, error) {
+	if services == nil {
+		services = []serviceMetadataEntry{}
+	}
+	data, err := json.MarshalIndent(serviceMetadataDocument{
+		Version:  serviceMetadataVersion,
+		Services: services,
+	}, "", "  ")
+	if err != nil {
+		return nil, errors.New("service metadata proposal could not be encoded")
+	}
+	data = append(data, '\n')
+	if len(data) > maxServiceMetadataBytes {
+		return nil, fmt.Errorf("service metadata proposal exceeds %d bytes", maxServiceMetadataBytes)
+	}
+	if _, err := parseServiceMetadata(data); err != nil {
+		return nil, fmt.Errorf("service metadata proposal is invalid: %w", err)
+	}
+	return data, nil
+}
+
 func parseServiceMetadata(data []byte) (*ServiceMetadata, error) {
 	if len(bytes.TrimSpace(data)) == 0 {
 		return nil, errors.New("service metadata document is empty")

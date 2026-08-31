@@ -179,61 +179,88 @@ func (c *HeadscaleClient) FetchUsers(ctx context.Context) ([]headscaleUserDTO, e
 	return *wrapper.Users, nil
 }
 
+type headscaleNodeLoad struct {
+	Nodes          []Node
+	CandidateNames []string
+}
+
 func (c *HeadscaleClient) FetchNodes(ctx context.Context) ([]Node, error) {
+	loaded, err := c.fetchNodes(ctx, false)
+	return loaded.Nodes, err
+}
+
+func (c *HeadscaleClient) fetchNodes(ctx context.Context, includeCandidateNames bool) (headscaleNodeLoad, error) {
 	start := time.Now()
 	var wrapper struct {
 		Nodes *[]headscaleNodeDTO `json:"nodes"`
 	}
 	if err := c.get(ctx, "/api/v1/node", &wrapper); err != nil {
-		return nil, fmt.Errorf("FetchNodes: %w", err)
+		return headscaleNodeLoad{}, fmt.Errorf("FetchNodes: %w", err)
 	}
 	if wrapper.Nodes == nil {
-		return nil, fmt.Errorf("FetchNodes: response is missing nodes")
+		return headscaleNodeLoad{}, fmt.Errorf("FetchNodes: response is missing nodes")
 	}
 
-	nodes := make([]Node, 0, len(*wrapper.Nodes))
+	loaded := headscaleNodeLoad{Nodes: make([]Node, 0, len(*wrapper.Nodes))}
+	if includeCandidateNames {
+		loaded.CandidateNames = make([]string, 0, len(*wrapper.Nodes))
+	}
 	for _, dto := range *wrapper.Nodes {
 		tags := make([]string, 0, len(dto.Tags)+len(dto.ForcedTags)+len(dto.ValidTags))
 		tags = append(tags, dto.Tags...)
 		tags = append(tags, dto.ForcedTags...)
 		tags = append(tags, dto.ValidTags...)
-		nodes = append(nodes, Node{
+		loaded.Nodes = append(loaded.Nodes, Node{
 			ID:         strings.TrimSpace(dto.ID),
 			Name:       strings.TrimSpace(dto.Name),
 			OwnerLogin: strings.TrimSpace(dto.User.Name),
 			Tags:       normalizeStrings(tags),
 			Addresses:  normalizeStrings(dto.IPAddresses),
 		})
+		if includeCandidateNames {
+			loaded.CandidateNames = append(loaded.CandidateNames, dto.Name)
+		}
 	}
 
 	slog.Info("headscale: fetched nodes",
 		"path", "/api/v1/node",
 		"duration", time.Since(start),
-		"count", len(nodes))
-	return nodes, nil
+		"count", len(loaded.Nodes))
+	return loaded, nil
 }
 
 func (c *HeadscaleClient) Load(ctx context.Context, progress controlPlaneProgress) (*ControlPlaneResult, error) {
+	result, _, err := c.load(ctx, progress, false)
+	return result, err
+}
+
+func (c *HeadscaleClient) LoadHostnameSuggestions(ctx context.Context, progress controlPlaneProgress) (*ControlPlaneResult, []string, error) {
+	return c.load(ctx, progress, true)
+}
+
+func (c *HeadscaleClient) load(ctx context.Context, progress controlPlaneProgress, includeCandidateNames bool) (*ControlPlaneResult, []string, error) {
 	policyResult, err := call(ctx, c.fetchPolicy)
 	if err != nil {
-		return nil, &controlPlaneLoadError{Provider: c.Provider(), Stage: controlPlaneStagePolicy, Err: err}
+		return nil, nil, &controlPlaneLoadError{Provider: c.Provider(), Stage: controlPlaneStagePolicy, Err: err}
 	}
 	reportControlPlaneProgress(progress, controlPlaneStagePolicy, policyResult.Policy.accessRuleCount())
 
-	nodes, err := call(ctx, c.FetchNodes)
+	nodeLoad, err := call(ctx, func(ctx context.Context) (headscaleNodeLoad, error) {
+		return c.fetchNodes(ctx, includeCandidateNames)
+	})
 	if err != nil {
-		return nil, &controlPlaneLoadError{Provider: c.Provider(), Stage: controlPlaneStageNodes, Err: err}
+		return nil, nil, &controlPlaneLoadError{Provider: c.Provider(), Stage: controlPlaneStageNodes, Err: err}
 	}
-	reportControlPlaneProgress(progress, controlPlaneStageNodes, len(nodes))
+	reportControlPlaneProgress(progress, controlPlaneStageNodes, len(nodeLoad.Nodes))
 
 	return &ControlPlaneResult{
 		Policy: policyResult.Policy,
-		Nodes:  nodes,
+		Nodes:  nodeLoad.Nodes,
 		Metadata: ControlPlaneMetadata{
 			Provider:     c.Provider(),
 			PolicyMode:   policyResult.PolicyMode,
 			SupportLevel: controlPlaneSupported,
 			SSHPresent:   policyResult.SSHPresent,
 		},
-	}, nil
+	}, nodeLoad.CandidateNames, nil
 }

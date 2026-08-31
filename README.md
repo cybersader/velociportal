@@ -37,7 +37,7 @@ The production bundle lives under [`deploy/`](./deploy/). It requires Docker Com
 > Published release-candidate images and `headscale-ops` artifacts exist, but they do not imply a public support claim. The selected provider's full TrueNAS acceptance matrix must still pass.
 
 > [!NOTE]
-> Published `v0.2.0-rc.4` is immutable at `sha256:30a7567c169836e8ae6bbf6c2280227d403b52c79a760ee57a2764d154fae02d`. Live TrueNAS use confirmed the corrected Owner-to-Admin membership and rendered 48 policy-supported cards without changing the live policy. That exercise exposed wildcard-link and false NPM-health presentation defects, which are fixed in merged truthful-card work. The current development branch adds separate explicit-opt-in bounded backend observations.
+> Published `v0.2.0-rc.5` is immutable at `sha256:a043e2499c28ce9f66bb2a60c8c0f265e63fc449a0fb9213fd07879508a18402`. Live TrueNAS use confirmed truthful wildcard cards, separate bounded health labels, portal health, and 48 policy-supported cards without changing the live policy. The current development branch adds a one-shot private hostname-suggestion command; it does not change runtime matching or active metadata.
 
 > [!WARNING]
 > The canonical browser route is tailnet-only HTTP Serve over WireGuard: `:8081 -> http://127.0.0.1:18080`. NPM is not portal identity. Official Tailscale can automate `*.ts.net` certificates, but Headscale automatic HTTPS Serve remains future upstream work tracked by [issue #2527](https://github.com/juanfont/headscale/issues/2527) and [PR #3300](https://github.com/juanfont/headscale/pull/3300). Tailnet HTTP Serve is not a release blocker.
@@ -110,6 +110,7 @@ On each request, Velociportal accepts `Tailscale-User-Login` only from `TRUSTED_
 - Known attr-only Tailscale `nodeAttrs` accepted as non-authorization metadata; the supported `funnel` attribute never becomes card evidence
 - Server-rendered responsive portal with embedded htmx refresh, truthful concrete-domain links, visible unlinked wildcard cards, and accessible coarse health labels
 - Strict optional name/URL service metadata applied only after policy matching
+- One-shot private hostname suggestions from selected-control-plane names plus optional bounded hostname-only stdin, with whole-component ambiguity rejection and manual metadata merge only
 - Explicit opt-in HTTP GET or connect-only TCP backend probes with topology allowlists, direct validated-IP dialing, verified TLS, fixed worker bounds, no credentials/proxies/redirects, and identity-filtered presentation
 - Non-root `FROM scratch` image and Engine-28+-gated loopback-only publication
 - Portable one-service production bundle and declarative Tailscale HTTP Serve template
@@ -196,7 +197,7 @@ No CA state lives on pfSense/the router. Router replacement restores ordinary DN
 - [ ] Expand modern-policy support only with additional fail-closed semantics and live evidence
 - [x] Prefer concrete NPM frontend names, preserve wildcard-only cards without broken links, and add strict optional name/URL metadata
 - [x] Add bounded explicit-opt-in backend health checks without treating NPM route state as health
-- [ ] Add privacy-minimized DNS/Tailscale observations as ephemeral operator suggestions
+- [x] Add one-shot privacy-minimized selected-control-plane/hostname-feed suggestions with no runtime store or automatic metadata mutation
 - [ ] Add categories, local logos, ordering, personalization, and Tailscale SSH machine cards
 - [ ] Add Caddy and Traefik service-discovery adapters
 

@@ -164,6 +164,8 @@ verify: fmt-check vet test docker production-compose-check
 		"$(IMAGE)" healthcheck --help >/dev/null
 	docker run --rm --read-only --security-opt no-new-privileges \
 		"$(IMAGE)" validate --help >/dev/null
+	docker run --rm --read-only --security-opt no-new-privileges \
+		"$(IMAGE)" suggest-hostnames --help >/dev/null
 
 clean:
 	rm -f velociportal

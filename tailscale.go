@@ -99,7 +99,16 @@ type tailscaleDeviceDTO struct {
 	Tags      []string        `json:"tags"`
 }
 
-func (c *TailscaleClient) Load(ctx context.Context, progress controlPlaneProgress) (_ *ControlPlaneResult, err error) {
+func (c *TailscaleClient) Load(ctx context.Context, progress controlPlaneProgress) (*ControlPlaneResult, error) {
+	result, _, err := c.load(ctx, progress, false)
+	return result, err
+}
+
+func (c *TailscaleClient) LoadHostnameSuggestions(ctx context.Context, progress controlPlaneProgress) (*ControlPlaneResult, []string, error) {
+	return c.load(ctx, progress, true)
+}
+
+func (c *TailscaleClient) load(ctx context.Context, progress controlPlaneProgress, includeCandidateNames bool) (_ *ControlPlaneResult, _ []string, err error) {
 	defer func() {
 		if err == nil {
 			return
@@ -117,31 +126,31 @@ func (c *TailscaleClient) Load(ctx context.Context, progress controlPlaneProgres
 	}()
 
 	if _, err := c.token(ctx, ""); err != nil {
-		return nil, &controlPlaneLoadError{Provider: c.Provider(), Stage: controlPlaneStageAuth, Err: err}
+		return nil, nil, &controlPlaneLoadError{Provider: c.Provider(), Stage: controlPlaneStageAuth, Err: err}
 	}
 	reportControlPlaneProgress(progress, controlPlaneStageAuth, 0)
 
 	policyResult, err := c.fetchPolicy(ctx)
 	if err != nil {
-		return nil, &controlPlaneLoadError{Provider: c.Provider(), Stage: controlPlaneStagePolicy, Err: err}
+		return nil, nil, &controlPlaneLoadError{Provider: c.Provider(), Stage: controlPlaneStagePolicy, Err: err}
 	}
 	reportControlPlaneProgress(progress, controlPlaneStagePolicy, policyResult.Policy.accessRuleCount())
 
 	users, grantRoleSelectorsByLogin, err := c.fetchUsers(ctx)
 	if err != nil {
-		return nil, &controlPlaneLoadError{Provider: c.Provider(), Stage: controlPlaneStageUsers, Err: err}
+		return nil, nil, &controlPlaneLoadError{Provider: c.Provider(), Stage: controlPlaneStageUsers, Err: err}
 	}
 	reportControlPlaneProgress(progress, controlPlaneStageUsers, len(users))
 
-	nodes, err := c.fetchDevices(ctx, users)
+	deviceLoad, err := c.fetchDevices(ctx, users, includeCandidateNames)
 	if err != nil {
-		return nil, &controlPlaneLoadError{Provider: c.Provider(), Stage: controlPlaneStageDevices, Err: err}
+		return nil, nil, &controlPlaneLoadError{Provider: c.Provider(), Stage: controlPlaneStageDevices, Err: err}
 	}
-	reportControlPlaneProgress(progress, controlPlaneStageDevices, len(nodes))
+	reportControlPlaneProgress(progress, controlPlaneStageDevices, len(deviceLoad.Nodes))
 
 	return &ControlPlaneResult{
 		Policy:                    policyResult.Policy,
-		Nodes:                     nodes,
+		Nodes:                     deviceLoad.Nodes,
 		GrantRoleSelectorsByLogin: grantRoleSelectorsByLogin,
 		Metadata: ControlPlaneMetadata{
 			Provider:     c.Provider(),
@@ -149,7 +158,7 @@ func (c *TailscaleClient) Load(ctx context.Context, progress controlPlaneProgres
 			SupportLevel: controlPlanePreview,
 			SSHPresent:   policyResult.SSHPresent,
 		},
-	}, nil
+	}, deviceLoad.CandidateNames, nil
 }
 
 func (c *TailscaleClient) fetchPolicy(ctx context.Context) (*validatedPolicy, error) {
@@ -266,76 +275,87 @@ func tailscaleUserString(raw json.RawMessage, index int, field string) (string, 
 	return value, nil
 }
 
-func (c *TailscaleClient) fetchDevices(ctx context.Context, users []tailscaleUserDTO) ([]Node, error) {
+type tailscaleDeviceLoad struct {
+	Nodes          []Node
+	CandidateNames []string
+}
+
+func (c *TailscaleClient) fetchDevices(ctx context.Context, users []tailscaleUserDTO, includeCandidateNames bool) (tailscaleDeviceLoad, error) {
 	body, header, err := c.doAPI(ctx, http.MethodGet, "/tailnet/-/devices")
 	if err != nil {
-		return nil, fmt.Errorf("fetch devices: %w", err)
+		return tailscaleDeviceLoad{}, fmt.Errorf("fetch devices: %w", err)
 	}
 	var envelope map[string]json.RawMessage
 	if err := json.Unmarshal(body, &envelope); err != nil {
-		return nil, fmt.Errorf("fetch devices: decode response: %w", err)
+		return tailscaleDeviceLoad{}, fmt.Errorf("fetch devices: decode response: %w", err)
 	}
 	if err := rejectPartialTailscaleResponse(envelope, header); err != nil {
-		return nil, fmt.Errorf("fetch devices: %w", err)
+		return tailscaleDeviceLoad{}, fmt.Errorf("fetch devices: %w", err)
 	}
 	rawDevices, ok := envelope["devices"]
 	if !ok {
-		return nil, fmt.Errorf("fetch devices: response is missing devices")
+		return tailscaleDeviceLoad{}, fmt.Errorf("fetch devices: response is missing devices")
 	}
 	if bytes.Equal(bytes.TrimSpace(rawDevices), []byte("null")) {
-		return nil, fmt.Errorf("fetch devices: devices must be an array")
+		return tailscaleDeviceLoad{}, fmt.Errorf("fetch devices: devices must be an array")
 	}
 	var devices []tailscaleDeviceDTO
 	if err := json.Unmarshal(rawDevices, &devices); err != nil {
-		return nil, fmt.Errorf("fetch devices: decode devices: %w", err)
+		return tailscaleDeviceLoad{}, fmt.Errorf("fetch devices: decode devices: %w", err)
 	}
 
-	nodes := make([]Node, 0, len(devices))
+	loaded := tailscaleDeviceLoad{Nodes: make([]Node, 0, len(devices))}
+	if includeCandidateNames {
+		loaded.CandidateNames = make([]string, 0, len(devices)*2)
+	}
 	seenIDs := make(map[string]int, len(devices))
 	for index, device := range devices {
 		id, err := tailscaleReference(device.ID)
 		if err != nil {
-			return nil, fmt.Errorf("fetch devices: device %d has invalid id", index)
+			return tailscaleDeviceLoad{}, fmt.Errorf("fetch devices: device %d has invalid id", index)
 		}
 		if id == "" {
 			id = strings.TrimSpace(device.NodeID)
 		}
 		if id == "" {
-			return nil, fmt.Errorf("fetch devices: device %d has a blank id", index)
+			return tailscaleDeviceLoad{}, fmt.Errorf("fetch devices: device %d has a blank id", index)
 		}
 		if previous, exists := seenIDs[id]; exists {
-			return nil, fmt.Errorf("fetch devices: devices %d and %d have duplicate id", previous, index)
+			return tailscaleDeviceLoad{}, fmt.Errorf("fetch devices: devices %d and %d have duplicate id", previous, index)
 		}
 		seenIDs[id] = index
 
 		tags := normalizeStrings(device.Tags)
 		ownerRef, err := tailscaleReference(device.User)
 		if err != nil {
-			return nil, fmt.Errorf("fetch devices: device %d has an invalid owner reference", index)
+			return tailscaleDeviceLoad{}, fmt.Errorf("fetch devices: device %d has an invalid owner reference", index)
 		}
 		owner := ""
 		if len(tags) == 0 {
 			if ownerRef == "" {
-				return nil, fmt.Errorf("fetch devices: untagged device %d has a blank owner reference", index)
+				return tailscaleDeviceLoad{}, fmt.Errorf("fetch devices: untagged device %d has a blank owner reference", index)
 			}
 			owner, err = resolveTailscaleOwner(ownerRef, users)
 			if err != nil {
-				return nil, fmt.Errorf("fetch devices: device %d: %w", index, err)
+				return tailscaleDeviceLoad{}, fmt.Errorf("fetch devices: device %d: %w", index, err)
 			}
 		}
 		name := strings.TrimSpace(device.Name)
 		if name == "" {
 			name = strings.TrimSpace(device.Hostname)
 		}
-		nodes = append(nodes, Node{
+		loaded.Nodes = append(loaded.Nodes, Node{
 			ID:         id,
 			Name:       name,
 			OwnerLogin: owner,
 			Tags:       tags,
 			Addresses:  normalizeStrings(device.Addresses),
 		})
+		if includeCandidateNames {
+			loaded.CandidateNames = append(loaded.CandidateNames, device.Name, device.Hostname)
+		}
 	}
-	return nodes, nil
+	return loaded, nil
 }
 
 func resolveTailscaleOwner(reference string, users []tailscaleUserDTO) (string, error) {

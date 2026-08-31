@@ -15,6 +15,7 @@ const cliUsage = `Usage:
   velociportal setup observe-proxy     Observe the exact trusted proxy source
   velociportal doctor [options]        Run configuration and upstream diagnostics
   velociportal validate [options]      Build an explainable deployment-validation report
+  velociportal suggest-hostnames ...   Propose private wildcard hostname metadata
   velociportal healthcheck [options]   Probe the local health endpoint
   velociportal help [command]          Show help
 
@@ -22,8 +23,9 @@ Commands:
   serve        Start the Velociportal server
   setup        Guide local configuration and trusted-proxy observation
   doctor       Check configuration, upstreams, joins, and identity previews
-  validate     Compare labeled identities and explain supported join evidence
-  healthcheck  Probe /healthz without loading application credentials
+  validate           Compare labeled identities and explain supported join evidence
+  suggest-hostnames  Privately propose metadata for wildcard-only NPM services
+  healthcheck        Probe /healthz without loading application credentials
   help         Show help
 
 Run "velociportal help <command>" for command options.
@@ -39,20 +41,22 @@ Options:
 `
 
 type cliCommands struct {
-	serve       func(configLookup) error
-	setup       func([]string, io.Reader, io.Writer, io.Writer) int
-	doctor      func([]string, io.Writer, io.Writer) int
-	validate    func([]string, io.Writer, io.Writer) int
-	healthcheck func([]string, io.Writer, io.Writer) int
+	serve            func(configLookup) error
+	setup            func([]string, io.Reader, io.Writer, io.Writer) int
+	doctor           func([]string, io.Writer, io.Writer) int
+	validate         func([]string, io.Writer, io.Writer) int
+	suggestHostnames func([]string, io.Reader, io.Writer, io.Writer) int
+	healthcheck      func([]string, io.Writer, io.Writer) int
 }
 
 func defaultCLICommands() cliCommands {
 	return cliCommands{
-		serve:       runWithLookup,
-		setup:       runSetupCommand,
-		doctor:      runDoctorCommand,
-		validate:    runValidationCommand,
-		healthcheck: runHealthcheckCommand,
+		serve:            runWithLookup,
+		setup:            runSetupCommand,
+		doctor:           runDoctorCommand,
+		validate:         runValidationCommand,
+		suggestHostnames: runHostnameSuggestionsCommand,
+		healthcheck:      runHealthcheckCommand,
 	}
 }
 
@@ -95,6 +99,11 @@ func runCLIWithCommands(args []string, stdin io.Reader, stdout, stderr io.Writer
 			return unavailableCLICommand("validate", stderr)
 		}
 		return commands.validate(args[1:], stdout, stderr)
+	case "suggest-hostnames":
+		if commands.suggestHostnames == nil {
+			return unavailableCLICommand("suggest-hostnames", stderr)
+		}
+		return commands.suggestHostnames(args[1:], stdin, stdout, stderr)
 	case "healthcheck":
 		if commands.healthcheck == nil {
 			return unavailableCLICommand("healthcheck", stderr)
@@ -140,6 +149,8 @@ func executeHelp(args []string, stdout, stderr io.Writer) int {
 		usage = doctorUsage
 	case "validate":
 		usage = validationUsage
+	case "suggest-hostnames":
+		usage = hostnameSuggestionsUsage
 	case "healthcheck":
 		usage = healthcheckUsage
 	case "help":

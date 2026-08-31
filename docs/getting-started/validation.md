@@ -230,6 +230,22 @@ For every enabled NPM proxy host:
 - [ ] Note records with multiple domains; only the first valid concrete domain becomes the automatic link
 - [ ] Confirm `nginx_online` remains NPM route state and does not create a health label
 
+### Optional hostname-suggestion proposal
+
+When testing `suggest-hostnames` privately:
+
+- [ ] Run it only from a trusted operator environment with `--privacy private` and an explicit browser scheme
+- [ ] Confirm the review contains only canonical hostnames, coarse source classes, and existing positive NPM proxy-host IDs; independently verify that each untrusted provider-visible name is the intended browser destination
+- [ ] Confirm invalid control-plane names are skipped and invalid stdin fails with a value-free line-number error
+- [ ] Include a deliberate one-to-many or many-to-one wildcard match and confirm the complete connected component is excluded
+- [ ] Confirm stdout stays empty before approval and on rejection, EOF, terminal failure, or any operational error before emission; use `--output` to test atomic publication because a downstream stdout failure after approval can leave a partial stream
+- [ ] Confirm `--output` creates a new `0600` file and refuses the active metadata path, existing files, and symlinks
+- [ ] Compare multi-identity card sets before and after proposal generation; they must be identical because generation does not apply metadata
+- [ ] Manually review and merge only an approved proposal, then confirm that only display name/browser URL changed and hidden, disabled, unmatched, or domainless services did not gain cards
+- [ ] Remove the private proposal after the decision is recorded
+
+The command is not DNS discovery, a recurring observer, or an updater. It adds no production mount, route, port, runtime store, or automatic metadata mutation.
+
 ### Optional service-health observations
 
 When the health overlay is enabled:

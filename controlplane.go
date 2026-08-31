@@ -62,6 +62,11 @@ type ControlPlane interface {
 	Load(context.Context, controlPlaneProgress) (*ControlPlaneResult, error)
 }
 
+type hostnameSuggestionControlPlane interface {
+	ControlPlane
+	LoadHostnameSuggestions(context.Context, controlPlaneProgress) (*ControlPlaneResult, []string, error)
+}
+
 type controlPlaneLoadError struct {
 	Provider controlPlaneProvider
 	Stage    controlPlaneLoadStage

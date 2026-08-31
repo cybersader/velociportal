@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -180,6 +181,34 @@ func TestFetchNodes(t *testing.T) {
 	}
 	if len(n.Addresses) != 1 || n.Addresses[0] != "100.64.0.1" {
 		t.Errorf("Addresses = %v, want [100.64.0.1]", n.Addresses)
+	}
+}
+
+func TestHeadscaleLoadHostnameSuggestionsCollectsOnlyNodeNames(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/policy", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(t, w, map[string]any{"policy": `{"acls":[]}`})
+	})
+	mux.HandleFunc("/api/v1/node", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(t, w, map[string]any{"nodes": []map[string]any{{
+			"id": "private-node-id", "name": " App.Internal.Example.com. ",
+			"user": map[string]any{"id": "private-user-id", "name": "owner@example.com"},
+			"tags": []string{"tag:private"}, "ipAddresses": []string{"100.64.0.1"},
+		}}})
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	client := NewHeadscaleClient(server.URL, "headscale-key", server.Client())
+
+	result, names, err := client.LoadHostnameSuggestions(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("LoadHostnameSuggestions() error = %v", err)
+	}
+	if len(result.Nodes) != 1 || result.Nodes[0].ID != "private-node-id" {
+		t.Fatalf("result nodes = %#v", result.Nodes)
+	}
+	if got, want := names, []string{" App.Internal.Example.com. "}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("candidate names = %#v, want %#v", got, want)
 	}
 }
 
