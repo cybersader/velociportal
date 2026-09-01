@@ -6,7 +6,7 @@
 
 # Your network policy is your dashboard policy.
 
-<p class="vp-hero__lede">Velociportal reads a selected Headscale or Tailscale SaaS legacy ACL source plus Nginx Proxy Manager proxy hosts, then renders a server-filtered visibility portal for the human identity supplied by Tailscale Serve.</p>
+<p class="vp-hero__lede">Velociportal reads one selected Headscale or Tailscale SaaS policy source plus Nginx Proxy Manager proxy hosts, then renders server-filtered service cards and, for an available Tailscale SSH projection, separate machine cards for the human identity supplied by Tailscale Serve.</p>
 
 <div class="vp-actions" markdown>
 [Start the TrueNAS Quickstart](guides/truenas-scale.md){ .md-button .md-button--primary }
@@ -29,7 +29,7 @@
 </div>
 
 !!! info "Visibility, not enforcement"
-    Velociportal does not authenticate users, issue tokens, proxy service traffic, or enforce access. Tailscale Serve, the selected control plane, NPM, and each backend remain security boundaries. A hidden card is not authorization.
+    Velociportal does not authenticate users, issue tokens, proxy service or SSH traffic, or enforce access. Tailscale Serve, Tailscale SSH, the selected control plane, NPM, destination operating systems, and each backend remain security boundaries. A hidden card is not authorization.
 
 ## Canonical TrueNAS shape
 
@@ -52,7 +52,7 @@ HEADSCALE_URL=http://headscale.velociportal.internal:8080
 NPM_URL=http://npm.velociportal.internal:81
 ```
 
-Headscale HTTP is accepted only for the implementation's exact local/internal allowlist. Other locations require verified HTTPS. The base Compose bundle has no host mounts; private-CA and service-metadata mounts are explicit optional overlays.
+Headscale HTTP is accepted only for the implementation's exact local/internal allowlist. Other locations require verified HTTPS. The base Compose bundle has no host mounts; private-CA, service-metadata, and service-health mounts are explicit optional overlays. Strict service metadata can apply presentation-only names/URLs and, in version 2, deterministic categories/order after normal identity and policy matching.
 
 In Headscale mode, existing NPM provides the trusted HTTPS endpoint needed before a client joins the tailnet. Runtime Velociportal bypasses that control proxy; workstation-only `headscale-ops` stays HTTPS-only. Tailscale SaaS preview mode instead uses dedicated OAuth credentials against the fixed verified SaaS origin and does not require Headscale or the NPM Headscale control proxy.
 
@@ -110,28 +110,29 @@ In Headscale mode, existing NPM provides the trusted HTTPS endpoint needed befor
 
     - Explicit Headscale or Tailscale provider selection; implicit Headscale warns through v0.2
     - Exact local/internal Headscale HTTP allowlist plus verified HTTPS elsewhere
-    - Fixed-origin Tailscale OAuth adapter with strict owner mapping, labeled preview
+    - Fixed-origin Tailscale OAuth adapter with strict Users/device-owner mapping, labeled preview
     - Separate hardened provider and NPM transports
     - Named private production bridge, required egress, and direct runtime aliases
     - Optional private-CA overlay; no base-stack CA mount
     - NPM credential login and proxy-host discovery
-    - Legacy ACL `accept` matching for supported identity and destination forms
+    - Legacy ACL `accept` matching plus a narrow Tailscale network-Grants subset with exact TCP/backend-port checks
+    - Separate Tailscale-preview SSH Machines projection requiring supported SSH plus independent Grant TCP/22 evidence
     - Trusted `Tailscale-User-*` identity headers
-    - Responsive server-rendered portal with embedded htmx
+    - Responsive server-rendered portal with embedded htmx, presentation-only organization, and bounded optional health labels
     - Single non-root `FROM scratch` container
     - Portable one-service production bundle for Compose 2.33.1+ and Engine 28+
 
 === "Not implemented"
 
     - Headscale automatic HTTPS Serve certificate automation
-    - Grants, SSH-as-card-evidence, posture, capabilities, port, or protocol evaluation
+    - General Grants, broader SSH selectors/user mappings, posture, routing constraints, services, IP sets, or application capabilities
     - Caddy or Traefik discovery
     - Direct Authentik, Authelia, `Remote-User`, or `X-Webauth-*` adapters
     - NPM access-list-driven visibility
 
 === "Must be validated"
 
-    - Tailscale SaaS OAuth scopes, refresh/revocation, owner mapping, policy negatives, and reachability before preview becomes supported
+    - Tailscale SaaS OAuth scopes, refresh/revocation, exact Users/device-owner mapping, HTTP-policy and SSH-projection negatives, two-identity service/machine isolation, copied-target parity, and actual HTTP/SSH reachability before preview becomes supported
     - Trusted NPM HTTPS for brand-new Headscale clients and WebSocket/upgrade preservation
     - Headscale port `8080` not published to the LAN
     - Separate operator/runtime API keys and safe NPM logging

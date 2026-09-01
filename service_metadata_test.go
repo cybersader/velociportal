@@ -26,6 +26,27 @@ func TestParseServiceMetadata(t *testing.T) {
 	}
 }
 
+func TestParseServiceMetadataV2OrganizationFields(t *testing.T) {
+	metadata, err := parseServiceMetadata([]byte(`{
+		"version": 2,
+		"services": [
+			{"proxy_host_id": 42, "name": "Rader Wiki", "category": "Réseau", "order": 0},
+			{"proxy_host_id": 43, "category": "Infrastructure", "order": 1000000}
+		]
+	}`))
+	if err != nil {
+		t.Fatalf("parseServiceMetadata() error = %v", err)
+	}
+	first := metadata.Overrides[42]
+	if first.Name != "Rader Wiki" || first.Category != "Réseau" || first.Order == nil || *first.Order != 0 {
+		t.Fatalf("override 42 = %#v", first)
+	}
+	second := metadata.Overrides[43]
+	if second.Name != "" || second.URL != "" || second.Category != "Infrastructure" || second.Order == nil || *second.Order != maxServiceMetadataOrder {
+		t.Fatalf("override 43 = %#v", second)
+	}
+}
+
 func TestParseServiceMetadataRejectsInvalidDocumentsWithoutLeakingValues(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -34,7 +55,10 @@ func TestParseServiceMetadataRejectsInvalidDocumentsWithoutLeakingValues(t *test
 	}{
 		{name: "empty", document: ``, contains: "empty"},
 		{name: "null", document: `null`, contains: "version"},
-		{name: "wrong version", document: `{"version":2,"services":[]}`, contains: "version"},
+		{name: "wrong version", document: `{"version":3,"services":[]}`, contains: "version"},
+		{name: "v1 category", document: `{"version":1,"services":[{"proxy_host_id":1,"category":"secret-name"}]}`, contains: "invalid"},
+		{name: "v1 order", document: `{"version":1,"services":[{"proxy_host_id":1,"order":0}]}`, contains: "invalid"},
+		{name: "v2 unknown field", document: `{"version":2,"services":[{"proxy_host_id":1,"category":"safe","other":true}]}`, contains: "invalid"},
 		{name: "missing services", document: `{"version":1}`, contains: "array"},
 		{name: "null services", document: `{"version":1,"services":null}`, contains: "array"},
 		{name: "unknown field", document: `{"version":1,"services":[],"other":true}`, contains: "invalid"},
@@ -49,6 +73,15 @@ func TestParseServiceMetadataRejectsInvalidDocumentsWithoutLeakingValues(t *test
 		{name: "empty override", document: `{"version":1,"services":[{"proxy_host_id":1}]}`, contains: "name or url"},
 		{name: "padded name", document: `{"version":1,"services":[{"proxy_host_id":1,"name":" secret-name "}]}`, contains: "invalid name"},
 		{name: "control name", document: "{\"version\":1,\"services\":[{\"proxy_host_id\":1,\"name\":\"secret-name\\nvalue\"}]}", contains: "invalid name"},
+		{name: "empty v2 override", document: `{"version":2,"services":[{"proxy_host_id":1}]}`, contains: "name, url, category, or order"},
+		{name: "empty category", document: `{"version":2,"services":[{"proxy_host_id":1,"category":""}]}`, contains: "invalid category"},
+		{name: "padded category", document: `{"version":2,"services":[{"proxy_host_id":1,"category":" secret-name "}]}`, contains: "invalid category"},
+		{name: "control category", document: "{\"version\":2,\"services\":[{\"proxy_host_id\":1,\"category\":\"secret-name\\nvalue\"}]}", contains: "invalid category"},
+		{name: "null category", document: `{"version":2,"services":[{"proxy_host_id":1,"name":"safe","category":null}]}`, contains: "invalid"},
+		{name: "null order", document: `{"version":2,"services":[{"proxy_host_id":1,"name":"safe","order":null}]}`, contains: "invalid"},
+		{name: "negative order", document: `{"version":2,"services":[{"proxy_host_id":1,"order":-1}]}`, contains: "invalid order"},
+		{name: "fractional order", document: `{"version":2,"services":[{"proxy_host_id":1,"order":1.5}]}`, contains: "invalid"},
+		{name: "excessive order", document: `{"version":2,"services":[{"proxy_host_id":1,"order":1000001}]}`, contains: "invalid order"},
 		{name: "wildcard url", document: `{"version":1,"services":[{"proxy_host_id":1,"url":"https://*.secret.example/"}]}`, contains: "invalid url"},
 		{name: "userinfo url", document: `{"version":1,"services":[{"proxy_host_id":1,"url":"https://user:secret@example.com/"}]}`, contains: "invalid url"},
 		{name: "relative url", document: `{"version":1,"services":[{"proxy_host_id":1,"url":"/secret/path"}]}`, contains: "invalid url"},
@@ -75,6 +108,12 @@ func TestParseServiceMetadataRejectsLimits(t *testing.T) {
 	_, err := parseServiceMetadata([]byte(`{"version":1,"services":[{"proxy_host_id":1,"name":"` + longName + `"}]}`))
 	if err == nil || !strings.Contains(err.Error(), "invalid name") {
 		t.Fatalf("long name error = %v", err)
+	}
+
+	longCategory := strings.Repeat("x", maxServiceMetadataCategory+1)
+	_, err = parseServiceMetadata([]byte(`{"version":2,"services":[{"proxy_host_id":1,"category":"` + longCategory + `"}]}`))
+	if err == nil || !strings.Contains(err.Error(), "invalid category") {
+		t.Fatalf("long category error = %v", err)
 	}
 
 	entries := make([]string, maxServiceMetadataEntries+1)

@@ -91,12 +91,13 @@ sequenceDiagram
 2. Reject the request with `403` unless it is inside `TRUSTED_PROXY_CIDR`.
 3. Require `Tailscale-User-Login`; a missing identity from a trusted source returns `401`.
 4. Preserve a fully qualified login exactly. Short or bare legacy forms are accepted only when the trusted header itself uses that form.
-5. Resolve supported policy groups and, for Tailscale Grants only, Users-API-authoritative role selectors for that exact login.
+5. Resolve supported policy groups and, for Tailscale Grants and the bounded SSH Machines projection, Users-API-authoritative role selectors for that exact login.
 6. Evaluate enabled NPM proxy hosts against normalized supported access rules. Grant-derived cards require TCP to the exact backend port.
-7. For each already-matched host, prefer the first concrete NPM frontend name. Keep wildcard-only hosts visible but unlinked, then apply any exact-ID name/URL presentation override.
+7. For each already-matched host, prefer the first concrete NPM frontend name. Keep wildcard-only hosts visible but unlinked, then apply any exact-ID name/URL/category/order presentation metadata.
 8. Join any configured coarse health observation by the already-authorized proxy-host ID. Health cannot change card count, order, URL, link state, or authorization.
-9. Sort matching cards and render HTML server-side without inferring backend health from NPM route state.
-10. Let embedded htmx refresh the card grid every 60 seconds without turning the app into an SPA.
+9. Sort matching service cards deterministically: categorized groups first, uncategorized last, explicit order within each category, then case-insensitive name and proxy-host ID. Render HTML server-side without inferring backend health from NPM route state.
+10. Independently render the Machines section only when Tailscale is selected and the SSH policy is present and fully supported. Each device still requires matching SSH policy plus independent Grant TCP/22 evidence. Headscale, absent SSH, and unsupported SSH omit the complete section; a supported projection with zero identity matches preserves the explicit empty state.
+11. Let embedded htmx refresh the complete service-and-machine content every 60 seconds without turning the app into an SPA.
 
 [See the accepted and rejected routes →](../reference/tailscale-headers.md)
 

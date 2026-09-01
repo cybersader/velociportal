@@ -176,12 +176,17 @@ func TestLoadSnapshot_AllOrNothing(t *testing.T) {
 func TestCache_ServiceMetadataReloadIsAtomic(t *testing.T) {
 	u := newTestUpstreams(t)
 	name := "First"
+	category := "Knowledge"
+	order := 1
 	fail := false
 	loader := func() (*ServiceMetadata, error) {
 		if fail {
 			return nil, errors.New("metadata boom")
 		}
-		return &ServiceMetadata{Overrides: map[int]ServiceOverride{1: {Name: name}}}, nil
+		loadedOrder := order
+		return &ServiceMetadata{Overrides: map[int]ServiceOverride{1: {
+			Name: name, Category: category, Order: &loadedOrder,
+		}}}, nil
 	}
 	cache := NewCacheWithServiceMetadata(u.hs, u.npm, loader, time.Hour, discardLogger())
 
@@ -189,17 +194,24 @@ func TestCache_ServiceMetadataReloadIsAtomic(t *testing.T) {
 		t.Fatalf("initial refresh error = %v", err)
 	}
 	first := cache.Get()
-	if got := first.ServiceMetadata.Overrides[1].Name; got != "First" {
-		t.Fatalf("initial metadata name = %q", got)
+	firstOverride := first.ServiceMetadata.Overrides[1]
+	if firstOverride.Name != "First" || firstOverride.Category != "Knowledge" || firstOverride.Order == nil || *firstOverride.Order != 1 {
+		t.Fatalf("initial metadata override = %#v", firstOverride)
 	}
 
 	name = "Second"
+	category = "Infrastructure"
+	order = 2
 	if err := cache.refresh(context.Background()); err != nil {
 		t.Fatalf("second refresh error = %v", err)
 	}
 	second := cache.Get()
-	if second == first || second.ServiceMetadata.Overrides[1].Name != "Second" {
+	secondOverride := second.ServiceMetadata.Overrides[1]
+	if second == first || secondOverride.Name != "Second" || secondOverride.Category != "Infrastructure" || secondOverride.Order == nil || *secondOverride.Order != 2 {
 		t.Fatalf("metadata was not atomically replaced: %#v", second.ServiceMetadata)
+	}
+	if *first.ServiceMetadata.Overrides[1].Order != 1 {
+		t.Fatalf("previous snapshot metadata changed: %#v", first.ServiceMetadata)
 	}
 
 	policyHits := u.policyHits.Load()
@@ -341,6 +353,64 @@ func TestCache_ControlPlaneFailureRetainsExactSnapshot(t *testing.T) {
 	}
 	if got := cache.Get().GrantRoleSelectorsByLogin["alice@example.com"]; !reflect.DeepEqual(got, []string{"autogroup:member"}) {
 		t.Fatalf("recovered role selectors = %v", got)
+	}
+}
+
+func TestCache_MachineInputsPublishAtomically(t *testing.T) {
+	u := newTestUpstreams(t)
+	provider := &fakeControlPlane{
+		provider: controlPlaneTailscale,
+		result: &ControlPlaneResult{
+			Policy: &Policy{
+				SSH: SSHPolicy{State: sshPolicySupported, RuleCount: 1, Rules: []SSHRule{{
+					Action: "accept", Src: []string{"alice@example.com"}, Dst: []string{"tag:server"}, Users: []string{"deploy"},
+				}}},
+				Grants: []GrantRule{{
+					Src: []string{"alice@example.com"}, BrowserSrc: []string{"alice@example.com"}, Dst: []string{"tag:server"},
+					IPCapabilities: []grantIPCapability{mustGrantCapability(t, "tcp:22")},
+				}},
+			},
+			Nodes: []Node{{
+				ID: "device-1", Name: "server.tailnet.ts.net", Tags: []string{"tag:server"}, Addresses: []string{"100.64.0.10"},
+			}},
+			GrantRoleSelectorsByLogin: map[string][]string{"alice@example.com": {"autogroup:member"}},
+			Metadata:                  ControlPlaneMetadata{Provider: controlPlaneTailscale, PolicyMode: networkAccessVisibilityV1, SupportLevel: controlPlanePreview},
+		},
+	}
+	cache := NewCache(provider, u.npm, time.Hour, discardLogger())
+	if err := cache.refresh(context.Background()); err != nil {
+		t.Fatalf("initial refresh error = %v", err)
+	}
+	good := cache.Get()
+	if machines := MatchMachines(&Identity{Login: "alice@example.com"}, good); len(machines) != 1 || machines[0].ID != "device-1" {
+		t.Fatalf("initial machines = %#v", machines)
+	}
+
+	provider.result = &ControlPlaneResult{
+		Policy:                    &Policy{SSH: SSHPolicy{State: sshPolicyAbsent}},
+		GrantRoleSelectorsByLogin: map[string][]string{},
+		Metadata:                  ControlPlaneMetadata{Provider: controlPlaneTailscale, PolicyMode: legacyACLVisibilityV1, SupportLevel: controlPlanePreview},
+	}
+	provider.err = &controlPlaneLoadError{Provider: controlPlaneTailscale, Stage: controlPlaneStagePolicy, Err: errors.New("policy unavailable")}
+	if err := cache.refresh(context.Background()); err == nil {
+		t.Fatal("failed refresh error = nil")
+	}
+	if cache.Get() != good {
+		t.Fatal("failed machine-input refresh replaced the complete snapshot")
+	}
+	if machines := MatchMachines(&Identity{Login: "alice@example.com"}, cache.Get()); len(machines) != 1 || machines[0].ID != "device-1" {
+		t.Fatalf("stale machines = %#v", machines)
+	}
+
+	provider.err = nil
+	if err := cache.refresh(context.Background()); err != nil {
+		t.Fatalf("recovery refresh error = %v", err)
+	}
+	if cache.Get() == good {
+		t.Fatal("successful machine-input recovery did not replace the snapshot")
+	}
+	if machines := MatchMachines(&Identity{Login: "alice@example.com"}, cache.Get()); len(machines) != 0 {
+		t.Fatalf("recovered machines = %#v, want none", machines)
 	}
 }
 

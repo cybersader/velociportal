@@ -96,6 +96,25 @@ func TestFetchPolicy_EmptyPolicy(t *testing.T) {
 	}
 }
 
+func TestFetchPolicy_HeadscaleSSHIsWarningOnlyAndHasNoNormalizedRules(t *testing.T) {
+	body := `{"policy":"{\"acls\":[{\"action\":\"accept\",\"src\":[\"*\"],\"dst\":[\"tag:app:*\"]}],\"ssh\":[{\"action\":\"accept\",\"src\":[\"alice@example.com\"],\"dst\":[\"autogroup:self\"],\"users\":[\"root\"]}]}"}`
+	_, client := newHeadscaleTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(body))
+	})
+
+	policy, err := client.FetchPolicy(context.Background())
+	if err != nil {
+		t.Fatalf("FetchPolicy() error = %v", err)
+	}
+	if len(policy.ACLs) != 1 {
+		t.Fatalf("HTTP ACLs = %#v", policy.ACLs)
+	}
+	if policy.SSH.State != sshPolicyUnsupported || policy.SSH.UnsupportedReason != sshUnsupportedProvider || policy.SSH.RuleCount != 1 || len(policy.SSH.Rules) != 0 {
+		t.Fatalf("SSH policy = %#v", policy.SSH)
+	}
+}
+
 func TestFetchPolicy_RejectsModernTailscaleSections(t *testing.T) {
 	for name, body := range map[string]string{
 		"grants":    `{"policy":"{\"grants\":[{\"src\":[\"*\"],\"dst\":[\"*\"],\"ip\":[\"*\"]}]}"}`,

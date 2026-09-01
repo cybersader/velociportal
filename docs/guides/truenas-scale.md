@@ -323,9 +323,11 @@ users:read
 
 Do not create an API key or paste an access token into the environment file. Velociportal always uses `https://api.tailscale.com/api/v2`, requests the credential's `-` tailnet alias, keeps tokens in memory, refreshes early, and retries once after `401`.
 
-Review the real tailnet policy before deployment. ACL-only policies use `legacy_acl_visibility_v1`; accepted safe network Grants select `network_access_visibility_v1` and coexist additively with ACLs. Grant cards require TCP to the exact NPM backend port. Machine-source Grants and attr-only Funnel `nodeAttrs` may load but never become human card evidence. Posture, IP sets, services, non-empty routing `via`, application capabilities, malformed capabilities, and unknown semantics reject the entire refresh. SSH is not card evidence. Legacy ACL ports/protocols remain unmodeled.
+Review the real tailnet policy before deployment. ACL-only policies use `legacy_acl_visibility_v1`; accepted safe network Grants select `network_access_visibility_v1` and coexist additively with ACLs. Grant service cards require TCP to the exact NPM backend port. Machine-source Grants and attr-only Funnel `nodeAttrs` may load but never become human service or SSH-machine evidence. Posture, IP sets, services, non-empty routing `via`, application capabilities, malformed capabilities, and unknown HTTP-policy semantics reject the entire refresh. Legacy ACL ports/protocols remain unmodeled.
 
-Ensure the two test users' exact Tailscale `loginName` values match the `Tailscale-User-Login` values supplied by Serve, and ensure NPM `forward_host` values align with supported policy destinations. Complete token refresh, revocation, owner-mapping, unsupported-policy, and reachability acceptance before changing the preview label.
+SSH Machines is separate from HTTP service cards. The portal renders the complete Machines section only when Tailscale is selected and the `ssh` section is present and fully supported; Headscale, absent SSH, and unsupported SSH omit it. When that projection is available but an identity has no matches, the portal shows the explicit empty Machines state. A machine appears only for an exact direct member who matches both the bounded supported `ssh` subset and an independent Grant permitting TCP/22 to the same device. Sources are exact full logins, defined exact-login groups, or supported human-role autogroups; destinations are tags or `autogroup:self`; actions are `accept`/`check`; users are literal validated accounts or `autogroup:nonroot`. Projection unavailability leaves otherwise supported HTTP cards available. Treat every machine card and copied command as a policy preview, not proof of login or reachability.
+
+Ensure the two test users' exact canonical Tailscale `loginName` values match the `Tailscale-User-Login` values supplied by Serve, and ensure NPM `forward_host` values align with supported policy destinations. Complete token refresh, revocation, owner-mapping, unsupported HTTP-policy/SSH-suppression, two-identity service/machine isolation, copied-target, and HTTP/Tailscale-SSH reachability acceptance before changing the preview label.
 
 ## 9. Configure declarative Tailscale HTTP Serve
 
@@ -383,11 +385,11 @@ Set `velociportal.env` from exactly one provider example.
 
 The canonical base stack mounts no CA, service metadata, or service health file. In Headscale mode, HTTP is accepted because the hostname is the exact private Docker alias. The alias suffix does not prove network confinement; the acceptance checks below must prove that no raw LAN publication or unintended direct route exists.
 
-### Optional concrete service names and URLs
+### Optional service presentation metadata
 
 Prefer adding the real concrete hostname alongside the wildcard on the **same NPM proxy host**. Velociportal selects the first valid concrete NPM name even when a wildcard appears earlier. Do not create a duplicate NPM proxy host solely for the dashboard because it can create a duplicate card.
 
-If NPM cannot or should not contain the desired browser target, copy `service-metadata.example.json`, key the entry by the existing NPM proxy-host ID, and add `compose.service-metadata.yaml` to the imported Compose files. Set these stack variables through the Compose UI:
+If NPM cannot or should not contain the desired browser target, or the portal needs explicit categories/order, copy `service-metadata.example.json`, key each entry by an existing NPM proxy-host ID, and add `compose.service-metadata.yaml` to the imported Compose files. Version 1 remains compatible for name/URL overrides. Version 2 adds optional canonical `category` strings and integer `order` values from `0` through `1000000`; category/order fields are invalid in a version-1 document. Set these stack variables through the Compose UI:
 
 ```text
 VELOCIPORTAL_SERVICE_METADATA_FILE=/mnt/personal/docker-configs/velociportal/velociportal-services.json
@@ -396,7 +398,9 @@ VELOCIPORTAL_SERVICE_METADATA_GID=950
 
 Keep the existing dataset permissions unchanged: directory `950:950`/`0750`, file `950:950`/`0640`. The overlay adds group `950` only to the Velociportal container, mounts the one file read-only at `/velociportal-services.json`, and refuses to create a missing host path. Do not `chmod`, `chown`, or alter dataset ACLs for this feature. A malformed configured file blocks a cold snapshot and a failed reload preserves the prior complete snapshot.
 
-Metadata changes only display names and browser URLs after policy matching. It cannot create a card, enable an NPM host, change `forward_host`/`forward_port`, or grant access. Wildcard-only services without metadata remain visible with `link needed`; they never produce `%2A` links. NPM `nginx_online` is not backend health.
+Metadata changes only display names, browser URLs, categories, and order after policy matching. Once any category/order field is present, categories sort deterministically with uncategorized cards last; explicit order sorts cards only within a category, before name and proxy-host-ID fallbacks. Metadata cannot create, hide, or enable a card, change `forward_host`/`forward_port`, alter health, or grant access. Wildcard-only services without metadata remain visible with `link needed`; they never produce `%2A` links. NPM `nginx_online` is not backend health.
+
+The portal also lets each browser hide or show the fixed built-in Velociportal logo. That preference uses guarded browser-local storage, defaults to visible, and is not sent to or stored by the server. Arbitrary per-service logos, access history, and server-side or account-synchronized personalization remain deferred.
 
 #### Optional one-shot hostname proposal
 
@@ -472,7 +476,11 @@ Skip this section in Headscale mode.
 - [ ] Token refresh beyond normal expiry, revocation failure, and replacement recovery recorded.
 - [ ] Two real `loginName` values map unambiguously through device owner references.
 - [ ] ACL/Grant coexistence, exact TCP/backend-port checks, source-tag non-inference, and attr-only Funnel `nodeAttrs` match the live policy.
-- [ ] Posture, IP-set, service, routing, application-capability, malformed, and unknown semantics fail the complete refresh.
+- [ ] Padded Users API `loginName` values fail closed; exact direct-member, shared-user, Owner-to-Admin, and specialized-role isolation cases match expectations.
+- [ ] Supported SSH plus Grant TCP/22 produces only the intended Machines; ACL-only port 22, wrong-port/non-TCP Grants, tag ownership, and destination negatives produce none.
+- [ ] Headscale, absent SSH, and unsupported SSH omit the complete Machines section and per-identity Doctor machine previews; supported SSH with zero identity matches preserves the explicit portal empty state.
+- [ ] Doctor machine previews reveal only counts when the projection is available, and copied commands use only validated literal accounts plus a canonical full `*.ts.net` name or validated Tailscale address.
+- [ ] Posture, IP-set, service, routing, application-capability, malformed, and unknown HTTP-policy semantics fail the complete refresh.
 - [ ] Cold-start failure and stale-snapshot retention/recovery recorded.
 - [ ] Support remains labeled preview.
 
@@ -502,10 +510,18 @@ Require intentionally different card sets. Send a caller-supplied `Tailscale-Use
 
 For every enabled NPM proxy host:
 
-- Record `forward_host` and the supported Headscale destination it joins, or mark it unmatched.
+- Record `forward_host` and the supported selected-control-plane destination it joins, or mark it unmatched.
 - Confirm each visible and hidden service against actual selected-control-plane reachability for both users.
 - Open every generated card and verify the browser-facing URL.
 - Confirm RFC1918 destinations have an advertised, approved, and client-accepted subnet route.
+
+In Tailscale mode, when a present and supported SSH policy makes the projection available, exercise the separate Machines section for both identities:
+
+- Confirm every visible device has both matching SSH-policy evidence and matching Grant TCP/22 evidence.
+- Confirm shared, role-isolation, `autogroup:self`, tag-ownership, wrong-port, non-TCP, and ACL-only-port-22 negatives.
+- Confirm `autogroup:nonroot` never invents a command account.
+- Confirm copied commands use the intended literal account and the same device's canonical full `*.ts.net` name or validated Tailscale address, then compare each command with actual Tailscale SSH behavior.
+- Treat any visible-but-unreachable machine as a mismatch; Velociportal does not enforce or health-check SSH.
 
 ### Restart and backup acceptance
 
@@ -555,8 +571,9 @@ Stop rather than weakening the design when:
 - Serve does not replace caller-supplied identity headers.
 - The policy does not permit intended users to reach Serve port `8081`.
 - A service destination is not tailnet-routable or lacks required subnet-route approval.
-- The policy uses only Grants or the NPM join does not align with supported destinations.
-- Tailscale mode requires an API key, stored access token, configurable API origin, broader OAuth scopes, or a policy construct outside `legacy_acl_visibility_v1`.
+- Intended service cards or machines rely on policy constructs outside the documented narrow Tailscale preview subset, or the NPM join does not align with supported service destinations.
+- A machine would require SSH policy without independent Grant TCP/22 evidence, a shared/machine-derived human identity, an arbitrary copied FQDN, or treating the card as enforcement/reachability proof.
+- Tailscale mode requires an API key, stored access token, configurable API origin, broader OAuth scopes, or broader policy semantics than the documented `legacy_acl_visibility_v1`/`network_access_visibility_v1` preview plus bounded SSH projection.
 - A provider switch would delete inactive known keys without explicit confirmation or preserve both credential families in the active file.
 
 Never substitute disabled certificate verification, plaintext pre-tailnet Headscale access, a public raw app port, an NPM-only portal identity route, caller-supplied identity headers, a recurring NAS shell workflow, or a source build on the NAS.

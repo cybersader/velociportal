@@ -29,7 +29,7 @@ The current polling cache does **not** fetch access lists.
 - The first valid concrete `domain_names` entry becomes the automatic card name and URL host. A wildcard may appear earlier without taking precedence.
 - A wildcard-only host remains visible after policy matching but is non-clickable until it has a concrete NPM name or an explicit service-metadata URL.
 - Adding the real concrete hostname to the same NPM proxy host is the preferred correction because NPM then remains the browser-name source of truth. Creating a duplicate proxy host can create duplicate cards.
-- `forward_scheme` becomes the automatic card URL scheme after an HTTP/HTTPS allowlist check. An explicit service-metadata URL overrides only the browser target.
+- `forward_scheme` becomes the automatic card URL scheme after an HTTP/HTTPS allowlist check. Exact-ID service metadata may override only presentation fields: browser target/display name in v1, plus category/order in v2.
 - `forward_host` is the current access-rule destination join key.
 - `forward_port` is required for exact TCP capability matching when a Tailscale Grant supplies card evidence. Legacy ACL ports remain unmodeled.
 - For an explicitly configured health target, `forward_scheme`, `forward_host`, and `forward_port` also define the direct backend probe target. Presentation-metadata URLs never participate.

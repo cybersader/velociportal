@@ -1,10 +1,12 @@
 {
-  "version": 1,
+  "version": 2,
   "services": [
     {
       "proxy_host_id": 42,
       "name": "Example Service",
-      "url": "https://service.example.com/"
+      "url": "https://service.example.com/",
+      "category": "Operations",
+      "order": 10
     }
   ]
 }

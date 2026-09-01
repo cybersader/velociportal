@@ -11,7 +11,7 @@ The `validate` command turns one live upstream snapshot into an explainable, pri
 </div>
 
 !!! warning "Visibility evidence, not authorization proof"
-    The report evaluates the selected supported mode: Headscale `legacy_acl_visibility_v1`, or Tailscale `legacy_acl_visibility_v1`/`network_access_visibility_v1`. It cannot impersonate a human tailnet identity, prove that Tailscale Serve injected a verified login, or establish that a visible service is reachable. The selected control plane, Serve, NPM, and the backend remain the enforcement boundaries.
+    The report evaluates HTTP services in the selected supported mode: Headscale `legacy_acl_visibility_v1`, or Tailscale `legacy_acl_visibility_v1`/`network_access_visibility_v1`. It cannot impersonate a human tailnet identity, prove that Tailscale Serve injected a verified login, establish that a visible service is reachable, or validate a machine card/SSH session. The selected control plane, Serve, Tailscale SSH, NPM, destination OS, and backends remain the enforcement boundaries.
 
 ## Quickstart acceptance comes first
 
@@ -29,6 +29,7 @@ For the production one-service bundle, record these manual results before using 
 - A caller-supplied `Tailscale-User-Login` sent through Serve does not change the authenticated identity.
 - Every card is compared with actual selected-control-plane and NPM reachability.
 - Tailscale preview acceptance proves supported ACL/Grant coexistence and exact TCP/backend-port matching, while posture, IP-set, service, routing, application-capability, malformed, and unknown semantics fail closed.
+- When SSH Machines is exercised, each visible machine has both supported SSH-policy evidence and Grant TCP/22 evidence for the same exact direct member and device; legacy ACL port 22 never substitutes, unavailable projections omit the complete section without changing HTTP service cards, and copied targets match the intended device.
 - NPM certificate/configuration and Headscale/policy backups have a tested restore path.
 
 The [TrueNAS Quickstart](../guides/truenas-scale.md) defines the canonical topology. The remaining sections use the local-source `make validate` workflow for deeper join evidence; they are advanced diagnostics rather than a prerequisite for importing the production Compose bundle. Tailnet HTTP over WireGuard prevents ordinary on-path LAN/router/ISP interception but does not remove endpoint, NPM, host, or control-plane compromise from scope.
@@ -66,6 +67,8 @@ Summary privacy is the default. It emits deterministic opaque service IDs such a
 - NPM forward targets;
 - raw access-rule source and destination values;
 - credentials, JWTs, configuration values, and upstream payloads.
+
+Schema-v3 validation currently reports HTTP service evidence only. It does not serialize SSH-machine policy, device, account, target, or command evidence. Doctor reports per-identity machine counts only when Tailscale is selected and the SSH projection is present and supported; Headscale, absent SSH, and unsupported SSH suppress those previews, while the top-level unsupported-policy diagnostic remains. Doctor deliberately omits all machine topology and account details. Validate Machines through the private portal and the manual worksheet below rather than publishing a topology report.
 
 Summary output is **not anonymous**. An opaque access matrix can still reveal operational relationships, so store and share it deliberately.
 
@@ -197,8 +200,12 @@ Skip this section in Headscale mode.
 - [ ] Two exact `loginName` values map unambiguously through real device owner references
 - [ ] Duplicate, blank, ambiguous, unresolved, paginated, or partial fixture cases remain fail-closed
 - [ ] ACLs and accepted Grants coexist additively; Grant cards require TCP to the exact NPM backend port
-- [ ] Source-tag and other machine-source Grants load without becoming human cards; attr-only Funnel `nodeAttrs` never authorize
-- [ ] Posture, IP-set, service, routing, application-capability, malformed, and unknown semantics fail the complete refresh
+- [ ] Source-tag and other machine-source Grants load without becoming human service or SSH-machine cards; attr-only Funnel `nodeAttrs` never authorize
+- [ ] Padded API `loginName` values reject the complete refresh rather than manufacturing exact browser role membership
+- [ ] A supported SSH section is normalized separately; Headscale, absent SSH, and one unsupported SSH rule make the projection unavailable and omit the complete Machines section without invalidating otherwise supported HTTP service cards
+- [ ] Machine cards require both supported SSH and Grant TCP/22 evidence; ACL-only port 22, wrong-port, and non-TCP Grants produce no machine
+- [ ] Shared-user, case-variant, short/bare-login, role-isolation, tag-ownership, and destination negatives produce no unauthorized machines
+- [ ] Posture, IP-set, service, routing, application-capability, malformed, and unknown HTTP-policy semantics fail the complete refresh
 - [ ] Cold-start failure, stale-snapshot retention, and recovery are recorded
 - [ ] Tailscale support remains labeled preview in retained evidence
 
@@ -215,12 +222,37 @@ Skip this section in Headscale mode.
 - [ ] A LAN request to the raw loopback-published port failed to connect; network inaccessibility was not misreported as an application `403`
 - [ ] Same-host behavior was interpreted using the documented Docker-gateway trust limitation rather than assumed to be an untrusted-source test
 
+### SSH Machines preview
+
+Skip this section in Headscale mode or when the Tailscale policy has no intended SSH-machine projection.
+
+- [ ] Doctor reports `state=supported` with the expected SSH rule count and per-identity counts only when the projection is available; unsupported SSH retains one coarse top-level reason but emits no per-identity machine preview lines
+- [ ] Headscale, absent SSH, and unsupported SSH omit the complete Machines section; supported SSH with zero matches preserves the explicit empty Machines state
+- [ ] At least two exact direct-member identities receive intentionally different machine sets; a shared user receives none
+- [ ] Every visible machine has one matching supported SSH rule and one independent matching Grant that permits TCP/22 to the same device address
+- [ ] Remove or change either side of that evidence in a controlled fixture/policy test and confirm the machine disappears; an ACL mentioning port 22 does not preserve it
+- [ ] Owner-to-Admin automatic membership and each specialized role are checked independently; no specialized role implies another
+- [ ] `autogroup:self` includes only devices with the exact separately resolved owner login; tags and `tagOwners` do not create human source membership
+- [ ] A literal allowed account produces the expected `tailscale ssh user@target` copy command; `autogroup:nonroot` remains a summary with no invented account or command
+- [ ] A canonical full `*.ts.net` device name is used when present; an arbitrary FQDN is rejected as a target and falls back only to the same device's validated Tailscale IPv4/IPv6 address
+- [ ] Shell/HTML/JavaScript metacharacter fixtures never become executable markup or copied arguments
+- [ ] Each copied command is run from the corresponding real identity and compared with actual Tailscale SSH outcome, including `check` behavior where configured
+- [ ] A visible machine that cannot be reached or logged into is recorded as a visibility/reachability mismatch, not described as authorized or healthy
+- [ ] When the projection is available, the populated or explicit-empty Machines section survives htmx refresh and remains independent of NPM service cards, metadata, category/order, and backend health
+
+Keep the private comparison local. Record opaque labels and pass/fail outcomes rather than device names, Tailscale addresses, OS account names, or commands.
+
+| Label | Machine ID | Predicted visible | Command offered | Tailscale SSH succeeds/checks as expected | Notes |
+|---|---|---:|---:|---:|---|
+| `user-a` | `machine-___` |  |  |  |  |
+| `user-b` | `machine-___` |  |  |  |  |
+
 ### Join and links
 
 For every enabled NPM proxy host:
 
 - [ ] Classify `forward_host` as a tailnet IP, routed LAN IP, FQDN, short/Docker name, localhost, or other
-- [ ] Confirm the destination is reachable through Headscale; for LAN IPs, record the advertised/approved route and client route acceptance
+- [ ] Confirm the destination is reachable through the selected control plane; for LAN IPs, record the advertised/approved route and client route acceptance
 - [ ] Record the supported selector kind that joined it, or mark it unmatched
 - [ ] Check every generated card's browser-facing scheme and hostname
 - [ ] Confirm a wildcard followed by a concrete NPM name selects the concrete name

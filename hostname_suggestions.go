@@ -370,5 +370,5 @@ func buildHostnameSuggestionProposal(suggestions []hostnameSuggestion, eligible 
 			URL:         &entryURL,
 		})
 	}
-	return serializeServiceMetadataDocument(entries)
+	return serializeServiceMetadataDocumentV1(entries)
 }

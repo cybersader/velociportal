@@ -130,6 +130,91 @@ func TestPortalHandler_AdminUser(t *testing.T) {
 	}
 }
 
+func TestPortalHandler_LegacyCardsRemainFlatAndAlphabetical(t *testing.T) {
+	rec := doPortalRequest(
+		newTestHandler(standardTestData()),
+		"127.0.0.1:12345",
+		"alice@example.com",
+	)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+
+	body := rec.Body.String()
+	if !strings.Contains(body, `<div class="grid" id="services"`) {
+		t.Fatal("legacy cards should keep the flat services grid")
+	}
+	if strings.Contains(body, `class="service-category"`) {
+		t.Fatal("legacy cards should not gain category sections")
+	}
+	grafana := strings.Index(body, `data-service="grafana.example.com"`)
+	wiki := strings.Index(body, `data-service="wiki.example.com"`)
+	if grafana < 0 || wiki < 0 || grafana >= wiki {
+		t.Fatalf("legacy card order was not alphabetical: grafana=%d wiki=%d", grafana, wiki)
+	}
+}
+
+func TestPortalHandler_OrganizationSectionsAreAccessibleAndDeterministic(t *testing.T) {
+	data := standardTestData()
+	zero, five := 0, 5
+	data.ServiceMetadata = &ServiceMetadata{Overrides: map[int]ServiceOverride{
+		1: {Name: "Grafana", Category: "Admin & Ops", Order: &five},
+		3: {Name: "Wiki", Order: &zero},
+	}}
+
+	rec := doPortalRequest(
+		newTestHandler(data),
+		"127.0.0.1:12345",
+		"alice@example.com",
+	)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+
+	body := rec.Body.String()
+	for _, expected := range []string{
+		`<div class="services-organized" id="services"`,
+		`<section class="service-category" aria-labelledby="service-category-1">`,
+		`<h2 class="service-category-title" id="service-category-1">Admin &amp; Ops</h2>`,
+		`<h2 class="service-category-title" id="service-category-2">Uncategorized</h2>`,
+	} {
+		if !strings.Contains(body, expected) {
+			t.Fatalf("organized portal omitted %q", expected)
+		}
+	}
+	admin := strings.Index(body, `>Admin &amp; Ops</h2>`)
+	grafana := strings.Index(body, `data-service="Grafana"`)
+	uncategorized := strings.Index(body, `>Uncategorized</h2>`)
+	wiki := strings.Index(body, `data-service="Wiki"`)
+	if admin < 0 || grafana < admin || uncategorized < grafana || wiki < uncategorized {
+		t.Fatalf("organized section order was not deterministic: admin=%d grafana=%d uncategorized=%d wiki=%d", admin, grafana, uncategorized, wiki)
+	}
+}
+
+func TestPortalHandler_OrganizationModeUsesCompleteMetadata(t *testing.T) {
+	data := standardTestData()
+	data.ServiceMetadata = &ServiceMetadata{Overrides: map[int]ServiceOverride{
+		1: {Category: "Operations"},
+	}}
+
+	rec := doPortalRequest(
+		newTestHandler(data),
+		"127.0.0.1:12345",
+		"bob@example.com",
+	)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `<div class="services-organized" id="services"`) ||
+		!strings.Contains(body, `>Uncategorized</h2>`) {
+		t.Fatal("complete organization metadata should place a viewer's unclassified cards in an uncategorized section")
+	}
+	if strings.Contains(body, `>Operations</h2>`) || strings.Contains(body, "grafana.example.com") {
+		t.Fatal("organization metadata changed card authorization")
+	}
+}
+
 func TestPortalHandler_DevUser(t *testing.T) {
 	h := newTestHandler(standardTestData())
 	rec := doPortalRequest(h, "127.0.0.1:12345", "bob@example.com")
@@ -367,8 +452,14 @@ func TestPortalHandler_HealthJoinsOnlyAuthorizedCards(t *testing.T) {
 		3: {ProxyHostID: 3, State: ServiceHealthStateStale, CheckedAt: time.Now()},
 	}, time.Hour)
 
+	data := standardTestData()
+	order := 0
+	data.ServiceMetadata = &ServiceMetadata{Overrides: map[int]ServiceOverride{
+		1: {Category: "Operations", Order: &order},
+		2: {Category: "Must remain unauthorized", Order: &order},
+	}}
 	rec := doPortalRequest(
-		newTestHandlerWithHealth(standardTestData(), store),
+		newTestHandlerWithHealth(data, store),
 		"127.0.0.1:12345",
 		"alice@example.com",
 	)
@@ -422,6 +513,138 @@ func TestRenderServiceHealthStatusLabels(t *testing.T) {
 	}
 }
 
+func TestPortalHandler_MachinesRenderAsAccessibleNonLinkablePolicyCards(t *testing.T) {
+	data := machineMatcherFixture(t)
+	data.Policy.SSH.Rules = []SSHRule{
+		{Action: "accept", Src: []string{"alice@example.com"}, Dst: []string{"tag:server"}, Users: []string{machineNonrootSelector, "deploy", "root"}},
+		{Action: "check", Src: []string{"alice@example.com"}, Dst: []string{"tag:server"}, Users: []string{"deploy"}, CheckPeriod: 12 * time.Hour},
+	}
+
+	rec := doPortalRequest(newTestHandler(data), "127.0.0.1:12345", "alice@example.com")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	body := rec.Body.String()
+	for _, expected := range []string{
+		`<section class="portal-section" aria-labelledby="services-heading">`,
+		`<section class="portal-section" aria-labelledby="machines-heading">`,
+		`<h2 class="section-title" id="machines-heading">Machines</h2>`,
+		`<article class="card machine-card" data-machine="server.tailnet.ts.net" aria-labelledby="machine-1-name">`,
+		`Policy allows SSH access to this machine.`,
+		`<span class="machine-user-summary">any non-root account</span><span class="badge machine-action">accept</span>`,
+		`<span class="machine-user-summary">deploy</span><span class="badge machine-action">check</span>`,
+		`<label for="machine-1-user">SSH account</label>`,
+		`<option value="deploy" data-command="tailscale ssh deploy@server.tailnet.ts.net">deploy</option>`,
+		`<option value="root" data-command="tailscale ssh root@server.tailnet.ts.net">root</option>`,
+		`data-copy-ssh-command data-user-select="machine-1-user" aria-describedby="machine-1-copy-feedback"`,
+		`role="status" aria-live="polite"`,
+		`document.addEventListener("click", function (event)`,
+		`feedback.textContent = "Command copied."`,
+	} {
+		if !strings.Contains(body, expected) {
+			t.Fatalf("machine portal omitted %q", expected)
+		}
+	}
+
+	start := strings.Index(body, `<article class="card machine-card"`)
+	if start < 0 {
+		t.Fatal("machine article was not rendered")
+	}
+	end := strings.Index(body[start:], `</article>`)
+	if end < 0 {
+		t.Fatal("machine article was not closed")
+	}
+	article := body[start : start+end]
+	for _, forbidden := range []string{`<a `, `href=`, `ssh://`, machineNonrootSelector, `reachable`, `health`, `NPM`} {
+		if strings.Contains(article, forbidden) {
+			t.Fatalf("machine article included forbidden claim or control %q: %s", forbidden, article)
+		}
+	}
+}
+
+func TestPortalHandler_MachineSectionTracksProjectionAvailability(t *testing.T) {
+	tests := []struct {
+		name      string
+		provider  controlPlaneProvider
+		sshState  sshPolicyState
+		available bool
+	}{
+		{name: "Headscale with supported-shaped SSH", provider: controlPlaneHeadscale, sshState: sshPolicySupported},
+		{name: "Tailscale with absent SSH", provider: controlPlaneTailscale, sshState: sshPolicyAbsent},
+		{name: "Tailscale with unsupported SSH", provider: controlPlaneTailscale, sshState: sshPolicyUnsupported},
+		{name: "Tailscale with supported SSH and zero matches", provider: controlPlaneTailscale, sshState: sshPolicySupported, available: true},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			data := standardTestData()
+			data.ControlPlane.Provider = test.provider
+			data.Policy.SSH = SSHPolicy{State: test.sshState}
+
+			rec := doPortalRequest(newTestHandler(data), "127.0.0.1:12345", "alice@example.com")
+			if rec.Code != http.StatusOK {
+				t.Fatalf("expected 200, got %d", rec.Code)
+			}
+			body := rec.Body.String()
+			hasSection := strings.Contains(body, `<section class="portal-section" aria-labelledby="machines-heading">`)
+			hasEmptyState := strings.Contains(body, `No machines are available from the supported SSH policy view.`)
+			if hasSection != test.available || hasEmptyState != test.available {
+				t.Fatalf("machine projection available=%t, section=%t, empty_state=%t", test.available, hasSection, hasEmptyState)
+			}
+		})
+	}
+}
+
+func TestPortalHandler_NonrootPolicyDoesNotInventCommandAccount(t *testing.T) {
+	data := machineMatcherFixture(t)
+	data.Policy.SSH.Rules = []SSHRule{{
+		Action: "check", Src: []string{"alice@example.com"}, Dst: []string{"tag:server"}, Users: []string{machineNonrootSelector},
+	}}
+
+	rec := doPortalRequest(newTestHandler(data), "127.0.0.1:12345", "alice@example.com")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	body := rec.Body.String()
+	start := strings.Index(body, `<article class="card machine-card"`)
+	if start < 0 {
+		t.Fatal("machine article was not rendered")
+	}
+	end := strings.Index(body[start:], `</article>`)
+	if end < 0 {
+		t.Fatal("machine article was not closed")
+	}
+	article := body[start : start+end]
+	if !strings.Contains(article, `any non-root account`) || !strings.Contains(article, `>check</span>`) {
+		t.Fatalf("nonroot policy summary missing: %s", article)
+	}
+	for _, forbidden := range []string{`<select`, `data-copy-ssh-command`, `data-command=`, machineNonrootSelector} {
+		if strings.Contains(article, forbidden) {
+			t.Fatalf("nonroot-only policy invented a copyable account via %q: %s", forbidden, article)
+		}
+	}
+}
+
+func TestMachineSSHCommandRequiresValidatedLiteralInputs(t *testing.T) {
+	if got, ok := machineSSHCommand("deploy", "server.tailnet.ts.net"); !ok || got != "tailscale ssh deploy@server.tailnet.ts.net" {
+		t.Fatalf("machineSSHCommand() = %q, %t", got, ok)
+	}
+	if got, ok := machineSSHCommand("machine$", "server.tailnet.ts.net"); !ok || got != `tailscale ssh machine\$@server.tailnet.ts.net` {
+		t.Fatalf("machineSSHCommand() did not protect a literal trailing dollar: %q, %t", got, ok)
+	}
+	for _, test := range []struct{ user, target string }{
+		{machineNonrootSelector, "server.tailnet.ts.net"},
+		{"bad user", "server.tailnet.ts.net"},
+		{"deploy", "server"},
+		{"deploy", "public.example.com"},
+		{"deploy", "192.168.1.10"},
+	} {
+		if command, ok := machineSSHCommand(test.user, test.target); ok || command != "" {
+			t.Fatalf("machineSSHCommand(%q, %q) = %q, %t", test.user, test.target, command, ok)
+		}
+	}
+}
+
 func TestPortalHandler_EmptyCache(t *testing.T) {
 	h := newTestHandler(nil) // Cache.Get() returns nil.
 	rec := doPortalRequest(h, "127.0.0.1:12345", "alice@example.com")
@@ -431,6 +654,35 @@ func TestPortalHandler_EmptyCache(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "portal unavailable") {
 		t.Errorf("expected 'portal unavailable' body, got %q", rec.Body.String())
+	}
+}
+
+func TestPortalHandler_LocalLogoControlAndHTMXRefresh(t *testing.T) {
+	rec := doPortalRequest(
+		newTestHandler(standardTestData()),
+		"127.0.0.1:12345",
+		"alice@example.com",
+	)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+
+	body := rec.Body.String()
+	for _, expected := range []string{
+		`id="logo-toggle" type="button" aria-controls="brand-logo" aria-pressed="true" hidden`,
+		`window.localStorage.getItem(storageKey)`,
+		`window.localStorage.setItem(storageKey, String(visible))`,
+		`} catch (_) {`,
+		`id="portal-content" hx-get="/portal" hx-trigger="every 60s" hx-target="#portal-content" hx-select="#portal-content" hx-swap="outerHTML"`,
+		`.grid { grid-template-columns: minmax(0, 1fr); }`,
+		`.card-head { align-items: flex-start; flex-wrap: wrap; }`,
+	} {
+		if !strings.Contains(body, expected) {
+			t.Fatalf("portal omitted guarded preference or refresh markup %q", expected)
+		}
+	}
+	if strings.Contains(body, `hx-select="#services`) || strings.Contains(body, `hx-target="#services`) || strings.Contains(body, `hx-swap="innerHTML"`) {
+		t.Fatal("portal refresh must replace the complete services-and-machines region")
 	}
 }
 
