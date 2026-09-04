@@ -86,6 +86,14 @@ func machineConsoleEligible(login string, data *CacheData) bool {
 	return false
 }
 
+// machineConsoleCapable narrows the browser-console navigation action to a
+// device whose current Tailscale Devices response explicitly reported SSH
+// enabled and incoming connections allowed. It is presentation-only metadata:
+// missing evidence hides the link but never hides a policy-matched machine.
+func machineConsoleCapable(machineID string, data *CacheData) bool {
+	return data != nil && data.MachineSSHCapableByID[machineID]
+}
+
 // evaluateMachines is deliberately separate from service evaluation. A machine
 // requires both a supported Tailscale SSH rule and a Tailscale Grant that permits
 // TCP/22; legacy ACLs, NPM, service metadata, and health observations are not inputs.
@@ -354,16 +362,16 @@ func machineConsoleURL(target string) (string, bool) {
 		return "", false
 	}
 
-	query := url.Values{}
+	term := target
 	if canonical {
 		short, ok := machineShortName(target)
 		if !ok {
 			return "", false
 		}
-		query.Set("q", short)
-	} else {
-		query.Set("q", target)
+		term = short
 	}
+	query := url.Values{}
+	query.Set("q", term+" property:tailscale-ssh")
 	return tailscaleConsoleMachinesURL + "?" + query.Encode(), true
 }
 

@@ -90,13 +90,15 @@ var tailscaleUserTypes = map[string]bool{
 }
 
 type tailscaleDeviceDTO struct {
-	ID        json.RawMessage `json:"id"`
-	NodeID    string          `json:"nodeId"`
-	Name      string          `json:"name"`
-	Hostname  string          `json:"hostname"`
-	User      json.RawMessage `json:"user"`
-	Addresses []string        `json:"addresses"`
-	Tags      []string        `json:"tags"`
+	ID                        json.RawMessage `json:"id"`
+	NodeID                    string          `json:"nodeId"`
+	Name                      string          `json:"name"`
+	Hostname                  string          `json:"hostname"`
+	User                      json.RawMessage `json:"user"`
+	Addresses                 []string        `json:"addresses"`
+	Tags                      []string        `json:"tags"`
+	SSHEnabled                json.RawMessage `json:"sshEnabled"`
+	BlocksIncomingConnections json.RawMessage `json:"blocksIncomingConnections"`
 }
 
 func (c *TailscaleClient) Load(ctx context.Context, progress controlPlaneProgress) (*ControlPlaneResult, error) {
@@ -152,6 +154,7 @@ func (c *TailscaleClient) load(ctx context.Context, progress controlPlaneProgres
 		Policy:                    policyResult.Policy,
 		Nodes:                     deviceLoad.Nodes,
 		GrantRoleSelectorsByLogin: grantRoleSelectorsByLogin,
+		MachineSSHCapableByID:     deviceLoad.SSHCapableByID,
 		Metadata: ControlPlaneMetadata{
 			Provider:     c.Provider(),
 			PolicyMode:   policyResult.PolicyMode,
@@ -280,10 +283,11 @@ func tailscaleUserString(raw json.RawMessage, index int, field string) (string, 
 type tailscaleDeviceLoad struct {
 	Nodes          []Node
 	CandidateNames []string
+	SSHCapableByID map[string]bool
 }
 
 func (c *TailscaleClient) fetchDevices(ctx context.Context, users []tailscaleUserDTO, includeCandidateNames bool) (tailscaleDeviceLoad, error) {
-	body, header, err := c.doAPI(ctx, http.MethodGet, "/tailnet/-/devices")
+	body, header, err := c.doAPI(ctx, http.MethodGet, "/tailnet/-/devices?fields=all")
 	if err != nil {
 		return tailscaleDeviceLoad{}, fmt.Errorf("fetch devices: %w", err)
 	}
@@ -326,6 +330,15 @@ func (c *TailscaleClient) fetchDevices(ctx context.Context, users []tailscaleUse
 			return tailscaleDeviceLoad{}, fmt.Errorf("fetch devices: devices %d and %d have duplicate id", previous, index)
 		}
 		seenIDs[id] = index
+
+		sshEnabled, sshEnabledPresent := tailscaleOptionalBool(device.SSHEnabled)
+		blocksIncoming, blocksIncomingPresent := tailscaleOptionalBool(device.BlocksIncomingConnections)
+		if sshEnabledPresent && blocksIncomingPresent && sshEnabled && !blocksIncoming {
+			if loaded.SSHCapableByID == nil {
+				loaded.SSHCapableByID = make(map[string]bool)
+			}
+			loaded.SSHCapableByID[id] = true
+		}
 
 		tags := normalizeStrings(device.Tags)
 		ownerRef, err := tailscaleReference(device.User)
@@ -397,6 +410,21 @@ func tailscaleReference(raw json.RawMessage) (string, error) {
 		return number.String(), nil
 	}
 	return "", fmt.Errorf("reference must be a string or number")
+}
+
+// tailscaleOptionalBool accepts only an explicit JSON boolean. Missing, null,
+// malformed, or wrong-type capability fields stay unknown so presentation can
+// fail closed without rejecting an otherwise complete provider snapshot.
+func tailscaleOptionalBool(raw json.RawMessage) (bool, bool) {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		return false, false
+	}
+	var value bool
+	if err := json.Unmarshal(trimmed, &value); err != nil {
+		return false, false
+	}
+	return value, true
 }
 
 func rejectPartialTailscaleResponse(envelope map[string]json.RawMessage, header http.Header) error {

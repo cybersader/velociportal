@@ -21,6 +21,17 @@ import (
 //go:embed assets
 var assetsFS embed.FS
 
+func staticAssetHandler(static fs.FS) http.Handler {
+	files := http.StripPrefix("/static/", http.FileServerFS(static))
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/static/sw.js" {
+			w.Header().Set("Service-Worker-Allowed", "/")
+			w.Header().Set("Cache-Control", "no-cache")
+		}
+		files.ServeHTTP(w, r)
+	})
+}
+
 type Config struct {
 	ControlPlane                controlPlaneProvider
 	ControlPlaneExplicit        bool
@@ -529,7 +540,7 @@ func runServer(cfg *Config) error {
 	portalHandler := IdentityMiddleware(cfg.TrustedProxyCIDR, NewPortalHandlerWithOptions(cache, healthPoller.Store(), cfg.PortalLogoDefaultVisible))
 	mux.Handle("GET /", portalHandler)
 	mux.Handle("GET /portal", portalHandler)
-	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServerFS(static)))
+	mux.Handle("GET /static/", staticAssetHandler(static))
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		age := time.Since(cache.LastUpdated())
 		if cache.LastUpdated().IsZero() || age > pollStale {

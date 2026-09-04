@@ -57,7 +57,7 @@ Velociportal uses the OAuth credential's `-` tailnet alias:
 |---|---|---|
 | `GET` | `/tailnet/-/acl` | Read policy for the selected tailnet |
 | `GET` | `/tailnet/-/users` | Resolve exact user IDs, `loginName`, `type`, and `role`; build authoritative per-login Grant-role membership |
-| `GET` | `/tailnet/-/devices` | Read device IDs, owners, addresses, names, and tags |
+| `GET` | `/tailnet/-/devices?fields=all` | Read device IDs, owners, addresses, names, tags, and optional SSH/incoming-connection presentation fields |
 
 Each request has an independent timeout. The hardened client requires normal certificate and hostname verification, TLS 1.2 or newer, bounded response headers and bodies, no redirects, and no environment proxy.
 
@@ -94,7 +94,9 @@ Velociportal rejects:
 - blank or duplicate device IDs; and
 - untagged devices without an owner.
 
-Device owner references may identify a user by API ID or exact login, but that separate mapping must resolve uniquely and is used only to construct node ownership, including supported destination and `autogroup:self` behavior. It never creates Users API role membership. Tagged devices without a human owner are retained for destination tag resolution. Addresses and tags are trimmed, deduplicated, and sorted. Unrelated user profile fields and device posture data are not retained as snapshot state; the posture-related OAuth scope permits the devices read required by the current API boundary but posture conditions are not evaluated.
+Device owner references may identify a user by API ID or exact login, but that separate mapping must resolve uniquely and is used only to construct node ownership, including supported destination and `autogroup:self` behavior. It never creates Users API role membership. Tagged devices without a human owner are retained for destination tag resolution. Addresses and tags are trimmed, deduplicated, and sorted.
+
+The full Devices response may also contain `sshEnabled` and `blocksIncomingConnections`. Velociportal retains only a sparse true-only device-ID map when both values are exact JSON booleans, SSH is enabled, and incoming connections are not blocked. Missing, null, malformed, wrong-type, false, or blocked values remain unknown and hide only the Tailscale Machines navigation action; they do not reject the device, remove a machine card, alter SSH/Grant evidence, or become Doctor output. This is current device self-report used for presentation, not posture evaluation, authorization, health, reachability, or proof that browser SSH will succeed. Other profile and posture data are not retained as snapshot state.
 
 ## Pagination and completeness
 

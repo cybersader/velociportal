@@ -347,7 +347,7 @@ Tailnet HTTP :8081 -> http://127.0.0.1:18080
 
 The official Tailscale app supplies `Tailscale-User-*` identity headers. NPM is not part of this browser path.
 
-Official Tailscale can automate `*.ts.net` certificates. Headscale automatic HTTPS Serve remains future work tracked by [issue #2527](https://github.com/juanfont/headscale/issues/2527) and [PR #3300](https://github.com/juanfont/headscale/pull/3300). Tailnet HTTP Serve over WireGuard is not a release blocker.
+Official Tailscale can automate `*.ts.net` certificates. Headscale automatic HTTPS Serve remains future work tracked by [issue #2527](https://github.com/juanfont/headscale/issues/2527) and [PR #3300](https://github.com/juanfont/headscale/pull/3300). Tailnet HTTP Serve over WireGuard is not a release blocker, but plain HTTP is not a browser secure context: the portal's manifest/icons remain available and some browsers may allow a basic home-screen shortcut, while service-worker control and normal PWA install prompts require HTTPS or localhost. Enabling HTTPS is a separate infrastructure change and is not performed by Velociportal.
 
 Apply the Tailscale app update. Confirm the route returns after a Tailscale app restart before continuing.
 
@@ -402,7 +402,9 @@ Metadata changes only display names, browser URLs, categories, and order after p
 
 Each user's display name and login also open an accessible settings panel that lets that one browser hide or show the fixed built-in Velociportal logo. That preference lives per exact identity in one browser only, scoped by an opaque SHA-256 digest of the login, and is never sent to or stored by the server; a legacy unscoped key migrates once. The optional `PORTAL_LOGO_DEFAULT=visible|hidden` environment value supplies only the initial deployment default used when no valid browser preference exists yet for that identity. Arbitrary per-service logos, access history, and server-side or account-synchronized personalization remain deferred.
 
-On an eligible Tailscale machine card — a direct member holding an automatic-admin-equivalent role (Owner, Admin, IT admin, or Network admin) — the portal also renders a browser SSH console action that opens the fixed `https://console.tailscale.com/admin/machines?q=<validated target>` page in a new tab, using a target that passes the same narrow validation as the existing copy commands. It is role-gated navigation only, never a direct session, proxy, enforcement check, or reachability claim; Tailscale remains responsible for console eligibility, reauthentication, SSH policy, device posture, account choice, and the session itself. It is never shown for ineligible roles, Headscale, or an unavailable Machines projection.
+Tailscale does not provide a standalone browser-SSH session URL. Velociportal renders its Tailscale Machines navigation action only for a direct member holding an automatic-admin-equivalent role (Owner, Admin, IT admin, or Network admin) **and** a device that explicitly reports `sshEnabled=true` and `blocksIncomingConnections=false` in the full Devices response. Missing or invalid capability values hide only the action, not the machine card. The link opens the fixed Machines page with the validated short name/IP plus `property:tailscale-ssh`; it remains navigation, not a session, proxy, enforcement check, health signal, reachability claim, or guarantee that browser SSH will succeed.
+
+On mobile, the fixed Services/Machines/More bar stays outside the htmx refresh region, uses safe-area padding and 44px touch targets, and opens the existing account settings as a bottom sheet. Portal responses are never cached. The service worker contains no fetch handler, offline fallback, or Cache Storage use.
 
 #### Optional one-shot hostname proposal
 
@@ -482,8 +484,10 @@ Skip this section in Headscale mode.
 - [ ] Supported SSH plus Grant TCP/22 produces only the intended Machines; ACL-only port 22, wrong-port/non-TCP Grants, tag ownership, and destination negatives produce none.
 - [ ] Headscale, absent SSH, and unsupported SSH omit the complete Machines section and per-identity Doctor machine previews; supported SSH with zero identity matches preserves the explicit portal empty state.
 - [ ] Doctor machine previews reveal only counts when the projection is available, and copied commands use only validated literal accounts plus a canonical full `*.ts.net` name or validated Tailscale address.
-- [ ] The browser SSH console action appears only for direct members holding an automatic-admin-equivalent role (Owner, Admin, IT admin, Network admin) and is absent for billing admins, auditors, plain members, shared users, and Headscale; the link opens the fixed filtered console page in a new tab using a target that passes the same narrow validation as copy commands and never a direct session.
+- [ ] The Tailscale Machines action appears only when both gates pass: an automatic-admin-equivalent direct-member role and exact device `sshEnabled=true` plus `blocksIncomingConnections=false`; missing/null/wrong-type/disabled/blocked fields hide only the action, while the link uses the validated target plus `property:tailscale-ssh` and never claims a direct session.
 - [ ] Each identity's appearance preference (logo visibility) persists per identity in its own browser only, is unaffected by `PORTAL_LOGO_DEFAULT` once set, and is never visible to or recoverable by another identity or browser.
+- [ ] On mobile, Services/Machines hash navigation and More/settings bottom-sheet behavior remain usable above the safe area and survive htmx refresh without duplication; Machines is hidden only when its projection is unavailable.
+- [ ] Portal responses carry `no-store`; the service worker has no fetch/cache/offline behavior. Record that full PWA service-worker/install behavior is unavailable on the canonical plain-HTTP Serve origin unless HTTPS is separately enabled.
 - [ ] Posture, IP-set, service, routing, application-capability, malformed, and unknown HTTP-policy semantics fail the complete refresh.
 - [ ] Cold-start failure and stale-snapshot retention/recovery recorded.
 - [ ] Support remains labeled preview.
@@ -525,7 +529,7 @@ In Tailscale mode, when a present and supported SSH policy makes the projection 
 - Confirm shared, role-isolation, `autogroup:self`, tag-ownership, wrong-port, non-TCP, and ACL-only-port-22 negatives.
 - Confirm `autogroup:nonroot` never invents or pre-fills an account, but permits a separately typed validated non-root account; reject `root`, surrounding whitespace, selectors, and shell metacharacters in that field.
 - Confirm successful custom-account copies remember at most 10 deduplicated names only for the exact identity in that browser, survive htmx card refresh, and can be cleared from account settings.
-- Confirm cards show the short Tailscale machine name with the full canonical target beneath it, and eligible browser SSH links filter the Tailscale Machines page by the short name rather than the full `*.ts.net` name.
+- Confirm cards show the short Tailscale machine name with the full canonical target beneath it. Confirm the navigation action is absent unless the exact device reports SSH enabled and incoming connections allowed, and that eligible links filter the Tailscale Machines page by the short name plus `property:tailscale-ssh` rather than the full `*.ts.net` name.
 - Confirm copied commands use the intended literal or typed account and the same device's canonical full `*.ts.net` name or validated Tailscale address, then compare each command with actual Tailscale SSH behavior.
 - Treat any visible-but-unreachable machine as a mismatch; Velociportal does not enforce or health-check SSH.
 

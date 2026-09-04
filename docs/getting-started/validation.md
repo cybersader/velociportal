@@ -235,12 +235,16 @@ Skip this section in Headscale mode or when the Tailscale policy has no intended
 - [ ] `autogroup:self` includes only devices with the exact separately resolved owner login; tags and `tagOwners` do not create human source membership
 - [ ] A literal allowed account produces the expected server-built `tailscale ssh user@target` copy command; `autogroup:nonroot` never invents or pre-fills an account but offers a separate client-side field for a typed validated non-root account
 - [ ] The custom non-root field rejects `root`, surrounding whitespace, selectors, and shell metacharacters; successful copies remember at most 10 deduplicated names only for the exact identity/browser, survive htmx refresh, and clear from account settings
-- [ ] A canonical full `*.ts.net` device name remains the copied-command target while the card and eligible Tailscale Machines link use its short first label for prominent display/search; an arbitrary FQDN is rejected and falls back only to the same device's validated Tailscale IPv4/IPv6 address
+- [ ] A canonical full `*.ts.net` device name remains the copied-command target while the card and eligible Tailscale Machines link use its short first label for prominent display/search; the link also includes `property:tailscale-ssh`, while an arbitrary FQDN is rejected and falls back only to the same device's validated Tailscale IPv4/IPv6 address
+- [ ] The Tailscale Machines action requires both an eligible exact direct-member role and exact device `sshEnabled=true` plus `blocksIncomingConnections=false`; absent, null, wrong-type, disabled, or blocked fields hide only the action and preserve the same machine card/command
 - [ ] Plain-language action labels match policy semantics: `accept` shows no extra sign-in, while `check` shows the configured reauthentication period or the documented 12-hour default
 - [ ] Shell/HTML/JavaScript metacharacter fixtures never become executable markup or copied arguments
 - [ ] Each copied command is run from the corresponding real identity and compared with actual Tailscale SSH outcome, including `check` behavior where configured
 - [ ] A visible machine that cannot be reached or logged into is recorded as a visibility/reachability mismatch, not described as authorized or healthy
 - [ ] When the projection is available, the populated or explicit-empty Machines section survives htmx refresh and remains independent of NPM service cards, metadata, category/order, and backend health
+- [ ] On mobile, Services and Machines retain working hash fallbacks, More opens account settings as a bottom sheet, touch targets remain usable above the safe area, and htmx refresh neither duplicates the bar nor leaves stale Machines availability
+- [ ] Successful, unauthorized, unavailable, and untrusted identity responses carry `Cache-Control: no-store`; the service worker contains no fetch handler, Cache Storage use, offline fallback, or cached portal content
+- [ ] Record whether the tested origin is HTTPS/localhost and therefore service-worker/PWA capable; do not claim full PWA installation on the canonical plain-HTTP Serve origin
 
 Keep the private comparison local. Record opaque labels and pass/fail outcomes rather than device names, Tailscale addresses, OS account names, or commands.
 
