@@ -226,7 +226,10 @@ func TestRunDoctorCommandReportsTailscalePreviewWithoutCredentialDisclosure(t *t
 	controlPlane := &doctorScriptedControlPlane{
 		provider: controlPlaneTailscale,
 		result: &ControlPlaneResult{
-			Policy: &Policy{ACLs: []ACLRule{{Action: "accept", Src: []string{"*"}, Dst: []string{"10.0.0.1:*"}}}},
+			Policy: &Policy{
+				ACLs: []ACLRule{{Action: "accept", Src: []string{"*"}, Dst: []string{"10.0.0.1:*"}}},
+				SSH:  SSHPolicy{State: sshPolicyUnsupported, RuleCount: 2, UnsupportedReason: sshUnsupportedUser},
+			},
 			Metadata: ControlPlaneMetadata{
 				Provider:     controlPlaneTailscale,
 				PolicyMode:   legacyACLVisibilityV1,
@@ -249,6 +252,7 @@ func TestRunDoctorCommandReportsTailscalePreviewWithoutCredentialDisclosure(t *t
 		"PASS Tailscale users: loaded 2 users",
 		"PASS Tailscale devices: loaded 0 devices",
 		"provider=tailscale policy_mode=legacy_acl_visibility_v1 support_level=preview",
+		"SSH Machines view is suppressed while HTTP service cards remain valid (state=unsupported reason=unsupported_user rules=2)",
 	} {
 		if !strings.Contains(stdout.String(), want) {
 			t.Errorf("stdout missing %q:\n%s", want, stdout.String())
@@ -261,6 +265,67 @@ func TestRunDoctorCommandReportsTailscalePreviewWithoutCredentialDisclosure(t *t
 		if strings.Contains(stdout.String()+stderr.String(), forbidden) {
 			t.Fatalf("doctor exposed %q", forbidden)
 		}
+	}
+}
+
+func TestReportDoctorIdentityPreviewsKeepsMachineTopologyPrivate(t *testing.T) {
+	snapshot := machineMatcherFixture(t)
+	snapshot.Nodes[0].ID = "private-node-id"
+	snapshot.Nodes[0].Name = "private-machine.tailnet.ts.net"
+	snapshot.Nodes[0].Addresses = []string{"100.64.0.99"}
+	snapshot.Policy.SSH.Rules[0].Users = []string{"privateaccount"}
+
+	var output bytes.Buffer
+	reportDoctorIdentityPreviews(&output, []string{"alice@example.com"}, snapshot)
+	text := output.String()
+	for _, expected := range []string{
+		`WARN identity preview "alice@example.com": 0 cards from the supported matcher`,
+		`PASS machine preview "alice@example.com": 1 machine from separate SSH policy and Grant TCP/22 evidence; targets and accounts omitted`,
+	} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("Doctor preview omitted %q: %s", expected, text)
+		}
+	}
+	for _, forbidden := range []string{
+		"private-node-id",
+		"private-machine.tailnet.ts.net",
+		"100.64.0.99",
+		"privateaccount",
+		"tailscale ssh",
+	} {
+		if strings.Contains(text, forbidden) {
+			t.Fatalf("Doctor machine preview exposed %q: %s", forbidden, text)
+		}
+	}
+}
+
+func TestReportDoctorIdentityPreviewsSuppressesUnavailableMachineProjection(t *testing.T) {
+	tests := []struct {
+		name     string
+		provider controlPlaneProvider
+		sshState sshPolicyState
+	}{
+		{name: "Headscale", provider: controlPlaneHeadscale, sshState: sshPolicySupported},
+		{name: "Tailscale absent SSH", provider: controlPlaneTailscale, sshState: sshPolicyAbsent},
+		{name: "Tailscale unsupported SSH", provider: controlPlaneTailscale, sshState: sshPolicyUnsupported},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			snapshot := standardTestData()
+			snapshot.ControlPlane.Provider = test.provider
+			snapshot.Policy.SSH = SSHPolicy{State: test.sshState}
+
+			var output bytes.Buffer
+			reportDoctorIdentityPreviews(&output, []string{"alice@example.com"}, snapshot)
+			text := output.String()
+			if !strings.Contains(text, `PASS identity preview "alice@example.com": 2 cards from the supported matcher`) {
+				t.Fatalf("Doctor service preview missing: %s", text)
+			}
+			if strings.Contains(text, "machine preview") {
+				t.Fatalf("Doctor emitted a machine preview without a supported Tailscale SSH projection: %s", text)
+			}
+		})
 	}
 }
 

@@ -108,6 +108,9 @@ func TestTailscaleLoadUsesApprovedEndpointsAndMapsOwners(t *testing.T) {
 	if result.Metadata.Provider != controlPlaneTailscale || result.Metadata.SupportLevel != controlPlanePreview || result.Metadata.PolicyMode != legacyACLVisibilityV1 {
 		t.Fatalf("metadata = %#v", result.Metadata)
 	}
+	if result.Policy.SSH.State != sshPolicyAbsent {
+		t.Fatalf("SSH policy = %#v, want absent", result.Policy.SSH)
+	}
 	if len(result.Nodes) != 1 {
 		t.Fatalf("nodes = %#v", result.Nodes)
 	}
@@ -176,6 +179,82 @@ func TestTailscaleLoadSupportsSafeGrantsAndNodeAttrs(t *testing.T) {
 	}
 }
 
+func TestTailscaleLoadNormalizesSupportedSSHPolicy(t *testing.T) {
+	fixture := newTailscaleFixture(t)
+	fixture.policy = map[string]any{
+		"groups": map[string][]string{"group:ops": {"alice@example.com"}},
+		"acls":   []map[string]any{{"action": "accept", "src": []string{"group:ops"}, "dst": []string{"tag:app:443"}}},
+		"ssh": []map[string]any{
+			{"action": "check", "src": []string{"group:ops", "autogroup:admin"}, "dst": []string{"autogroup:self", "tag:server"}, "users": []string{"autogroup:nonroot", "root"}, "checkPeriod": "30m"},
+		},
+	}
+
+	result, err := fixture.client.Load(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	ssh := result.Policy.SSH
+	if ssh.State != sshPolicySupported || ssh.RuleCount != 1 || len(ssh.Rules) != 1 || ssh.Rules[0].CheckPeriod != 30*time.Minute {
+		t.Fatalf("SSH policy = %#v", ssh)
+	}
+	if got, want := ssh.Rules[0].Src, []string{"autogroup:admin", "group:ops"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("SSH sources = %#v, want %#v", got, want)
+	}
+}
+
+func TestTailscaleLoadFeedsGrantBackedMachineEvaluator(t *testing.T) {
+	client, closeServer := tailscaleClientWithBodies(
+		t,
+		`{"users":[{"id":"user-1","loginName":"alice@example.com","type":"member","role":"admin"}]}`,
+		`{"devices":[{"id":"device-1","name":"Server.Tailnet.TS.Net.","user":"user-1","tags":["tag:server"],"addresses":["100.64.0.10"]}]}`,
+		`{
+			"ssh":[{"action":"check","src":["autogroup:admin"],"dst":["tag:server"],"users":["autogroup:nonroot"],"checkPeriod":"30m"}],
+			"grants":[{"src":["autogroup:admin"],"dst":["tag:server"],"ip":["tcp:22"]}]
+		}`,
+	)
+	defer closeServer()
+
+	result, err := client.Load(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	snapshot := &CacheData{
+		Policy:                    result.Policy,
+		Nodes:                     result.Nodes,
+		GrantRoleSelectorsByLogin: result.GrantRoleSelectorsByLogin,
+		ControlPlane:              result.Metadata,
+	}
+	cards := MatchMachines(&Identity{Login: "alice@example.com"}, snapshot)
+	if got, want := cards, []MachineCard{{
+		ID: "device-1", Name: "server.tailnet.ts.net", Target: "server.tailnet.ts.net",
+		Access: []MachineAccess{{User: machineNonrootSelector, Action: "check", CheckPeriod: 30 * time.Minute}},
+	}}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("MatchMachines() = %#v, want %#v", got, want)
+	}
+}
+
+func TestTailscaleLoadSuppressesUnsupportedSSHPolicyOnly(t *testing.T) {
+	fixture := newTailscaleFixture(t)
+	fixture.policy = map[string]any{
+		"acls": []map[string]any{{"action": "accept", "src": []string{"alice@example.com"}, "dst": []string{"tag:app:443"}}},
+		"ssh": []map[string]any{
+			{"action": "accept", "src": []string{"alice@example.com"}, "dst": []string{"autogroup:self"}, "users": []string{"localpart:*"}},
+		},
+	}
+
+	result, err := fixture.client.Load(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if len(result.Policy.ACLs) != 1 {
+		t.Fatalf("HTTP ACLs = %#v", result.Policy.ACLs)
+	}
+	ssh := result.Policy.SSH
+	if ssh.State != sshPolicyUnsupported || ssh.RuleCount != 1 || ssh.UnsupportedReason != sshUnsupportedUser || len(ssh.Rules) != 0 {
+		t.Fatalf("SSH policy = %#v", ssh)
+	}
+}
+
 func TestTailscaleUserRolesBuildGrantMembership(t *testing.T) {
 	users := `{"users":[
 		{"id":"1","loginName":"owner@example.com","type":"member","role":"owner"},
@@ -229,6 +308,8 @@ func TestTailscaleRejectsInvalidUserTypeAndRole(t *testing.T) {
 		user string
 		want string
 	}{
+		"blank login":     {user: `{"id":"1","loginName":"","type":"member","role":"member"}`, want: "blank loginName"},
+		"padded login":    {user: `{"id":"1","loginName":" alice@example.com ","type":"member","role":"member"}`, want: "non-canonical loginName"},
 		"missing type":    {user: `{"id":"1","loginName":"alice@example.com","role":"member"}`, want: "blank type"},
 		"null type":       {user: `{"id":"1","loginName":"alice@example.com","type":null,"role":"member"}`, want: "blank type"},
 		"non-string type": {user: `{"id":"1","loginName":"alice@example.com","type":1,"role":"member"}`, want: "invalid type"},

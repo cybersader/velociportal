@@ -332,20 +332,27 @@ func TestHostnameSuggestionGenerationDoesNotChangeCardsOrMetadata(t *testing.T) 
 func TestSerializeServiceMetadataDocumentValidatesOutput(t *testing.T) {
 	name := "name"
 	proposalURL := "https://safe.example.com"
-	data, err := serializeServiceMetadataDocument([]serviceMetadataEntry{{ProxyHostID: 1, Name: &name, URL: &proposalURL}})
+	data, err := serializeServiceMetadataDocumentV1([]serviceMetadataEntry{{ProxyHostID: 1, Name: &name, URL: &proposalURL}})
 	if err != nil {
-		t.Fatalf("serializeServiceMetadataDocument() error = %v", err)
+		t.Fatalf("serializeServiceMetadataDocumentV1() error = %v", err)
 	}
 	if !strings.HasSuffix(string(data), "\n") {
 		t.Fatal("serialized proposal lacks trailing newline")
 	}
 
 	invalidURL := "https://*.secret.example.com"
-	_, err = serializeServiceMetadataDocument([]serviceMetadataEntry{{ProxyHostID: 1, URL: &invalidURL}})
+	_, err = serializeServiceMetadataDocumentV1([]serviceMetadataEntry{{ProxyHostID: 1, URL: &invalidURL}})
 	if err == nil {
 		t.Fatal("invalid proposal was accepted")
 	}
 	if strings.Contains(err.Error(), "secret.example.com") {
 		t.Fatalf("proposal error leaked private value: %v", err)
+	}
+
+	category := "Infrastructure"
+	order := 0
+	_, err = serializeServiceMetadataDocumentV1([]serviceMetadataEntry{{ProxyHostID: 1, Category: &category, Order: &order}})
+	if err == nil {
+		t.Fatal("v1 serializer accepted v2 organization fields")
 	}
 }

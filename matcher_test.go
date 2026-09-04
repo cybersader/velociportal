@@ -336,6 +336,71 @@ func TestMatchServices(t *testing.T) {
 	})
 }
 
+func TestMatchServicesOrganizationOrdering(t *testing.T) {
+	base := &CacheData{
+		Policy: &Policy{ACLs: []ACLRule{{Action: "accept", Src: []string{"alice@example.com"}, Dst: []string{"*"}}}},
+		ProxyHosts: []ProxyHost{
+			{ID: 7, DomainNames: []string{"beta.example.com"}, ForwardHost: "10.0.0.7", Enabled: true},
+			{ID: 4, DomainNames: []string{"Alpha.example.com"}, ForwardHost: "10.0.0.4", Enabled: true},
+			{ID: 2, DomainNames: []string{"alpha.example.com"}, ForwardHost: "10.0.0.2", Enabled: true},
+			{ID: 99, DomainNames: []string{"disabled.example.com"}, ForwardHost: "10.0.0.99", Enabled: false},
+		},
+	}
+
+	t.Run("metadata absent preserves legacy case-insensitive name then ID order", func(t *testing.T) {
+		cards := MatchServices(&Identity{Login: "alice@example.com"}, base)
+		if got, want := cardIDs(cards), []int{2, 4, 7}; !reflect.DeepEqual(got, want) {
+			t.Fatalf("card IDs = %v, want %v", got, want)
+		}
+	})
+
+	t.Run("organization metadata on a hidden card does not change visible cards", func(t *testing.T) {
+		data := *base
+		data.ServiceMetadata = &ServiceMetadata{Overrides: map[int]ServiceOverride{
+			99: {Category: "Hidden"},
+		}}
+		cards := MatchServices(&Identity{Login: "alice@example.com"}, &data)
+		if got, want := cardIDs(cards), []int{2, 4, 7}; !reflect.DeepEqual(got, want) {
+			t.Fatalf("card IDs = %v, want %v", got, want)
+		}
+	})
+
+	t.Run("organization uses category order then explicit order name and ID ties", func(t *testing.T) {
+		data := *base
+		data.ProxyHosts = []ProxyHost{
+			{ID: 10, DomainNames: []string{"uncategorized.example.com"}, ForwardHost: "10.0.0.10", Enabled: true},
+			{ID: 8, DomainNames: []string{"aardvark.example.com"}, ForwardHost: "10.0.0.8", Enabled: true},
+			{ID: 9, DomainNames: []string{"zoo.example.com"}, ForwardHost: "10.0.0.9", Enabled: true},
+			{ID: 4, DomainNames: []string{"alpha-upper.example.com"}, ForwardHost: "10.0.0.4", Enabled: true},
+			{ID: 3, DomainNames: []string{"alpha-lower.example.com"}, ForwardHost: "10.0.0.3", Enabled: true},
+			{ID: 12, DomainNames: []string{"media.example.com"}, ForwardHost: "10.0.0.12", Enabled: true},
+			{ID: 99, DomainNames: []string{"disabled.example.com"}, ForwardHost: "10.0.0.99", Enabled: false},
+		}
+		zero, five := 0, 5
+		data.ServiceMetadata = &ServiceMetadata{Overrides: map[int]ServiceOverride{
+			8:  {Category: "Admin"},
+			9:  {Name: "Zoo", Category: "Admin", Order: &zero},
+			4:  {Name: "Alpha", Category: "Admin", Order: &five},
+			3:  {Name: "alpha", Category: "Admin", Order: &five},
+			12: {Category: "Media"},
+			99: {Name: "Must stay hidden", Category: "Admin", Order: &zero},
+		}}
+
+		cards := MatchServices(&Identity{Login: "alice@example.com"}, &data)
+		if got, want := cardIDs(cards), []int{9, 3, 4, 8, 12, 10}; !reflect.DeepEqual(got, want) {
+			t.Fatalf("card IDs = %v, want %v", got, want)
+		}
+		if cards[len(cards)-1].Category != "" {
+			t.Fatalf("uncategorized card was not last: %#v", cards)
+		}
+		for _, card := range cards {
+			if card.ID == 99 {
+				t.Fatal("organization metadata enabled or created a disabled card")
+			}
+		}
+	})
+}
+
 func TestMatchServicesUsesTruthfulCardTargets(t *testing.T) {
 	base := &CacheData{
 		Policy: &Policy{ACLs: []ACLRule{{Action: "accept", Src: []string{"*"}, Dst: []string{"10.0.0.5:*"}}}},
@@ -371,14 +436,15 @@ func TestMatchServicesUsesTruthfulCardTargets(t *testing.T) {
 
 	t.Run("explicit metadata resolves wildcard without changing evidence", func(t *testing.T) {
 		data := *base
+		order := 0
 		data.ServiceMetadata = &ServiceMetadata{Overrides: map[int]ServiceOverride{
-			42: {Name: "Rader Wiki", URL: "https://wiki.rader.wiki/"},
+			42: {Name: "Rader Wiki", URL: "https://wiki.rader.wiki/", Category: "Knowledge", Order: &order},
 		}}
 		matches := evaluateServices(&Identity{Login: "alice@example.com"}, &data)
 		if len(matches) != 1 {
 			t.Fatalf("matches = %#v", matches)
 		}
-		if matches[0].Card.Name != "Rader Wiki" || matches[0].Card.URL != "https://wiki.rader.wiki/" || matches[0].Card.LinkState != serviceLinkReady {
+		if matches[0].Card.Name != "Rader Wiki" || matches[0].Card.URL != "https://wiki.rader.wiki/" || matches[0].Card.Category != "Knowledge" || matches[0].Card.Order == nil || *matches[0].Card.Order != 0 || matches[0].Card.LinkState != serviceLinkReady {
 			t.Fatalf("card = %#v", matches[0].Card)
 		}
 		if matches[0].Destination.ResolvedValue != "10.0.0.5" || matches[0].ProxyHost.ForwardHost != "10.0.0.5" {
@@ -864,6 +930,14 @@ func cardNames(cards []ServiceCard) []string {
 		names[i] = c.Name
 	}
 	return names
+}
+
+func cardIDs(cards []ServiceCard) []int {
+	ids := make([]int, len(cards))
+	for i, card := range cards {
+		ids[i] = card.ID
+	}
+	return ids
 }
 
 func assertContains(t *testing.T, names []string, want string) {

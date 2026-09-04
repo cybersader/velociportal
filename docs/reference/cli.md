@@ -25,7 +25,7 @@ velociportal help [command]
 | `velociportal setup --env-file FILE` | Runs the guided wizard and atomically creates or updates the local environment file |
 | `velociportal setup observe-proxy` | Observes the immediate peer on a one-time URL and proposes an exact trusted source for confirmation |
 | `velociportal doctor` | Validates configuration, upstreams, snapshot construction, and join coverage |
-| `velociportal doctor --identity LOGIN` | Also previews the cards produced for `LOGIN`; the option may be repeated |
+| `velociportal doctor --identity LOGIN` | Also previews service cards and, only when the Tailscale SSH projection is available, a topology-free machine count for `LOGIN`; the option may be repeated |
 | `velociportal validate --identity LABEL=LOGIN ...` | Compares at least two labeled identities and emits explainable text or JSON join evidence |
 | `velociportal suggest-hostnames ...` | Privately reviews unambiguous hostname candidates and emits a strict metadata-v1 proposal after confirmation |
 | `velociportal healthcheck` | Probes `/healthz` without loading application configuration or credentials |
@@ -100,10 +100,11 @@ Doctor reports stable `PASS`, `WARN`, and `FAIL` stages for:
 - NPM authentication and proxy-host retrieval;
 - complete snapshot construction;
 - supported access-rule-to-`forward_host` join coverage, including exact Grant TCP/backend-port checks;
-- optional matcher-backed identity previews; and
+- coarse SSH state/reason/rule diagnostics;
+- optional matcher-backed identity service previews plus machine counts only when Tailscale SSH projection availability is supported; Headscale, absent SSH, and unsupported SSH suppress per-identity machine previews; and
 - optional service-health configuration plus one bounded probe cycle with proxy-host IDs, coarse states, durations, HTTP status classes, and aggregate counts only.
 
-Doctor sanitizes and bounds upstream errors. It does not print Headscale keys, OAuth client IDs/secrets, current or rejected OAuth tokens, NPM credentials/JWTs, health paths, backend hostnames/IPs, response bodies, raw network errors, or complete configuration structs. Service probe failures are warnings rather than snapshot failures; malformed service-health configuration fails Doctor after safe upstream diagnostics continue. A passing run is a preflight result, not proof that rendered cards equal real network authorization.
+Doctor sanitizes and bounds upstream errors. It does not print Headscale keys, OAuth client IDs/secrets, current or rejected OAuth tokens, NPM credentials/JWTs, machine IDs/names/addresses/accounts/commands, health paths, backend hostnames/IPs, response bodies, raw network errors, or complete configuration structs. Service probe failures are warnings rather than snapshot failures; malformed service-health configuration fails Doctor after safe upstream diagnostics continue. A passing run is a preflight result, not proof that rendered cards equal real network authorization.
 
 ## Validate
 
@@ -221,7 +222,7 @@ For validation, populate `VP_USER_A` and `VP_USER_B` with hidden `read -s` promp
 | `IMAGE` | `velociportal:latest` | Image build, Compose, and local container commands |
 | `ENV_FILE` | `.env` | Project-relative environment-file path used by guided and runtime commands; absolute paths and `..` components are rejected by Make wrappers so host and container cannot address different files |
 | `PRIVATE_CA_FILE` | empty | Opts into `docker-compose.private-ca.yml` and mounts only the public private-CA root read-only into runtime and tools containers |
-| `SERVICE_METADATA_FILE` | empty | Opts into `docker-compose.service-metadata.yml` and mounts one strict metadata JSON file read-only into runtime and tools containers |
+| `SERVICE_METADATA_FILE` | empty | Opts into `docker-compose.service-metadata.yml` and mounts one strict v1-or-v2 presentation-metadata JSON file read-only into runtime and tools containers |
 | `SERVICE_METADATA_GID` | empty | Numeric supplemental group that can read `SERVICE_METADATA_FILE`; required when the metadata overlay is selected |
 | `SERVICE_HEALTH_FILE` | empty | Opts into `docker-compose.service-health.yml` and mounts one strict health JSON file read-only into runtime and tools containers |
 | `SERVICE_HEALTH_GID` | empty | Numeric supplemental group that can read `SERVICE_HEALTH_FILE`; required when the health overlay is selected |
@@ -252,7 +253,7 @@ Do not commit a populated environment file, private service-name mapping, or ser
 | `NPM_PASSWORD` | Yes | NPM account password |
 | `LISTEN_ADDR` | No | Defaults to `127.0.0.1:8080`; Compose overrides it inside the container |
 | `POLL_INTERVAL` | No | Go duration from `5s` through `24h`; defaults to `30s` |
-| `SERVICE_METADATA_FILE` | No | Strict version-1 read-only JSON file with optional display-name/browser-URL overrides keyed by an existing NPM proxy-host ID; blank disables it |
+| `SERVICE_METADATA_FILE` | No | Strict version-1-or-2 read-only JSON file keyed by existing NPM proxy-host IDs; v1 supports display-name/browser-URL overrides and v2 also supports presentation-only category/order; blank disables it |
 | `SERVICE_HEALTH_FILE` | No | Strict version-1 read-only JSON file for explicit proxy-host health probes, scheduling bounds, accepted HTTP statuses, and mandatory topology allowlists; blank disables probes |
 | `TRUSTED_PROXY_CIDR` | Yes | Exact source `/32`, `/128`, or the smallest intentionally trusted proxy subnet |
 

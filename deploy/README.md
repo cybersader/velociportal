@@ -21,8 +21,8 @@ Files:
 
 - `compose.yaml` — portable one-service base stack with no bind mounts.
 - `compose.private-ca.yaml` — optional bind-mount overlay for the public root certificate of a private certificate authority.
-- `compose.service-metadata.yaml` — optional read-only service name/URL metadata overlay with a fixed in-container path and supplemental read group.
-- `service-metadata.example.json` — strict version-1 metadata example keyed by an existing NPM proxy-host ID.
+- `compose.service-metadata.yaml` — optional read-only presentation-metadata overlay with a fixed in-container path and supplemental read group.
+- `service-metadata.example.json` — strict version-2 name/URL/category/order example keyed by an existing NPM proxy-host ID; version 1 remains compatible for name/URL-only files.
 - `compose.service-health.yaml` — optional read-only explicit health-probe overlay with a fixed in-container path and supplemental read group.
 - `service-health.example.json` — strict version-1 health example with bounded scheduling and topology allowlists.
 - `stack.env.example` — non-secret Compose interpolation values for the base stack.

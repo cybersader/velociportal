@@ -156,7 +156,6 @@ func (c *TailscaleClient) load(ctx context.Context, progress controlPlaneProgres
 			Provider:     c.Provider(),
 			PolicyMode:   policyResult.PolicyMode,
 			SupportLevel: controlPlanePreview,
-			SSHPresent:   policyResult.SSHPresent,
 		},
 	}, deviceLoad.CandidateNames, nil
 }
@@ -215,6 +214,9 @@ func validateTailscaleUsers(users []tailscaleUserDTO) (map[string][]string, erro
 		login := strings.TrimSpace(user.LoginName)
 		if login == "" {
 			return nil, fmt.Errorf("user %d has a blank loginName", index)
+		}
+		if login != user.LoginName {
+			return nil, fmt.Errorf("user %d has a non-canonical loginName", index)
 		}
 		userType, err := tailscaleUserString(user.Type, index, "type")
 		if err != nil {

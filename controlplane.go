@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type controlPlaneProvider string
@@ -35,7 +36,6 @@ type ControlPlaneMetadata struct {
 	Provider     controlPlaneProvider
 	PolicyMode   string
 	SupportLevel controlPlaneSupportLevel
-	SSHPresent   bool
 }
 
 type ControlPlaneResult struct {
@@ -98,12 +98,50 @@ const (
 	accessRuleGrant accessRuleKind = "grant"
 )
 
+type sshPolicyState string
+
+const (
+	sshPolicyAbsent      sshPolicyState = "absent"
+	sshPolicySupported   sshPolicyState = "supported"
+	sshPolicyUnsupported sshPolicyState = "unsupported"
+)
+
+type sshUnsupportedReason string
+
+const (
+	sshUnsupportedProvider     sshUnsupportedReason = "provider_unsupported"
+	sshUnsupportedSectionShape sshUnsupportedReason = "invalid_section_shape"
+	sshUnsupportedRuleShape    sshUnsupportedReason = "invalid_rule_shape"
+	sshUnsupportedUnknownField sshUnsupportedReason = "unknown_rule_field"
+	sshUnsupportedAction       sshUnsupportedReason = "unsupported_action"
+	sshUnsupportedSource       sshUnsupportedReason = "unsupported_source"
+	sshUnsupportedDestination  sshUnsupportedReason = "unsupported_destination"
+	sshUnsupportedUser         sshUnsupportedReason = "unsupported_user"
+	sshUnsupportedCheckPeriod  sshUnsupportedReason = "invalid_check_period"
+)
+
+type SSHPolicy struct {
+	State             sshPolicyState
+	Rules             []SSHRule
+	RuleCount         int
+	UnsupportedReason sshUnsupportedReason
+}
+
+type SSHRule struct {
+	Action      string
+	Src         []string
+	Dst         []string
+	Users       []string
+	CheckPeriod time.Duration
+}
+
 type Policy struct {
 	Groups    map[string][]string
 	TagOwners map[string][]string
 	ACLs      []ACLRule
 	Grants    []GrantRule
 	Hosts     map[string]string
+	SSH       SSHPolicy
 }
 
 type ACLRule struct {
@@ -203,7 +241,6 @@ type Node struct {
 type validatedPolicy struct {
 	Policy           *Policy
 	PolicyMode       string
-	SSHPresent       bool
 	NodeAttrsPresent bool
 }
 
@@ -218,14 +255,16 @@ var benignPolicySections = map[string]bool{
 }
 
 type policyValidationOptions struct {
-	AllowGrants    bool
-	AllowNodeAttrs bool
+	AllowGrants       bool
+	AllowNodeAttrs    bool
+	NormalizeSSHRules bool
 }
 
 func validatePolicyDocument(raw []byte) (*validatedPolicy, error) {
 	return validatePolicyDocumentWithOptions(raw, policyValidationOptions{
-		AllowGrants:    true,
-		AllowNodeAttrs: true,
+		AllowGrants:       true,
+		AllowNodeAttrs:    true,
+		NormalizeSSHRules: true,
 	})
 }
 
@@ -235,7 +274,7 @@ func validateLegacyPolicyDocument(raw []byte) (*validatedPolicy, error) {
 
 func validatePolicyDocumentWithOptions(raw []byte, options policyValidationOptions) (*validatedPolicy, error) {
 	if len(bytes.TrimSpace(raw)) == 0 {
-		return &validatedPolicy{Policy: &Policy{}, PolicyMode: legacyACLVisibilityV1}, nil
+		return &validatedPolicy{Policy: &Policy{SSH: SSHPolicy{State: sshPolicyAbsent}}, PolicyMode: legacyACLVisibilityV1}, nil
 	}
 
 	var sections map[string]json.RawMessage
@@ -246,7 +285,7 @@ func validatePolicyDocumentWithOptions(raw []byte, options policyValidationOptio
 		return nil, fmt.Errorf("decode policy: expected a JSON object")
 	}
 
-	policy := &Policy{}
+	policy := &Policy{SSH: SSHPolicy{State: sshPolicyAbsent}}
 	result := &validatedPolicy{Policy: policy, PolicyMode: legacyACLVisibilityV1}
 
 	if value, ok := sections["groups"]; ok {
@@ -330,11 +369,7 @@ func validatePolicyDocumentWithOptions(raw []byte, options policyValidationOptio
 		}
 	}
 	if value, ok := sections["ssh"]; ok {
-		empty, err := jsonArrayEmpty(value)
-		if err != nil {
-			return nil, &unsupportedPolicyError{Section: "ssh", Reason: fmt.Sprintf("invalid section shape: %v", err)}
-		}
-		result.SSHPresent = !empty
+		policy.SSH = normalizeSSHPolicy(value, policy, options.NormalizeSSHRules)
 	}
 
 	known := map[string]bool{
@@ -494,6 +529,212 @@ func validateGrantRules(raw json.RawMessage, policy *Policy) ([]GrantRule, error
 		})
 	}
 	return rules, nil
+}
+
+func normalizeSSHPolicy(raw json.RawMessage, policy *Policy, normalizeRules bool) SSHPolicy {
+	var wireRules []json.RawMessage
+	if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) || json.Unmarshal(raw, &wireRules) != nil {
+		return SSHPolicy{State: sshPolicyUnsupported, UnsupportedReason: sshUnsupportedSectionShape}
+	}
+	if len(wireRules) == 0 {
+		return SSHPolicy{State: sshPolicyAbsent}
+	}
+	if !normalizeRules {
+		return SSHPolicy{
+			State:             sshPolicyUnsupported,
+			RuleCount:         len(wireRules),
+			UnsupportedReason: sshUnsupportedProvider,
+		}
+	}
+
+	rules := make([]SSHRule, 0, len(wireRules))
+	for _, rawRule := range wireRules {
+		var wire map[string]json.RawMessage
+		if err := json.Unmarshal(rawRule, &wire); err != nil || wire == nil {
+			return unsupportedSSHPolicy(len(wireRules), sshUnsupportedRuleShape)
+		}
+		if firstUnknownField(wire, "action", "src", "dst", "users", "checkPeriod") != "" {
+			return unsupportedSSHPolicy(len(wireRules), sshUnsupportedUnknownField)
+		}
+
+		action, ok := canonicalSSHString(wire, "action")
+		if !ok || (action != "accept" && action != "check") {
+			return unsupportedSSHPolicy(len(wireRules), sshUnsupportedAction)
+		}
+		src, ok := canonicalSSHStringSlice(wire, "src")
+		if !ok || !allSSHSelectors(src, func(selector string) bool { return supportedSSHSource(selector, policy) }) {
+			return unsupportedSSHPolicy(len(wireRules), sshUnsupportedSource)
+		}
+		dst, ok := canonicalSSHStringSlice(wire, "dst")
+		if !ok || !allSSHSelectors(dst, supportedSSHDestination) {
+			return unsupportedSSHPolicy(len(wireRules), sshUnsupportedDestination)
+		}
+		users, ok := canonicalSSHStringSlice(wire, "users")
+		if !ok || !allSSHSelectors(users, supportedSSHUser) {
+			return unsupportedSSHPolicy(len(wireRules), sshUnsupportedUser)
+		}
+
+		var checkPeriod time.Duration
+		if rawCheckPeriod, present := wire["checkPeriod"]; present {
+			if action != "check" {
+				return unsupportedSSHPolicy(len(wireRules), sshUnsupportedCheckPeriod)
+			}
+			parsed, ok := canonicalSSHCheckPeriod(rawCheckPeriod)
+			if !ok {
+				return unsupportedSSHPolicy(len(wireRules), sshUnsupportedCheckPeriod)
+			}
+			checkPeriod = parsed
+		}
+
+		rules = append(rules, SSHRule{
+			Action:      action,
+			Src:         normalizeStrings(src),
+			Dst:         normalizeStrings(dst),
+			Users:       normalizeStrings(users),
+			CheckPeriod: checkPeriod,
+		})
+	}
+	return SSHPolicy{State: sshPolicySupported, Rules: rules, RuleCount: len(rules)}
+}
+
+func unsupportedSSHPolicy(ruleCount int, reason sshUnsupportedReason) SSHPolicy {
+	return SSHPolicy{State: sshPolicyUnsupported, RuleCount: ruleCount, UnsupportedReason: reason}
+}
+
+func canonicalSSHString(fields map[string]json.RawMessage, name string) (string, bool) {
+	raw, ok := fields[name]
+	if !ok {
+		return "", false
+	}
+	var value string
+	if json.Unmarshal(raw, &value) != nil || value == "" || strings.TrimSpace(value) != value {
+		return "", false
+	}
+	return value, true
+}
+
+func canonicalSSHStringSlice(fields map[string]json.RawMessage, name string) ([]string, bool) {
+	raw, ok := fields[name]
+	if !ok || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		return nil, false
+	}
+	var values []string
+	if json.Unmarshal(raw, &values) != nil || len(values) == 0 {
+		return nil, false
+	}
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		if value == "" || strings.TrimSpace(value) != value {
+			return nil, false
+		}
+		if _, exists := seen[value]; exists {
+			return nil, false
+		}
+		seen[value] = struct{}{}
+	}
+	return values, true
+}
+
+func allSSHSelectors(values []string, supported func(string) bool) bool {
+	for _, value := range values {
+		if !supported(value) {
+			return false
+		}
+	}
+	return true
+}
+
+func supportedSSHSource(selector string, policy *Policy) bool {
+	if exactSSHLogin(selector) {
+		return true
+	}
+	if strings.HasPrefix(selector, "group:") {
+		members, ok := policy.Groups[selector]
+		if !ok {
+			return false
+		}
+		for _, member := range members {
+			if !exactSSHLogin(member) {
+				return false
+			}
+		}
+		return true
+	}
+	if strings.HasPrefix(selector, "autogroup:") {
+		return tailscaleHumanRoles[strings.TrimPrefix(selector, "autogroup:")]
+	}
+	return false
+}
+
+func exactSSHLogin(selector string) bool {
+	if strings.Count(selector, "@") != 1 || strings.ContainsAny(selector, " \t\r\n:") {
+		return false
+	}
+	parts := strings.SplitN(selector, "@", 2)
+	return parts[0] != "" && parts[1] != ""
+}
+
+func supportedSSHDestination(selector string) bool {
+	if selector == "autogroup:self" {
+		return true
+	}
+	if !strings.HasPrefix(selector, "tag:") {
+		return false
+	}
+	name := strings.TrimPrefix(selector, "tag:")
+	return name != "" && !strings.ContainsAny(name, " \t\r\n:")
+}
+
+func supportedSSHUser(user string) bool {
+	if user == "autogroup:nonroot" {
+		return true
+	}
+	if strings.HasPrefix(user, "autogroup:") || strings.HasPrefix(user, "localpart:") {
+		return false
+	}
+	if len(user) > 256 || user == "" || !sshUserInitial(user[0]) {
+		return false
+	}
+	for index := 1; index < len(user); index++ {
+		character := user[index]
+		if sshUserBody(character) {
+			continue
+		}
+		if character == '$' && index == len(user)-1 {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func sshUserInitial(character byte) bool {
+	return character == '_' || character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z'
+}
+
+func sshUserBody(character byte) bool {
+	return sshUserInitial(character) || character >= '0' && character <= '9' || character == '.' || character == '-'
+}
+
+func canonicalSSHCheckPeriod(raw json.RawMessage) (time.Duration, bool) {
+	var value string
+	if json.Unmarshal(raw, &value) != nil || len(value) < 2 || strings.TrimSpace(value) != value || value[0] == '0' {
+		return 0, false
+	}
+	unit := value[len(value)-1]
+	if unit != 'm' && unit != 'h' {
+		return 0, false
+	}
+	for index := 0; index < len(value)-1; index++ {
+		if value[index] < '0' || value[index] > '9' {
+			return 0, false
+		}
+	}
+	period, err := time.ParseDuration(value)
+	if err != nil || period < time.Minute || period > 168*time.Hour {
+		return 0, false
+	}
+	return period, true
 }
 
 func validateNodeAttrs(raw json.RawMessage, policy *Policy) (bool, error) {

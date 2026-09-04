@@ -2,8 +2,10 @@ package main
 
 import (
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestValidatePolicyDocumentSupportsLegacyACLSubset(t *testing.T) {
@@ -20,14 +22,133 @@ func TestValidatePolicyDocumentSupportsLegacyACLSubset(t *testing.T) {
 	if err != nil {
 		t.Fatalf("validatePolicyDocument() error = %v", err)
 	}
-	if !validated.SSHPresent {
-		t.Fatal("SSHPresent = false, want true")
+	if validated.Policy.SSH.State != sshPolicySupported || validated.Policy.SSH.RuleCount != 1 || len(validated.Policy.SSH.Rules) != 1 {
+		t.Fatalf("SSH policy = %#v", validated.Policy.SSH)
 	}
 	if len(validated.Policy.ACLs) != 1 || validated.Policy.ACLs[0].Dst[0] != "app:443" {
 		t.Fatalf("policy ACLs = %#v", validated.Policy.ACLs)
 	}
 	if validated.Policy.Hosts["app"] != "10.0.0.10" {
 		t.Fatalf("policy hosts = %#v", validated.Policy.Hosts)
+	}
+}
+
+func TestValidatePolicyDocumentNormalizesSupportedSSHSection(t *testing.T) {
+	raw := []byte(`{
+		"groups":{"group:ops":["alice@example.com","bob@example.com"]},
+		"ssh":[
+			{"action":"check","src":["group:ops","autogroup:owner","alice@example.com"],"dst":["tag:server","autogroup:self"],"users":["root","autogroup:nonroot","deploy"],"checkPeriod":"12h"},
+			{"action":"accept","src":["autogroup:admin"],"dst":["tag:breakglass"],"users":["autogroup:nonroot"]}
+		]
+	}`)
+
+	validated, err := validatePolicyDocument(raw)
+	if err != nil {
+		t.Fatalf("validatePolicyDocument() error = %v", err)
+	}
+	ssh := validated.Policy.SSH
+	if ssh.State != sshPolicySupported || ssh.RuleCount != 2 || ssh.UnsupportedReason != "" || len(ssh.Rules) != 2 {
+		t.Fatalf("SSH policy = %#v", ssh)
+	}
+	if got, want := ssh.Rules[0].Src, []string{"alice@example.com", "autogroup:owner", "group:ops"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("SSH src = %#v, want %#v", got, want)
+	}
+	if got, want := ssh.Rules[0].Dst, []string{"autogroup:self", "tag:server"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("SSH dst = %#v, want %#v", got, want)
+	}
+	if got, want := ssh.Rules[0].Users, []string{"autogroup:nonroot", "deploy", "root"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("SSH users = %#v, want %#v", got, want)
+	}
+	if ssh.Rules[0].CheckPeriod != 12*time.Hour {
+		t.Fatalf("SSH check period = %s, want 12h", ssh.Rules[0].CheckPeriod)
+	}
+	if got, want := ssh.Rules[1].Users, []string{"autogroup:nonroot"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("nonroot-only users = %#v, want %#v", got, want)
+	}
+	if ssh.Rules[1].CheckPeriod != 0 {
+		t.Fatalf("accept check period = %s, want absent", ssh.Rules[1].CheckPeriod)
+	}
+}
+
+func TestCanonicalSSHCheckPeriodBounds(t *testing.T) {
+	for value, want := range map[string]time.Duration{"1m": time.Minute, "90m": 90 * time.Minute, "1h": time.Hour, "168h": 168 * time.Hour} {
+		period, ok := canonicalSSHCheckPeriod([]byte(`"` + value + `"`))
+		if !ok || period != want {
+			t.Fatalf("canonicalSSHCheckPeriod(%q) = %s, %v; want %s, true", value, period, ok, want)
+		}
+	}
+	for _, value := range []string{"0m", "01h", "60s", "1h30m", "169h", "always", " 1h"} {
+		if period, ok := canonicalSSHCheckPeriod([]byte(`"` + value + `"`)); ok {
+			t.Fatalf("canonicalSSHCheckPeriod(%q) = %s, true", value, period)
+		}
+	}
+}
+
+func TestValidatePolicyDocumentSupportsOnlyHumanSSHAutogroupSources(t *testing.T) {
+	for role := range tailscaleHumanRoles {
+		raw := []byte(`{"ssh":[{"action":"accept","src":["autogroup:` + role + `"],"dst":["autogroup:self"],"users":["autogroup:nonroot"]}]}`)
+		validated, err := validatePolicyDocument(raw)
+		if err != nil || validated.Policy.SSH.State != sshPolicySupported {
+			t.Fatalf("role %q SSH policy = %#v, error = %v", role, validated, err)
+		}
+	}
+	for _, selector := range []string{"autogroup:shared", "autogroup:tagged", "autogroup:internet", "autogroup:future"} {
+		raw := []byte(`{"ssh":[{"action":"accept","src":["` + selector + `"],"dst":["autogroup:self"],"users":["autogroup:nonroot"]}]}`)
+		validated, err := validatePolicyDocument(raw)
+		if err != nil || validated.Policy.SSH.State != sshPolicyUnsupported || validated.Policy.SSH.UnsupportedReason != sshUnsupportedSource {
+			t.Fatalf("selector %q SSH policy = %#v, error = %v", selector, validated, err)
+		}
+	}
+}
+
+func TestValidatePolicyDocumentSuppressesWholeSSHPolicyWithoutInvalidatingHTTP(t *testing.T) {
+	tests := map[string]struct {
+		ssh    string
+		reason sshUnsupportedReason
+		count  int
+	}{
+		"null section":              {ssh: `null`, reason: sshUnsupportedSectionShape},
+		"object section":            {ssh: `{}`, reason: sshUnsupportedSectionShape},
+		"invalid rule shape":        {ssh: `[true]`, reason: sshUnsupportedRuleShape, count: 1},
+		"unknown field":             {ssh: `[{"action":"accept","src":["alice@example.com"],"dst":["autogroup:self"],"users":["alice"],"future":true}]`, reason: sshUnsupportedUnknownField, count: 1},
+		"unsupported action":        {ssh: `[{"action":"deny","src":["alice@example.com"],"dst":["autogroup:self"],"users":["alice"]}]`, reason: sshUnsupportedAction, count: 1},
+		"localpart source":          {ssh: `[{"action":"accept","src":["alice@"],"dst":["autogroup:self"],"users":["alice"]}]`, reason: sshUnsupportedSource, count: 1},
+		"bare source":               {ssh: `[{"action":"accept","src":["alice"],"dst":["autogroup:self"],"users":["alice"]}]`, reason: sshUnsupportedSource, count: 1},
+		"machine source":            {ssh: `[{"action":"accept","src":["tag:client"],"dst":["autogroup:self"],"users":["alice"]}]`, reason: sshUnsupportedSource, count: 1},
+		"undefined group":           {ssh: `[{"action":"accept","src":["group:missing"],"dst":["autogroup:self"],"users":["alice"]}]`, reason: sshUnsupportedSource, count: 1},
+		"group with localpart":      {ssh: `[{"action":"accept","src":["group:local"],"dst":["autogroup:self"],"users":["alice"]}]`, reason: sshUnsupportedSource, count: 1},
+		"unsupported destination":   {ssh: `[{"action":"accept","src":["alice@example.com"],"dst":["100.64.0.1"],"users":["alice"]}]`, reason: sshUnsupportedDestination, count: 1},
+		"localpart user mapping":    {ssh: `[{"action":"accept","src":["alice@example.com"],"dst":["autogroup:self"],"users":["localpart:*"]}]`, reason: sshUnsupportedUser, count: 1},
+		"wildcard user":             {ssh: `[{"action":"accept","src":["alice@example.com"],"dst":["autogroup:self"],"users":["*"]}]`, reason: sshUnsupportedUser, count: 1},
+		"unknown user autogroup":    {ssh: `[{"action":"accept","src":["alice@example.com"],"dst":["autogroup:self"],"users":["autogroup:root"]}]`, reason: sshUnsupportedUser, count: 1},
+		"accept with check period":  {ssh: `[{"action":"accept","src":["alice@example.com"],"dst":["autogroup:self"],"users":["alice"],"checkPeriod":"12h"}]`, reason: sshUnsupportedCheckPeriod, count: 1},
+		"invalid check period":      {ssh: `[{"action":"check","src":["alice@example.com"],"dst":["autogroup:self"],"users":["alice"],"checkPeriod":"0s"}]`, reason: sshUnsupportedCheckPeriod, count: 1},
+		"seconds check period":      {ssh: `[{"action":"check","src":["alice@example.com"],"dst":["autogroup:self"],"users":["alice"],"checkPeriod":"60s"}]`, reason: sshUnsupportedCheckPeriod, count: 1},
+		"composite check period":    {ssh: `[{"action":"check","src":["alice@example.com"],"dst":["autogroup:self"],"users":["alice"],"checkPeriod":"1h30m"}]`, reason: sshUnsupportedCheckPeriod, count: 1},
+		"overlong check period":     {ssh: `[{"action":"check","src":["alice@example.com"],"dst":["autogroup:self"],"users":["alice"],"checkPeriod":"169h"}]`, reason: sshUnsupportedCheckPeriod, count: 1},
+		"leading-zero check period": {ssh: `[{"action":"check","src":["alice@example.com"],"dst":["autogroup:self"],"users":["alice"],"checkPeriod":"01h"}]`, reason: sshUnsupportedCheckPeriod, count: 1},
+		"missing src":               {ssh: `[{"action":"accept","dst":["autogroup:self"],"users":["alice"]}]`, reason: sshUnsupportedSource, count: 1},
+		"empty destination":         {ssh: `[{"action":"accept","src":["alice@example.com"],"dst":[],"users":["alice"]}]`, reason: sshUnsupportedDestination, count: 1},
+		"users wrong shape":         {ssh: `[{"action":"accept","src":["alice@example.com"],"dst":["autogroup:self"],"users":"alice"}]`, reason: sshUnsupportedUser, count: 1},
+		"padded array value":        {ssh: `[{"action":"accept","src":[" alice@example.com"],"dst":["autogroup:self"],"users":["alice"]}]`, reason: sshUnsupportedSource, count: 1},
+		"duplicate array value":     {ssh: `[{"action":"accept","src":["alice@example.com","alice@example.com"],"dst":["autogroup:self"],"users":["alice"]}]`, reason: sshUnsupportedSource, count: 1},
+	}
+
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			raw := []byte(`{"groups":{"group:local":["alice@"]},"acls":[{"action":"accept","src":["*"],"dst":["tag:web:443"]}],"ssh":` + test.ssh + `}`)
+			validated, err := validatePolicyDocument(raw)
+			if err != nil {
+				t.Fatalf("validatePolicyDocument() invalidated HTTP policy: %v", err)
+			}
+			if len(validated.Policy.ACLs) != 1 {
+				t.Fatalf("HTTP ACLs = %#v", validated.Policy.ACLs)
+			}
+			ssh := validated.Policy.SSH
+			if ssh.State != sshPolicyUnsupported || ssh.UnsupportedReason != test.reason || ssh.RuleCount != test.count || len(ssh.Rules) != 0 {
+				t.Fatalf("SSH policy = %#v, want reason=%s count=%d", ssh, test.reason, test.count)
+			}
+		})
 	}
 }
 
@@ -156,7 +277,7 @@ func TestValidatePolicyDocumentAllowsEmptyPolicy(t *testing.T) {
 		if err != nil {
 			t.Fatalf("validatePolicyDocument(%q) error = %v", raw, err)
 		}
-		if validated.Policy == nil || len(validated.Policy.ACLs) != 0 {
+		if validated.Policy == nil || len(validated.Policy.ACLs) != 0 || validated.Policy.SSH.State != sshPolicyAbsent {
 			t.Fatalf("validatePolicyDocument(%q) = %#v", raw, validated)
 		}
 	}
@@ -172,7 +293,6 @@ func TestValidatePolicyDocumentRejectsMalformedSectionTypes(t *testing.T) {
 		"nodeAttrs null":   `{"nodeAttrs":null}`,
 		"postures null":    `{"postures":null}`,
 		"ipsets null":      `{"ipsets":null}`,
-		"ssh null":         `{"ssh":null}`,
 		"acls object":      `{"acls":{}}`,
 		"grants object":    `{"grants":{}}`,
 		"grants false":     `{"grants":false}`,
@@ -181,7 +301,6 @@ func TestValidatePolicyDocumentRejectsMalformedSectionTypes(t *testing.T) {
 		"nodeAttrs string": `{"nodeAttrs":""}`,
 		"postures array":   `{"postures":[]}`,
 		"ipsets false":     `{"ipsets":false}`,
-		"ssh object":       `{"ssh":{}}`,
 	}
 	for name, raw := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -407,5 +526,52 @@ func TestValidatePolicyDocumentRejectsMalformedProtocol(t *testing.T) {
 	_, err := validatePolicyDocument([]byte(`{"acls":[{"action":"accept","src":["*"],"dst":["*:*"] ,"proto":{"name":"tcp"}}]}`))
 	if err == nil || !strings.Contains(err.Error(), "invalid proto") {
 		t.Fatalf("validatePolicyDocument() error = %v", err)
+	}
+}
+
+func TestValidatePolicyDocumentDistinguishesAbsentSSH(t *testing.T) {
+	for _, raw := range []string{`{}`, `{"ssh":[]}`} {
+		validated, err := validatePolicyDocument([]byte(raw))
+		if err != nil {
+			t.Fatalf("validatePolicyDocument(%s) error = %v", raw, err)
+		}
+		if got := validated.Policy.SSH; got.State != sshPolicyAbsent || got.RuleCount != 0 || len(got.Rules) != 0 || got.UnsupportedReason != "" {
+			t.Fatalf("validatePolicyDocument(%s) SSH = %#v", raw, got)
+		}
+	}
+}
+
+func TestValidatePolicyDocumentSuppressesAllSSHRulesOnOneUnsupportedRule(t *testing.T) {
+	validated, err := validatePolicyDocument([]byte(`{
+		"acls":[{"action":"accept","src":["alice@example.com"],"dst":["tag:web:443"]}],
+		"ssh":[
+			{"action":"accept","src":["alice@example.com"],"dst":["tag:server"],"users":["root"]},
+			{"action":"check","src":["bob@example.com"],"dst":["autogroup:self"],"users":["localpart:*@example.com"]}
+		]
+	}`))
+	if err != nil {
+		t.Fatalf("validatePolicyDocument() error = %v", err)
+	}
+	if got := validated.Policy.SSH; got.State != sshPolicyUnsupported || got.UnsupportedReason != sshUnsupportedUser || got.RuleCount != 2 || len(got.Rules) != 0 {
+		t.Fatalf("SSH policy = %#v", got)
+	}
+	if len(validated.Policy.ACLs) != 1 {
+		t.Fatalf("HTTP ACLs = %#v", validated.Policy.ACLs)
+	}
+}
+
+func TestValidateLegacyPolicyDocumentKeepsSSHWarningOnly(t *testing.T) {
+	validated, err := validateLegacyPolicyDocument([]byte(`{
+		"acls":[{"action":"accept","src":["alice@example.com"],"dst":["tag:web:443"]}],
+		"ssh":[{"action":"accept","src":["alice@example.com"],"dst":["tag:server"],"users":["root"]}]
+	}`))
+	if err != nil {
+		t.Fatalf("validateLegacyPolicyDocument() error = %v", err)
+	}
+	if got := validated.Policy.SSH; got.State != sshPolicyUnsupported || got.UnsupportedReason != sshUnsupportedProvider || got.RuleCount != 1 || len(got.Rules) != 0 {
+		t.Fatalf("Headscale SSH policy = %#v", got)
+	}
+	if len(validated.Policy.ACLs) != 1 {
+		t.Fatalf("HTTP ACLs = %#v", validated.Policy.ACLs)
 	}
 }

@@ -6,7 +6,7 @@
 
 ### Your network access policy *is* your dashboard policy.
 
-A self-hosted service portal that reads one selected **Headscale or Tailscale SaaS policy source** plus **Nginx Proxy Manager proxy hosts**, then renders only the cards its current matcher can correlate with the trusted viewer identity. Headscale uses the legacy ACL subset; the Tailscale preview also accepts a narrow network-Grants subset.
+A self-hosted service portal that reads one selected **Headscale or Tailscale SaaS policy source** plus **Nginx Proxy Manager proxy hosts**, then renders only the service and machine cards its current matchers can correlate with the trusted viewer identity. Headscale uses the legacy ACL subset; the Tailscale preview also accepts a narrow network-Grants subset and a separate bounded SSH Machines projection.
 
 **Visibility layer only — complements identity and enforcement systems; never replaces them.**
 
@@ -37,7 +37,7 @@ The production bundle lives under [`deploy/`](./deploy/). It requires Docker Com
 > Published release-candidate images and `headscale-ops` artifacts exist, but they do not imply a public support claim. The selected provider's full TrueNAS acceptance matrix must still pass.
 
 > [!NOTE]
-> Published `v0.2.0-rc.5` is immutable at `sha256:a043e2499c28ce9f66bb2a60c8c0f265e63fc449a0fb9213fd07879508a18402`. Live TrueNAS use confirmed truthful wildcard cards, separate bounded health labels, portal health, and 48 policy-supported cards without changing the live policy. Merged main now includes a one-shot private hostname-suggestion command; it does not change runtime matching or active metadata.
+> Published `v0.2.0-rc.5` is immutable at `sha256:a043e2499c28ce9f66bb2a60c8c0f265e63fc449a0fb9213fd07879508a18402`. Live TrueNAS use confirmed truthful wildcard cards, separate bounded health labels, portal health, and 48 policy-supported cards without changing the live policy. Merged main includes a one-shot private hostname-suggestion command; it does not change runtime matching or active metadata. The current implementation also adds strict presentation-only metadata-v2 categories/order and a per-browser visibility preference for the fixed built-in logo.
 
 > [!WARNING]
 > The canonical browser route is tailnet-only HTTP Serve over WireGuard: `:8081 -> http://127.0.0.1:18080`. NPM is not portal identity. Official Tailscale can automate `*.ts.net` certificates, but Headscale automatic HTTPS Serve remains future upstream work tracked by [issue #2527](https://github.com/juanfont/headscale/issues/2527) and [PR #3300](https://github.com/juanfont/headscale/pull/3300). Tailnet HTTP Serve is not a release blocker.
@@ -81,7 +81,9 @@ Velociportal polls one selected control-plane result plus NPM on one ticker:
 
 A refresh replaces the authorization/catalog cache only after the optional local service metadata, complete selected-provider load, and NPM call succeed. Requests use the last complete in-process snapshot and never wait on an upstream API. Optional service health runs on a separate scheduler and atomic observation store, so probe failures never delay snapshot publication or change `/healthz`.
 
-On each request, Velociportal accepts `Tailscale-User-Login` only from `TRUSTED_PROXY_CIDR`, resolves supported identity and group forms, evaluates normalized supported access rules against enabled NPM proxy hosts, and renders matching cards server-side. In Tailscale mode, `/users` supplies exact `loginName`, `type`, and `role` values for Grant-only role membership. A direct user receives `autogroup:member` plus its API role; the Owner also receives `autogroup:admin`, matching Tailscale's automatic membership. A `shared` user receives none. Role lookup requires exact login equality, and specialized roles do not imply one another. Membership is never inferred from devices, owners, tags, or `tagOwners`; machine/tag/shared selectors remain non-human. Legacy ACL ports/protocols remain unmodeled; accepted Tailscale Grants must permit TCP to the exact NPM backend port. After authorization evidence matches, Velociportal prefers the first concrete NPM frontend name, keeps wildcard-only services visible but unlinked, and can apply a strict name/URL override keyed by that existing NPM host ID. Presentation metadata never changes policy evidence. For explicitly configured proxy-host IDs, health joins only after this identity-filtered match and displays a coarse shared observation; it never creates, hides, enables, reorders, or authorizes a card. Probe targets come only from NPM backend fields, never browser metadata URLs. The selected control plane, Tailscale Serve, NPM, and backends still enforce access.
+On each request, Velociportal accepts `Tailscale-User-Login` only from `TRUSTED_PROXY_CIDR`, resolves supported identity and group forms, evaluates normalized supported access rules against enabled NPM proxy hosts, and renders matching cards server-side. In Tailscale mode, `/users` supplies exact canonical `loginName`, `type`, and `role` values for authoritative Grant and supported SSH-machine role membership. A direct user receives `autogroup:member` plus its API role; the Owner also receives `autogroup:admin`, matching Tailscale's automatic membership. A `shared` user receives none. Role lookup requires exact login equality, padded API logins reject the complete refresh, and specialized roles do not imply one another. Membership is never inferred from devices, owners, tags, or `tagOwners`; machine/tag/shared selectors remain non-human. Legacy ACL ports/protocols remain unmodeled; accepted Tailscale Grants must permit TCP to the exact NPM backend port. After authorization evidence matches, Velociportal prefers the first concrete NPM frontend name, keeps wildcard-only services visible but unlinked, and can apply strict name, URL, category, and order presentation metadata keyed by that existing NPM host ID. Categories group cards with uncategorized cards last; explicit order applies only within a category before deterministic name/ID fallbacks. None of these fields changes policy evidence or the authorized card set. For explicitly configured proxy-host IDs, health joins only after this identity-filtered match and displays a coarse shared observation; it never creates, hides, enables, reorders, or authorizes a card. Probe targets come only from NPM backend fields, never browser metadata URLs.
+
+The Tailscale-preview Machines section is a separate visibility projection. It is available only when the selected provider is Tailscale and the complete `ssh` policy is present and supported; Headscale, an absent SSH section, or any unsupported SSH rule omits the entire Machines section. When the projection is available but the current identity has no matches, the portal preserves an explicit empty Machines state. A device appears only when the same exact direct member matches both the bounded supported `ssh` policy subset and an independent Grant permitting TCP/22 to that device. Legacy ACL port 22, NPM hosts, service metadata, and health never create a machine card. Cards are non-linkable policy summaries; copyable commands are emitted only for validated literal accounts and use a canonical full `*.ts.net` device name or a validated Tailscale IPv4/IPv6 address. `autogroup:nonroot` is shown only as a summary because it does not identify one command account. Projection unavailability never broadens or invalidates otherwise supported HTTP service cards. The selected control plane, Tailscale Serve, Tailscale SSH, NPM, and backends still enforce access and reachability.
 
 ## What it is — and is not
 
@@ -99,7 +101,7 @@ On each request, Velociportal accepts `Tailscale-User-Login` only from `TRUSTED_
 - Explicit `CONTROL_PLANE=headscale|tailscale`; implicit Headscale compatibility warns through v0.2
 - Headscale adapter labeled supported and Tailscale OAuth adapter labeled preview
 - Exact allowlisted local Headscale HTTP plus verified HTTPS elsewhere
-- Fixed verified Tailscale API origin, in-memory token lifecycle, strict Users API identity/type/role validation, exact Grant-role membership, separate strict device-owner mapping, and exact read scopes
+- Fixed verified Tailscale API origin, in-memory token lifecycle, strict canonical Users API login/type/role validation, exact Grant/SSH-machine role membership, separate strict device-owner mapping, and exact read scopes
 - Separate hardened provider and NPM transports with no redirects or environment proxies and bounded responses
 - Named private production bridge, exact NPM alias, and exact Headscale alias when selected
 - Optional private-CA public-root overlay with no CA mount in the base stack
@@ -107,9 +109,10 @@ On each request, Velociportal accepts `Tailscale-User-Login` only from `TRUSTED_
 - All-or-nothing background snapshot refresh with atomic swap
 - Trusted-source `Tailscale-User-*` identity middleware
 - Legacy ACL matching plus a narrow Tailscale Grants network subset with exact TCP/backend-port checks and Users-API-authoritative role-autogroup sources
+- Separate Tailscale-preview SSH Machines cards requiring both a fully supported SSH rule and Grant TCP/22 evidence for the same exact direct member and device; non-linkable summaries and narrowly validated copy commands only
 - Known attr-only Tailscale `nodeAttrs` accepted as non-authorization metadata; the supported `funnel` attribute never becomes card evidence
-- Server-rendered responsive portal with embedded htmx refresh, truthful concrete-domain links, visible unlinked wildcard cards, and accessible coarse health labels
-- Strict optional name/URL service metadata applied only after policy matching
+- Server-rendered responsive portal with embedded htmx refresh, truthful concrete-domain links, visible unlinked wildcard cards, accessible category sections, a per-browser built-in-logo visibility preference, and accessible coarse health labels
+- Strict optional name/URL/category/order service metadata applied only after policy matching; version 1 remains name/URL compatible and version 2 adds presentation-only organization
 - One-shot private hostname suggestions from selected-control-plane names plus optional bounded hostname-only stdin, with whole-component ambiguity rejection and manual metadata merge only
 - Explicit opt-in HTTP GET or connect-only TCP backend probes with topology allowlists, direct validated-IP dialing, verified TLS, fixed worker bounds, no credentials/proxies/redirects, and identity-filtered presentation
 - Non-root `FROM scratch` image and Engine-28+-gated loopback-only publication
@@ -119,22 +122,23 @@ On each request, Velociportal accepts `Tailscale-User-Login` only from `TRUSTED_
 
 **Not implemented**
 
-- General Grants, SSH-as-card-evidence, posture, routing constraints, services, IP sets, or application capabilities
+- General Grants, SSH as HTTP-service-card evidence, broader SSH selectors/user mappings, posture, routing constraints, services, IP sets, or application capabilities
 - Caddy or Traefik service discovery
 - Direct Authentik, Authelia, `Remote-User`, or `X-Webauth-*` adapters
 - NPM access-list-driven visibility
+- Arbitrary per-service logos, access-history collection, or server-side/account-synchronized personalization
 - Headscale automatic HTTPS Serve certificate automation
 
 **Still requires real deployment validation**
 
-- Tailscale SaaS OAuth scopes, token refresh/revocation, exact Users API `loginName`/`type`/`role` mapping, separate device-owner mapping, role-derived card evidence, policy negatives, and live reachability before preview can become supported
+- Tailscale SaaS OAuth scopes, token refresh/revocation, exact Users API `loginName`/`type`/`role` mapping, separate device-owner mapping, role-derived service and SSH-machine evidence, unsupported-SSH suppression, two-identity machine isolation, copied-target parity, policy negatives, and live reachability before preview can become supported
 - The NPM HTTPS-to-Headscale control path, including WebSocket/upgrade behavior and trusted certificate use by brand-new clients
 - The private Docker network and proof that Headscale port `8080` is not reachable from the LAN
 - Separate operator/runtime key handling and NPM header-logging posture
 - Declarative Serve identity injection, header replacement, and restart persistence
 - The NPM `forward_host` join against real tailnet-routable destinations
-- At least two human identities with intentionally different card sets
-- Every generated link compared with actual selected-control-plane and NPM reachability
+- At least two human identities with intentionally different service and, when configured, machine card sets
+- Every generated service link and copied SSH command compared with actual selected-control-plane/NPM/Tailscale-SSH reachability and behavior
 
 Tailnet HTTP over WireGuard prevents ordinary on-path LAN/router/ISP interception. It does not protect against compromised clients, TrueNAS, NPM, Tailscale/Headscale control components, or trusted host workloads.
 
@@ -198,7 +202,9 @@ No CA state lives on pfSense/the router. Router replacement restores ordinary DN
 - [x] Prefer concrete NPM frontend names, preserve wildcard-only cards without broken links, and add strict optional name/URL metadata
 - [x] Add bounded explicit-opt-in backend health checks without treating NPM route state as health
 - [x] Add one-shot privacy-minimized selected-control-plane/hostname-feed suggestions with no runtime store or automatic metadata mutation
-- [ ] Add categories, local logos, ordering, personalization, and Tailscale SSH machine cards
+- [x] Add strict presentation-only categories/order plus a per-browser visibility toggle for the fixed built-in logo
+- [x] Add a bounded Tailscale-preview SSH Machines view with dual SSH-policy plus Grant TCP/22 evidence and safe copy commands
+- [ ] Add arbitrary per-service logos, access history, and server-side/account-synchronized personalization
 - [ ] Add Caddy and Traefik service-discovery adapters
 
 ## License

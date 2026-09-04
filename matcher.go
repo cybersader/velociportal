@@ -21,6 +21,8 @@ type ServiceCard struct {
 	Name      string           `json:"name"`
 	URL       string           `json:"url"`
 	Domain    string           `json:"domain"`
+	Category  string           `json:"category,omitempty"`
+	Order     *int             `json:"order,omitempty"`
 	LinkState serviceLinkState `json:"link_state"`
 }
 
@@ -399,6 +401,11 @@ func resolveServiceCard(proxyHost ProxyHost, metadata *ServiceMetadata) (Service
 			if override.Name != "" {
 				card.Name = override.Name
 			}
+			card.Category = override.Category
+			if override.Order != nil {
+				order := *override.Order
+				card.Order = &order
+			}
 			if override.URL != "" {
 				card.URL = override.URL
 				card.LinkState = serviceLinkReady
@@ -488,15 +495,58 @@ func evaluateServices(identity *Identity, data *CacheData) []serviceMatchEvidenc
 		}
 	}
 
+	organized := serviceMetadataHasOrganization(data.ServiceMetadata)
 	sort.Slice(matches, func(i, j int) bool {
-		left := strings.ToLower(matches[i].Card.Name)
-		right := strings.ToLower(matches[j].Card.Name)
-		if left != right {
-			return left < right
-		}
-		return matches[i].Card.ID < matches[j].Card.ID
+		return serviceCardLess(matches[i].Card, matches[j].Card, organized)
 	})
 	return matches
+}
+
+func serviceMetadataHasOrganization(metadata *ServiceMetadata) bool {
+	if metadata == nil {
+		return false
+	}
+	for _, override := range metadata.Overrides {
+		if override.Category != "" || override.Order != nil {
+			return true
+		}
+	}
+	return false
+}
+
+func serviceCardLess(left, right ServiceCard, organized bool) bool {
+	if organized {
+		leftCategory, rightCategory := left.Category, right.Category
+		switch {
+		case leftCategory == "" && rightCategory != "":
+			return false
+		case leftCategory != "" && rightCategory == "":
+			return true
+		case leftCategory != rightCategory:
+			leftFolded := strings.ToLower(leftCategory)
+			rightFolded := strings.ToLower(rightCategory)
+			if leftFolded != rightFolded {
+				return leftFolded < rightFolded
+			}
+			return leftCategory < rightCategory
+		}
+
+		switch {
+		case left.Order != nil && right.Order == nil:
+			return true
+		case left.Order == nil && right.Order != nil:
+			return false
+		case left.Order != nil && right.Order != nil && *left.Order != *right.Order:
+			return *left.Order < *right.Order
+		}
+	}
+
+	leftName := strings.ToLower(left.Name)
+	rightName := strings.ToLower(right.Name)
+	if leftName != rightName {
+		return leftName < rightName
+	}
+	return left.ID < right.ID
 }
 
 func MatchServices(identity *Identity, data *CacheData) []ServiceCard {

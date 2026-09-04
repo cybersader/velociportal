@@ -134,7 +134,7 @@ func (c *HeadscaleClient) fetchPolicy(ctx context.Context) (*validatedPolicy, er
 	if strings.TrimSpace(*wrapper.Policy) == "" {
 		slog.Info("headscale: fetched policy (empty)",
 			"path", "/api/v1/policy", "duration", time.Since(start))
-		return &validatedPolicy{Policy: &Policy{}, PolicyMode: legacyACLVisibilityV1}, nil
+		return &validatedPolicy{Policy: &Policy{SSH: SSHPolicy{State: sshPolicyAbsent}}, PolicyMode: legacyACLVisibilityV1}, nil
 	}
 
 	raw := []byte(*wrapper.Policy)
@@ -260,7 +260,6 @@ func (c *HeadscaleClient) load(ctx context.Context, progress controlPlaneProgres
 			Provider:     c.Provider(),
 			PolicyMode:   policyResult.PolicyMode,
 			SupportLevel: controlPlaneSupported,
-			SSHPresent:   policyResult.SSHPresent,
 		},
 	}, nodeLoad.CandidateNames, nil
 }

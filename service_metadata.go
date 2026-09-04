@@ -14,11 +14,15 @@ import (
 )
 
 const (
-	serviceMetadataVersion    = 1
-	maxServiceMetadataBytes   = 256 * 1024
-	maxServiceMetadataEntries = 1024
-	maxServiceMetadataName    = 120
-	maxServiceMetadataURL     = 2048
+	serviceMetadataVersionV1 = 1
+	serviceMetadataVersionV2 = 2
+
+	maxServiceMetadataBytes    = 256 * 1024
+	maxServiceMetadataEntries  = 1024
+	maxServiceMetadataName     = 120
+	maxServiceMetadataCategory = 64
+	maxServiceMetadataURL      = 2048
+	maxServiceMetadataOrder    = 1_000_000
 )
 
 type ServiceMetadata struct {
@@ -26,8 +30,10 @@ type ServiceMetadata struct {
 }
 
 type ServiceOverride struct {
-	Name string
-	URL  string
+	Name     string
+	URL      string
+	Category string
+	Order    *int
 }
 
 type serviceMetadataDocument struct {
@@ -39,6 +45,8 @@ type serviceMetadataEntry struct {
 	ProxyHostID int     `json:"proxy_host_id"`
 	Name        *string `json:"name,omitempty"`
 	URL         *string `json:"url,omitempty"`
+	Category    *string `json:"category,omitempty"`
+	Order       *int    `json:"order,omitempty"`
 }
 
 type serviceMetadataLoader func() (*ServiceMetadata, error)
@@ -94,12 +102,12 @@ func serviceMetadataFileError(err error) error {
 	}
 }
 
-func serializeServiceMetadataDocument(services []serviceMetadataEntry) ([]byte, error) {
+func serializeServiceMetadataDocumentV1(services []serviceMetadataEntry) ([]byte, error) {
 	if services == nil {
 		services = []serviceMetadataEntry{}
 	}
 	data, err := json.MarshalIndent(serviceMetadataDocument{
-		Version:  serviceMetadataVersion,
+		Version:  serviceMetadataVersionV1,
 		Services: services,
 	}, "", "  ")
 	if err != nil {
@@ -135,8 +143,8 @@ func parseServiceMetadata(data []byte) (*ServiceMetadata, error) {
 	if err := requireJSONEOF(decoder); err != nil {
 		return nil, err
 	}
-	if document.Version != serviceMetadataVersion {
-		return nil, fmt.Errorf("service metadata version must be %d", serviceMetadataVersion)
+	if document.Version != serviceMetadataVersionV1 && document.Version != serviceMetadataVersionV2 {
+		return nil, fmt.Errorf("service metadata version must be %d or %d", serviceMetadataVersionV1, serviceMetadataVersionV2)
 	}
 	if document.Services == nil {
 		return nil, errors.New("service metadata services must be an array")
@@ -153,8 +161,11 @@ func parseServiceMetadata(data []byte) (*ServiceMetadata, error) {
 		if _, exists := metadata.Overrides[entry.ProxyHostID]; exists {
 			return nil, fmt.Errorf("service metadata entry %d duplicates a proxy_host_id", index)
 		}
-		if entry.Name == nil && entry.URL == nil {
-			return nil, fmt.Errorf("service metadata entry %d must set name or url", index)
+		if entry.Name == nil && entry.URL == nil && entry.Category == nil && entry.Order == nil {
+			if document.Version == serviceMetadataVersionV1 {
+				return nil, fmt.Errorf("service metadata entry %d must set name or url", index)
+			}
+			return nil, fmt.Errorf("service metadata entry %d must set name, url, category, or order", index)
 		}
 
 		override := ServiceOverride{}
@@ -172,6 +183,20 @@ func parseServiceMetadata(data []byte) (*ServiceMetadata, error) {
 			}
 			override.URL = normalized
 		}
+		if entry.Category != nil {
+			category, err := validateServiceMetadataCategory(*entry.Category)
+			if err != nil {
+				return nil, fmt.Errorf("service metadata entry %d has an invalid category", index)
+			}
+			override.Category = category
+		}
+		if entry.Order != nil {
+			if *entry.Order < 0 || *entry.Order > maxServiceMetadataOrder {
+				return nil, fmt.Errorf("service metadata entry %d has an invalid order", index)
+			}
+			order := *entry.Order
+			override.Order = &order
+		}
 		metadata.Overrides[entry.ProxyHostID] = override
 	}
 	return metadata, nil
@@ -183,6 +208,16 @@ func validateServiceMetadataName(value string) (string, error) {
 	}
 	if !utf8.ValidString(value) || utf8.RuneCountInString(value) > maxServiceMetadataName || containsControl(value) {
 		return "", errors.New("name is invalid")
+	}
+	return value, nil
+}
+
+func validateServiceMetadataCategory(value string) (string, error) {
+	if value == "" || strings.TrimSpace(value) != value {
+		return "", errors.New("category must be canonical")
+	}
+	if !utf8.ValidString(value) || utf8.RuneCountInString(value) > maxServiceMetadataCategory || containsControl(value) {
+		return "", errors.New("category is invalid")
 	}
 	return value, nil
 }
@@ -249,6 +284,11 @@ func rejectNonCanonicalServiceMetadataFields(data []byte) error {
 		return errors.New("service metadata document is invalid")
 	}
 
+	version := 0
+	if versionData, exists := document["version"]; exists {
+		_ = json.Unmarshal(versionData, &version)
+	}
+
 	servicesData, exists := document["services"]
 	if !exists {
 		return nil
@@ -263,13 +303,23 @@ func rejectNonCanonicalServiceMetadataFields(data []byte) error {
 			service == nil {
 			continue
 		}
-		if !containsOnlyJSONFields(
-			service,
-			"proxy_host_id",
-			"name",
-			"url",
-		) {
+		allowedFields := []string{"proxy_host_id", "name", "url"}
+		if version == serviceMetadataVersionV2 {
+			allowedFields = append(allowedFields, "category", "order")
+		}
+		if !containsOnlyJSONFields(service, allowedFields...) {
 			return errors.New("service metadata document is invalid")
+		}
+		if version == serviceMetadataVersionV2 {
+			if categoryData, exists := service["category"]; exists {
+				var category string
+				if bytes.Equal(bytes.TrimSpace(categoryData), []byte("null")) || !utf8.Valid(categoryData) || json.Unmarshal(categoryData, &category) != nil {
+					return errors.New("service metadata document is invalid")
+				}
+			}
+			if orderData, exists := service["order"]; exists && bytes.Equal(bytes.TrimSpace(orderData), []byte("null")) {
+				return errors.New("service metadata document is invalid")
+			}
 		}
 	}
 	return nil

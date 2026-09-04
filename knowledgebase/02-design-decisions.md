@@ -44,11 +44,11 @@ Grant `ip` capabilities accept wildcard, port/range, protocol wildcard, and prot
 
 Locked exclusions:
 
-- Legacy ACL ports/protocols remain unmodeled; SSH never becomes card evidence.
+- Legacy ACL ports/protocols remain unmodeled; SSH never becomes HTTP service-card evidence. The separate Tailscale-preview Machines projection is governed by D20.
 - Posture, IP sets, services, non-empty routing `via`, application capabilities, malformed capabilities, unknown semantics, and unsafe selectors reject the complete refresh.
 - `autogroup:internet` fails closed.
 - `tagOwners` and tags on owned nodes do not make a human a `tag:*` source.
-- Users API role membership applies only to Grants. It does not authorize legacy ACL role sources or `nodeAttrs`. The Owner inherits `autogroup:admin` exactly as Tailscale reports; specialized roles do not imply one another. Membership is never inferred from devices, device owners, node tags, or `tagOwners`.
+- Users API role membership applies only to Grants and the bounded SSH Machines projection. It does not authorize legacy ACL role sources or `nodeAttrs`. The Owner inherits `autogroup:admin` exactly as Tailscale reports; specialized roles do not imply one another. Membership is never inferred from devices, device owners, node tags, or `tagOwners`.
 - NPM access lists are not visibility inputs.
 - The `forward_host` join remains subject to real-deployment validation.
 
@@ -101,13 +101,13 @@ No CA private key, certificate lifecycle, application database, policy file, or 
 
 ## D13 — No public support claim before real acceptance
 
-Unit tests, fixtures, Compose rendering, and documentation builds are not production acceptance. Headscale support requires the canonical TrueNAS path to pass trusted NPM HTTPS checks, bootstrap/key separation, two distinct human identities, header replacement, LAN-negative raw-port tests, restart recovery, NPM join review, and comparison with actual reachability. Tailscale SaaS must remain preview until live OAuth scopes, token refresh/revocation, authoritative exact-login role mapping, Owner-to-Admin automatic membership, direct-member/shared-user and specialized-role isolation negatives, separate device-owner mapping, role-derived card evidence, unsupported-policy negatives, two identities, and actual reachability also pass.
+Unit tests, fixtures, Compose rendering, and documentation builds are not production acceptance. Headscale support requires the canonical TrueNAS path to pass trusted NPM HTTPS checks, bootstrap/key separation, two distinct human identities, header replacement, LAN-negative raw-port tests, restart recovery, NPM join review, and comparison with actual reachability. Tailscale SaaS must remain preview until live OAuth scopes, token refresh/revocation, authoritative exact canonical-login role mapping with padded-login rejection, Owner-to-Admin automatic membership, direct-member/shared-user and specialized-role isolation negatives, separate device-owner mapping, role-derived service and SSH-machine evidence, unsupported HTTP-policy and SSH-suppression negatives, two identities, copied-target parity, and actual HTTP/Tailscale-SSH reachability also pass.
 
 ## D14 — Tailscale SaaS is fixed-origin OAuth-only preview
 
 Production uses `https://api.tailscale.com/api/v2`, the credential's `-` alias, and exactly `policy_file:read`, `devices:posture_attributes:read`, `devices:core:read`, and `users:read`. Add no API-key fallback, access-token environment variable, configurable API origin, explicit tailnet, insecure TLS, redirect following, or environment-proxy behavior.
 
-Access tokens remain in memory, refresh about five minutes early, coalesce concurrent refresh, and retry one request after `401`. Client IDs, secrets, rejected tokens, replacement tokens, and encoded forms are redaction inputs. The complete users response is authoritative for Grant-role membership: required canonical `type` and `role` fields are mapped by exact `loginName`; direct members receive `autogroup:member` plus their API role, the Owner additionally receives `autogroup:admin`, shared users receive none, and unknown or malformed values fail closed. Specialized roles do not imply one another, and device-derived inference is forbidden. Device-owner conversion remains separate. Users/devices conversion rejects blank, duplicate, ambiguous, unresolved, paginated, or partial data rather than publishing an incomplete snapshot.
+Access tokens remain in memory, refresh about five minutes early, coalesce concurrent refresh, and retry one request after `401`. Client IDs, secrets, rejected tokens, replacement tokens, and encoded forms are redaction inputs. The complete users response is authoritative for Grant and bounded SSH-machine role membership: required canonical `type` and `role` fields are mapped by exact unpadded `loginName`; direct members receive `autogroup:member` plus their API role, the Owner additionally receives `autogroup:admin`, shared users receive none, and unknown, malformed, or padded values fail closed. Specialized roles do not imply one another, and device-derived inference is forbidden. Device-owner conversion remains separate. Users/devices conversion rejects blank, duplicate, ambiguous, unresolved, paginated, or partial data rather than publishing an incomplete snapshot.
 
 ## D15 — Provider switching is explicit and atomic
 
@@ -119,15 +119,15 @@ When a provider switch would remove inactive known credential keys, setup lists 
 
 Validation reports include non-sensitive `provider`, `policy_mode`, `support_level`, explicit/implicit selection, `access_rules`, and per-match `rule_kind` plus original `rule_index`. Headscale reports `supported`; Tailscale reports `preview`. Reports and Doctor never print tailnet data, OAuth client IDs, secrets, access tokens, Headscale keys, NPM credentials, or JWTs.
 
-## D17 — NPM names first; explicit metadata is presentation-only
+## D17 — NPM names first; versioned metadata is presentation-only
 
 For an already policy-matched NPM proxy host, Velociportal uses the first valid concrete NPM domain as the automatic card name and browser host, even when a wildcard appears earlier. Adding the real concrete hostname to the same NPM proxy host is the preferred correction. A separate duplicate NPM host may create duplicate cards.
 
-A wildcard-only host remains visible but non-clickable. Velociportal never invents a wildcard URL, substitutes a root domain, or silently drops the service. A strict optional versioned JSON file may override only the displayed name and browser URL for an existing positive NPM proxy-host ID. It loads into the complete snapshot, reloads atomically, and fails before upstream contact when configured but invalid.
+A wildcard-only host remains visible but non-clickable. Velociportal never invents a wildcard URL, substitutes a root domain, or silently drops the service. A strict optional versioned JSON file applies only to an existing positive NPM proxy-host ID. Version 1 remains compatible for displayed-name/browser-URL overrides. Version 2 also accepts a canonical category and bounded non-negative integer order. Once any category/order exists in the complete metadata document, categorized cards sort by category with uncategorized last; explicit order sorts only within a category, followed by deterministic case-insensitive name and proxy-host-ID fallbacks. The file loads into the complete snapshot, reloads atomically, and fails before upstream contact when configured but invalid.
 
-Metadata cannot create a card, enable a disabled host, repair a host with no NPM domain, change `forward_host` or `forward_port`, replace access-rule evidence, or grant visibility. Unknown IDs produce only counts. The base image and production stack remain mount-free; the opt-in read-only overlay uses a fixed target and supplemental numeric group so TrueNAS permissions stay `950:950`, directory `0750`, and file `0640` without ownership or mode changes.
+Metadata cannot create, hide, or enable a card, repair a host with no NPM domain, change `forward_host` or `forward_port`, replace access-rule evidence, alter health, or grant visibility. Unknown IDs produce only counts. The base image and production stack remain mount-free; the opt-in read-only overlay uses a fixed target and supplemental numeric group so TrueNAS permissions stay `950:950`, directory `0750`, and file `0640` without ownership or mode changes.
 
-NPM `meta.nginx_online` is route/configuration state, not backend health. Future DNS/Tailscale hostname observations may become privacy-minimized, memory-only operator suggestions, but never authorization evidence or silent persisted mappings.
+A guarded browser-local preference may hide only the fixed built-in Velociportal logo and defaults to visible. Arbitrary per-service logos, access-history collection, and server-side or account-synchronized personalization remain deferred. NPM `meta.nginx_online` is route/configuration state, not backend health. Future DNS/Tailscale hostname observations may become privacy-minimized, memory-only operator suggestions, but never authorization evidence or silent persisted mappings.
 
 ## D18 — Service health is explicit, direct-backend, and independent
 
@@ -144,3 +144,20 @@ One non-overlapping scheduler uses a fixed worker pool and an independent atomic
 Only enabled, identity-independent structurally matched, wildcard-only NPM hosts without an active metadata URL are eligible. A candidate must match an exact wildcard suffix on a DNS label boundary. Candidate/ID edges form a bipartite graph; only connected components with exactly one hostname and one NPM proxy-host ID may produce a proposal. Every larger component is rejected in full without tie-breaking by source, suffix length, order, ID, or address.
 
 The operator must request private mode, select the browser-facing HTTP/HTTPS scheme, review concrete hostnames/IDs, and type literal `yes`. Output is a strict service-metadata v1 fragment on stdout or a new atomic no-clobber `0600` file. The command never edits active metadata or attaches the proposal to `CacheData`, so generation cannot create, hide, reorder, enable, or authorize cards. Applying a proposal remains a separate manual review/merge action.
+
+## D20 — SSH Machines is a separate dual-evidence Tailscale preview
+
+The portal may render a Tailscale-only Machines section, but it remains a visibility projection rather than authentication, enforcement, reachability, or health. Projection availability requires both the Tailscale provider and a present, fully supported SSH policy. Headscale, absent SSH, and unsupported SSH omit the complete section; a supported projection with zero identity matches preserves an explicit empty state. HTTP service matching remains unchanged and never consumes SSH policy.
+
+A device becomes a machine card only when all of these inputs agree:
+
+1. the browser login is an exact canonical full login for a direct `type: member` user in the complete Users API response;
+2. one fully supported normalized Tailscale `ssh` rule matches that login through an exact login, defined exact-login group, or authoritative human-role autogroup and matches the device through a tag or `autogroup:self`;
+3. an independent safe network Grant matches the same exact browser identity and the device's validated Tailscale address and permits TCP/22; and
+4. the device has either a canonical full `*.ts.net` name or a validated Tailscale CGNAT IPv4/Tailscale ULA IPv6 fallback target.
+
+Legacy ACLs, including port-22-looking destinations, are never machine evidence. NPM proxy hosts, access lists, service metadata, organization, health observations, and browser URLs are not machine inputs. Shared users and machine-derived selectors never become humans; Owner-to-Admin automatic membership and specialized-role isolation remain authoritative and exact. Padded API `loginName` values reject the complete refresh rather than being normalized into membership.
+
+The supported SSH subset is deliberately bounded to `accept`/`check`, exact human/group/role sources, tag/`autogroup:self` destinations, literal validated OS users or `autogroup:nonroot`, and an optional canonical one-minute-through-168-hour `checkPeriod` on `check`. Any unsupported SSH rule makes the projection unavailable and omits the complete Machines section; absent SSH is likewise unavailable. Doctor retains a coarse top-level unsupported reason but emits no per-identity machine previews unless the projection is available. Otherwise valid HTTP service cards and snapshot publication remain intact. This asymmetric handling prevents an unfamiliar SSH feature from broadening machines without turning a separate authorization surface into an HTTP availability failure.
+
+Machine cards are non-linkable summaries. A copy command is emitted only for a validated literal account; `autogroup:nonroot` never invents one. Targets are restricted to canonical full `*.ts.net` names or validated Tailscale addresses so arbitrary device-reported FQDNs cannot redirect the copied command. HTML, JavaScript, and shell metacharacters remain escaped or rejected. Doctor exposes only state/reason/rule counts and per-identity machine counts, never device IDs, names, addresses, accounts, or commands. Live two-identity card/command/reachability parity is required while Tailscale remains preview.

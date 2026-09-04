@@ -260,8 +260,11 @@ func runDoctorCommandWithDependencies(args []string, stdout, stderr io.Writer, d
 		snapshot.ControlPlane.PolicyMode,
 		snapshot.ControlPlane.SupportLevel,
 	)
-	if snapshot.ControlPlane.SSHPresent {
-		fmt.Fprintln(stdout, "WARN policy support: SSH rules are present but are not card evidence")
+	switch snapshot.Policy.SSH.State {
+	case sshPolicySupported:
+		fmt.Fprintf(stdout, "PASS policy support: SSH Machines view requires separate matching SSH policy and Grant TCP/22 evidence (state=%s rules=%d)\n", snapshot.Policy.SSH.State, snapshot.Policy.SSH.RuleCount)
+	case sshPolicyUnsupported:
+		fmt.Fprintf(stdout, "WARN policy support: SSH Machines view is suppressed while HTTP service cards remain valid (state=%s reason=%s rules=%d)\n", snapshot.Policy.SSH.State, snapshot.Policy.SSH.UnsupportedReason, snapshot.Policy.SSH.RuleCount)
 	}
 
 	reportDoctorJoinCoverage(stdout, snapshot)
@@ -531,23 +534,41 @@ func reportDoctorIdentityPreviews(writer io.Writer, identities []string, snapsho
 		return
 	}
 
+	machinesAvailable := machineProjectionAvailable(snapshot)
 	for _, login := range identities {
-		cards := MatchServices(&Identity{Login: login}, snapshot)
+		identity := &Identity{Login: login}
+		cards := MatchServices(identity, snapshot)
 		if len(cards) == 0 {
 			fmt.Fprintf(writer, "WARN identity preview %q: 0 cards from the supported matcher\n", login)
+		} else {
+			fmt.Fprintf(writer, "PASS identity preview %q: %d %s from the supported matcher\n", login, len(cards), pluralDoctorNoun(len(cards), "card", "cards"))
+			for _, card := range cards {
+				fmt.Fprintf(
+					writer,
+					"  CARD %q -> %q (link_state=%s npm_route_online=%t)\n",
+					card.Domain,
+					card.URL,
+					card.LinkState,
+					npmRouteOnline(snapshot, card.ID),
+				)
+			}
+		}
+
+		if !machinesAvailable {
 			continue
 		}
-		fmt.Fprintf(writer, "PASS identity preview %q: %d %s from the supported matcher\n", login, len(cards), pluralDoctorNoun(len(cards), "card", "cards"))
-		for _, card := range cards {
-			fmt.Fprintf(
-				writer,
-				"  CARD %q -> %q (link_state=%s npm_route_online=%t)\n",
-				card.Domain,
-				card.URL,
-				card.LinkState,
-				npmRouteOnline(snapshot, card.ID),
-			)
+		machines := MatchMachines(identity, snapshot)
+		if len(machines) == 0 {
+			fmt.Fprintf(writer, "WARN machine preview %q: 0 machines from separate SSH policy and Grant TCP/22 evidence\n", login)
+			continue
 		}
+		fmt.Fprintf(
+			writer,
+			"PASS machine preview %q: %d %s from separate SSH policy and Grant TCP/22 evidence; targets and accounts omitted\n",
+			login,
+			len(machines),
+			pluralDoctorNoun(len(machines), "machine", "machines"),
+		)
 	}
 }
 
