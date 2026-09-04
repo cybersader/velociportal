@@ -590,9 +590,9 @@ a.card:hover, a.card:focus-visible { border-color: var(--accent); background: va
 .machine-target { margin: 0 0 .3rem; color: var(--muted); font-size: .78rem; overflow-wrap: anywhere; }
 .machine-policy { margin: 0; color: var(--muted); font-size: .88rem; }
 .machine-access { display: grid; gap: .4rem; margin: .15rem 0 .25rem; padding: 0; list-style: none; }
-.machine-access li { display: flex; align-items: center; justify-content: space-between; gap: .75rem; min-width: 0; }
-.machine-user-summary { overflow-wrap: anywhere; }
-.machine-action { flex-shrink: 0; }
+.machine-access li { display: flex; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; gap: .4rem .75rem; min-width: 0; }
+.machine-user-summary { flex: 1 1 8rem; min-width: 0; overflow-wrap: anywhere; }
+.machine-action { flex: 0 1 auto; min-width: 0; max-width: 100%; line-height: 1.3; text-transform: none; white-space: normal; }
 .machine-command { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: .45rem .6rem; align-items: end; margin-top: .3rem; }
 .machine-command label { grid-column: 1 / -1; color: var(--muted); font-size: .78rem; font-weight: 600; }
 .machine-command select, .machine-account-input, .copy-command { min-height: 2.35rem; border: 1px solid var(--border); border-radius: 8px; background: var(--card-bg); color: var(--text); font: inherit; }
