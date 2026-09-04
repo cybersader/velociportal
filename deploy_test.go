@@ -49,13 +49,13 @@ func TestDeploymentProviderEnvironmentExamplesAreExclusiveAndValid(t *testing.T)
 			name:     "headscale",
 			path:     "deploy/velociportal.env.example",
 			provider: controlPlaneHeadscale,
-			wantKeys: []string{"CONTROL_PLANE", "HEADSCALE_API_KEY", "HEADSCALE_URL", "NPM_EMAIL", "NPM_PASSWORD", "NPM_URL", "POLL_INTERVAL"},
+			wantKeys: []string{"CONTROL_PLANE", "HEADSCALE_API_KEY", "HEADSCALE_URL", "NPM_EMAIL", "NPM_PASSWORD", "NPM_URL", "POLL_INTERVAL", "PORTAL_LOGO_DEFAULT"},
 		},
 		{
 			name:     "tailscale",
 			path:     "deploy/velociportal.tailscale.env.example",
 			provider: controlPlaneTailscale,
-			wantKeys: []string{"CONTROL_PLANE", "NPM_EMAIL", "NPM_PASSWORD", "NPM_URL", "POLL_INTERVAL", "TAILSCALE_OAUTH_CLIENT_ID", "TAILSCALE_OAUTH_CLIENT_SECRET"},
+			wantKeys: []string{"CONTROL_PLANE", "NPM_EMAIL", "NPM_PASSWORD", "NPM_URL", "POLL_INTERVAL", "PORTAL_LOGO_DEFAULT", "TAILSCALE_OAUTH_CLIENT_ID", "TAILSCALE_OAUTH_CLIENT_SECRET"},
 		},
 	}
 

@@ -400,7 +400,9 @@ Keep the existing dataset permissions unchanged: directory `950:950`/`0750`, fil
 
 Metadata changes only display names, browser URLs, categories, and order after policy matching. Once any category/order field is present, categories sort deterministically with uncategorized cards last; explicit order sorts cards only within a category, before name and proxy-host-ID fallbacks. Metadata cannot create, hide, or enable a card, change `forward_host`/`forward_port`, alter health, or grant access. Wildcard-only services without metadata remain visible with `link needed`; they never produce `%2A` links. NPM `nginx_online` is not backend health.
 
-The portal also lets each browser hide or show the fixed built-in Velociportal logo. That preference uses guarded browser-local storage, defaults to visible, and is not sent to or stored by the server. Arbitrary per-service logos, access history, and server-side or account-synchronized personalization remain deferred.
+Each user's display name and login also open an accessible settings panel that lets that one browser hide or show the fixed built-in Velociportal logo. That preference lives per exact identity in one browser only, scoped by an opaque SHA-256 digest of the login, and is never sent to or stored by the server; a legacy unscoped key migrates once. The optional `PORTAL_LOGO_DEFAULT=visible|hidden` environment value supplies only the initial deployment default used when no valid browser preference exists yet for that identity. Arbitrary per-service logos, access history, and server-side or account-synchronized personalization remain deferred.
+
+On an eligible Tailscale machine card — a direct member holding an automatic-admin-equivalent role (Owner, Admin, IT admin, or Network admin) — the portal also renders a browser SSH console action that opens the fixed `https://console.tailscale.com/admin/machines?q=<validated target>` page in a new tab, using a target that passes the same narrow validation as the existing copy commands. It is role-gated navigation only, never a direct session, proxy, enforcement check, or reachability claim; Tailscale remains responsible for console eligibility, reauthentication, SSH policy, device posture, account choice, and the session itself. It is never shown for ineligible roles, Headscale, or an unavailable Machines projection.
 
 #### Optional one-shot hostname proposal
 
@@ -480,6 +482,8 @@ Skip this section in Headscale mode.
 - [ ] Supported SSH plus Grant TCP/22 produces only the intended Machines; ACL-only port 22, wrong-port/non-TCP Grants, tag ownership, and destination negatives produce none.
 - [ ] Headscale, absent SSH, and unsupported SSH omit the complete Machines section and per-identity Doctor machine previews; supported SSH with zero identity matches preserves the explicit portal empty state.
 - [ ] Doctor machine previews reveal only counts when the projection is available, and copied commands use only validated literal accounts plus a canonical full `*.ts.net` name or validated Tailscale address.
+- [ ] The browser SSH console action appears only for direct members holding an automatic-admin-equivalent role (Owner, Admin, IT admin, Network admin) and is absent for billing admins, auditors, plain members, shared users, and Headscale; the link opens the fixed filtered console page in a new tab using a target that passes the same narrow validation as copy commands and never a direct session.
+- [ ] Each identity's appearance preference (logo visibility) persists per identity in its own browser only, is unaffected by `PORTAL_LOGO_DEFAULT` once set, and is never visible to or recoverable by another identity or browser.
 - [ ] Posture, IP-set, service, routing, application-capability, malformed, and unknown HTTP-policy semantics fail the complete refresh.
 - [ ] Cold-start failure and stale-snapshot retention/recovery recorded.
 - [ ] Support remains labeled preview.

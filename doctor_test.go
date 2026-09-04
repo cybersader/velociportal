@@ -138,7 +138,7 @@ func setDoctorProcessConfig(t *testing.T, values map[string]string) {
 	t.Setenv(processEnvEncodingKey, "")
 	t.Setenv("CONTROL_PLANE", values["CONTROL_PLANE"])
 	keys := append(append([]string(nil), requiredConfigKeys...), tailscaleRequiredConfigKeys...)
-	keys = append(keys, "LISTEN_ADDR", "POLL_INTERVAL", "SERVICE_METADATA_FILE", "SERVICE_HEALTH_FILE")
+	keys = append(keys, "LISTEN_ADDR", "POLL_INTERVAL", "SERVICE_METADATA_FILE", "SERVICE_HEALTH_FILE", "PORTAL_LOGO_DEFAULT")
 	for _, key := range keys {
 		t.Setenv(key, values[key])
 	}

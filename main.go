@@ -38,6 +38,7 @@ type Config struct {
 	ListenAddr                  string
 	PollInterval                time.Duration
 	TrustedProxyCIDR            *net.IPNet
+	PortalLogoDefaultVisible    bool
 }
 
 type configLookup func(string) (string, bool, error)
@@ -195,6 +196,15 @@ func loadConfigFrom(lookup configLookup) (*Config, error) {
 	}
 	serviceHealthFile = strings.TrimSpace(serviceHealthFile)
 
+	portalLogoDefaultValue, err := lookupOr(lookup, "PORTAL_LOGO_DEFAULT", "visible")
+	if err != nil {
+		return nil, fmt.Errorf("loadConfig: %w", err)
+	}
+	portalLogoDefaultVisible, err := normalizePortalLogoDefault(portalLogoDefaultValue)
+	if err != nil {
+		return nil, fmt.Errorf("loadConfig: invalid PORTAL_LOGO_DEFAULT: %w", err)
+	}
+
 	_, trustedProxyCIDR, err := net.ParseCIDR(strings.TrimSpace(values["TRUSTED_PROXY_CIDR"]))
 	if err != nil {
 		return nil, fmt.Errorf("loadConfig: invalid TRUSTED_PROXY_CIDR: %w", err)
@@ -220,7 +230,23 @@ func loadConfigFrom(lookup configLookup) (*Config, error) {
 		ListenAddr:                  listenAddr,
 		PollInterval:                interval,
 		TrustedProxyCIDR:            trustedProxyCIDR,
+		PortalLogoDefaultVisible:    portalLogoDefaultVisible,
 	}, nil
+}
+
+// normalizePortalLogoDefault parses PORTAL_LOGO_DEFAULT: a trimmed, case-normalized
+// enum of exactly "visible" or "hidden" (blank defaults to visible). Every other
+// value is rejected. This is an application/provider environment value, not a
+// stack.env Compose-interpolation key and not a security control.
+func normalizePortalLogoDefault(raw string) (bool, error) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "", "visible":
+		return true, nil
+	case "hidden":
+		return false, nil
+	default:
+		return false, fmt.Errorf("must be visible or hidden")
+	}
 }
 
 func inspectInactiveControlPlaneConfig(lookup configLookup, provider controlPlaneProvider) ([]string, []string) {
@@ -500,7 +526,7 @@ func runServer(cfg *Config) error {
 	pollStale := cfg.PollInterval * 3
 
 	mux := http.NewServeMux()
-	portalHandler := IdentityMiddleware(cfg.TrustedProxyCIDR, NewPortalHandlerWithHealth(cache, healthPoller.Store()))
+	portalHandler := IdentityMiddleware(cfg.TrustedProxyCIDR, NewPortalHandlerWithOptions(cache, healthPoller.Store(), cfg.PortalLogoDefaultVisible))
 	mux.Handle("GET /", portalHandler)
 	mux.Handle("GET /portal", portalHandler)
 	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServerFS(static)))

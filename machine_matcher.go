@@ -2,12 +2,28 @@ package main
 
 import (
 	"net/netip"
+	"net/url"
 	"sort"
 	"strings"
 	"time"
 )
 
 const machineNonrootSelector = "autogroup:nonroot"
+
+// tailscaleConsoleMachinesURL is the fixed Tailscale admin-console Machines page.
+// Velociportal never builds any other console/device/session route.
+const tailscaleConsoleMachinesURL = "https://console.tailscale.com/admin/machines"
+
+// machineConsoleEligibleRoles lists the Tailscale human-role selectors permitted to
+// see the browser SSH Console navigation action. This narrows which eligible
+// viewers additionally receive the console link on an already matched machine
+// card; it never widens machine or Grant TCP/22 evidence.
+var machineConsoleEligibleRoles = map[string]bool{
+	"autogroup:owner":         true,
+	"autogroup:admin":         true,
+	"autogroup:it-admin":      true,
+	"autogroup:network-admin": true,
+}
 
 var tailscaleMachineAddressPrefixes = []netip.Prefix{
 	netip.MustParsePrefix("100.64.0.0/10"),
@@ -47,6 +63,27 @@ func machineProjectionAvailable(data *CacheData) bool {
 	return data != nil && data.Policy != nil &&
 		data.ControlPlane.Provider == controlPlaneTailscale &&
 		data.Policy.SSH.State == sshPolicySupported
+}
+
+// machineConsoleEligible reports whether the exact trusted login carries a
+// Tailscale human role permitted to receive the browser SSH Console action. It
+// reads only the existing GrantRoleSelectorsByLogin projection built from the
+// complete Tailscale Users response; it does not consult devices, owners, tags,
+// or policy text, and it hides the action entirely for Headscale.
+func machineConsoleEligible(login string, data *CacheData) bool {
+	if !machineProjectionAvailable(data) || !exactSSHLogin(login) {
+		return false
+	}
+	roles, directMember := data.GrantRoleSelectorsByLogin[login]
+	if !directMember {
+		return false
+	}
+	for _, role := range roles {
+		if machineConsoleEligibleRoles[role] {
+			return true
+		}
+	}
+	return false
 }
 
 // evaluateMachines is deliberately separate from service evaluation. A machine
@@ -279,6 +316,24 @@ func machineTarget(node Node) (string, bool) {
 		}
 	}
 	return ipv6Fallback, ipv6Fallback != ""
+}
+
+// machineConsoleURL builds the fixed, role-gated navigation target for Tailscale's
+// browser SSH Console. It revalidates that target is byte-identical to a
+// canonical *.ts.net MagicDNS name or a validated Tailscale CGNAT/ULA address --
+// the same invariant machineSSHCommand enforces for its copy commands -- before
+// ever placing it in a URL query value. Velociportal never invents an account,
+// session, device-ID route, or arbitrary host; SSH selection, reauthentication,
+// and policy enforcement remain with Tailscale.
+func machineConsoleURL(target string) (string, bool) {
+	name, validName := normalizeMachineTargetName(target)
+	address, validAddress := tailscaleMachineAddress(target)
+	if (!validName || name != target) && (!validAddress || address != target) {
+		return "", false
+	}
+	query := url.Values{}
+	query.Set("q", target)
+	return tailscaleConsoleMachinesURL + "?" + query.Encode(), true
 }
 
 func tailscaleMachineAddress(raw string) (string, bool) {

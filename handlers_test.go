@@ -645,6 +645,56 @@ func TestMachineSSHCommandRequiresValidatedLiteralInputs(t *testing.T) {
 	}
 }
 
+func TestPortalHandler_EligibleNonrootOnlyMachineShowsConsoleWithoutInventingCommand(t *testing.T) {
+	data := machineMatcherFixture(t)
+	data.Policy.SSH.Rules = []SSHRule{{
+		Action: "check", Src: []string{"alice@example.com"}, Dst: []string{"tag:server"}, Users: []string{machineNonrootSelector},
+	}}
+	data.GrantRoleSelectorsByLogin["alice@example.com"] = []string{"autogroup:admin", "autogroup:member"}
+
+	rec := doPortalRequest(newTestHandler(data), "127.0.0.1:12345", "alice@example.com")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	body := rec.Body.String()
+	start := strings.Index(body, `<article class="card machine-card"`)
+	if start < 0 {
+		t.Fatal("machine article was not rendered")
+	}
+	end := strings.Index(body[start:], `</article>`)
+	if end < 0 {
+		t.Fatal("machine article was not closed")
+	}
+	article := body[start : start+end]
+	if !strings.Contains(article, `Open in Tailscale console`) {
+		t.Fatal("eligible nonroot-only machine must retain the browser console action")
+	}
+	for _, forbidden := range []string{`<select`, `data-copy-ssh-command`, `data-command=`} {
+		if strings.Contains(article, forbidden) {
+			t.Fatalf("nonroot-only policy invented a copyable account via %q", forbidden)
+		}
+	}
+}
+
+func TestRenderMachineConsoleLinkRevalidatesTarget(t *testing.T) {
+	var body bytes.Buffer
+	err := renderPortalWithOptions(&body, &Identity{Login: "owner@example.com"}, nil, portalRenderOptions{
+		Machines: []MachineCard{{
+			ID: "device-1", Name: "public.example.com", Target: "public.example.com",
+			Access: []MachineAccess{{User: "deploy", Action: "accept"}},
+		}},
+		MachinesAvailable:  true,
+		ConsoleEligible:    true,
+		LogoDefaultVisible: true,
+	})
+	if err != nil {
+		t.Fatalf("renderPortalWithOptions() error = %v", err)
+	}
+	if strings.Contains(body.String(), `console.tailscale.com`) || strings.Contains(body.String(), `Open in Tailscale console`) {
+		t.Fatal("rendering must reject an invalid machine target even for an eligible viewer")
+	}
+}
+
 func TestPortalHandler_EmptyCache(t *testing.T) {
 	h := newTestHandler(nil) // Cache.Get() returns nil.
 	rec := doPortalRequest(h, "127.0.0.1:12345", "alice@example.com")
@@ -669,10 +719,20 @@ func TestPortalHandler_LocalLogoControlAndHTMXRefresh(t *testing.T) {
 
 	body := rec.Body.String()
 	for _, expected := range []string{
-		`id="logo-toggle" type="button" aria-controls="brand-logo" aria-pressed="true" hidden`,
-		`window.localStorage.getItem(storageKey)`,
-		`window.localStorage.setItem(storageKey, String(visible))`,
+		`id="account-trigger" type="button" aria-label="Account settings for alice@example.com" aria-haspopup="dialog" aria-expanded="false" aria-controls="account-panel" hidden`,
+		`id="account-fallback"`,
+		`id="account-panel" role="dialog" aria-labelledby="account-panel-title" hidden`,
+		`id="logo-visible-checkbox"`,
+		`Show Velociportal logo`,
+		`var scopedKey = "velociportal.logo.visible." + scope;`,
+		`var legacyKey = "velociportal.logo.visible";`,
+		`window.localStorage.getItem(scopedKey)`,
+		`window.localStorage.getItem(legacyKey)`,
+		`window.localStorage.setItem(scopedKey, String(visible))`,
+		`window.localStorage.removeItem(legacyKey)`,
 		`} catch (_) {`,
+		`closePanel(true);`,
+		`<div class="user-name">alice@example.com</div>`,
 		`id="portal-content" hx-get="/portal" hx-trigger="every 60s" hx-target="#portal-content" hx-select="#portal-content" hx-swap="outerHTML"`,
 		`.grid { grid-template-columns: minmax(0, 1fr); }`,
 		`.card-head { align-items: flex-start; flex-wrap: wrap; }`,
@@ -684,6 +744,146 @@ func TestPortalHandler_LocalLogoControlAndHTMXRefresh(t *testing.T) {
 	if strings.Contains(body, `hx-select="#services`) || strings.Contains(body, `hx-target="#services`) || strings.Contains(body, `hx-swap="innerHTML"`) {
 		t.Fatal("portal refresh must replace the complete services-and-machines region")
 	}
+	if strings.Contains(body, `id="logo-toggle"`) {
+		t.Fatal("the old standalone logo-toggle control must be fully replaced")
+	}
+	accountIndex := strings.Index(body, `id="account"`)
+	portalIndex := strings.Index(body, `id="portal-content"`)
+	if accountIndex < 0 || portalIndex < 0 || accountIndex > portalIndex {
+		t.Fatal("account settings must remain outside the htmx-swapped portal content")
+	}
+
+	// The rendered scope must be the fixed-length, opaque SHA-256 hex digest of
+	// the login -- never the plaintext login itself.
+	wantScope := logoPreferenceScope("alice@example.com")
+	if !strings.Contains(body, `var scope = "`+wantScope+`";`) {
+		t.Fatalf("portal did not render the expected scoped preference key %q", wantScope)
+	}
+	if strings.Contains(body, "alice@example.com") == false {
+		t.Fatal("sanity: fixture login should still appear as visible account text")
+	}
+	if strings.Count(body, wantScope) < 1 {
+		t.Fatal("scoped storage key must be present")
+	}
+	if len(wantScope) != 64 {
+		t.Fatalf("logoPreferenceScope must be a 64-character hex digest, got %d chars", len(wantScope))
+	}
+}
+
+func TestPortalHandler_LogoPreferenceScopeIsOpaqueAndPerIdentity(t *testing.T) {
+	aliceScope := logoPreferenceScope("alice@example.com")
+	bobScope := logoPreferenceScope("bob@example.com")
+	if aliceScope == bobScope {
+		t.Fatal("distinct logins must scope to distinct preference keys")
+	}
+	for _, scope := range []string{aliceScope, bobScope} {
+		if len(scope) != 64 {
+			t.Fatalf("scope %q is not a 64-character hex digest", scope)
+		}
+		for _, r := range scope {
+			if !strings.ContainsRune("0123456789abcdef", r) {
+				t.Fatalf("scope %q contains a non-hex character", scope)
+			}
+		}
+	}
+}
+
+func TestPortalHandler_LogoDefaultDeploymentSettingReachesRenderedPage(t *testing.T) {
+	tests := map[string]struct {
+		visible bool
+		want    string
+	}{
+		"visible default": {visible: true, want: `var defaultVisible = "true" !== "false";`},
+		"hidden default":  {visible: false, want: `var defaultVisible = "false" !== "false";`},
+	}
+	_, trusted, err := net.ParseCIDR("127.0.0.0/8")
+	if err != nil {
+		t.Fatalf("ParseCIDR() error = %v", err)
+	}
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			handler := IdentityMiddleware(trusted, NewPortalHandlerWithOptions(newTestCache(standardTestData()), nil, test.visible))
+			rec := doPortalRequest(handler, "127.0.0.1:12345", "alice@example.com")
+			if rec.Code != http.StatusOK {
+				t.Fatalf("expected 200, got %d", rec.Code)
+			}
+			if body := rec.Body.String(); !strings.Contains(body, test.want) {
+				t.Fatalf("portal did not render deployment default %q", test.want)
+			}
+		})
+	}
+}
+
+func TestPortalHandler_MachineConsoleLinkOnlyForEligibleTailscaleRoles(t *testing.T) {
+	buildData := func(role string) *CacheData {
+		data := machineMatcherFixture(t)
+		data.Policy.SSH.Rules = []SSHRule{
+			{Action: "accept", Src: []string{"alice@example.com"}, Dst: []string{"tag:server"}, Users: []string{"deploy"}},
+		}
+		roles := []string{"autogroup:member"}
+		if role != "" {
+			roles = append(roles, role)
+		}
+		data.GrantRoleSelectorsByLogin["alice@example.com"] = roles
+		return data
+	}
+
+	t.Run("owner-eligible role renders the console link", func(t *testing.T) {
+		rec := doPortalRequest(newTestHandler(buildData("autogroup:owner")), "127.0.0.1:12345", "alice@example.com")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", rec.Code)
+		}
+		body := rec.Body.String()
+		for _, expected := range []string{
+			`<div class="machine-console">`,
+			`<a class="btn-console" href="https://console.tailscale.com/admin/machines?q=server.tailnet.ts.net" target="_blank" rel="noopener noreferrer" aria-describedby="machine-1-console-note">Open in Tailscale console</a>`,
+			`id="machine-1-console-note"`,
+			`Opens the filtered Tailscale admin console`,
+		} {
+			if !strings.Contains(body, expected) {
+				t.Fatalf("eligible role did not render console link %q", expected)
+			}
+		}
+	})
+
+	t.Run("plain member role hides the console link", func(t *testing.T) {
+		rec := doPortalRequest(newTestHandler(buildData("")), "127.0.0.1:12345", "alice@example.com")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", rec.Code)
+		}
+		body := rec.Body.String()
+		// The .machine-console / .btn-console CSS class rules are always present
+		// in the stylesheet, so assert against the actual anchor/div markup and
+		// the console-specific text rather than the bare class-name substrings.
+		for _, forbidden := range []string{
+			`<div class="machine-console">`,
+			`<a class="btn-console"`,
+			`console.tailscale.com`,
+			`target="_blank"`,
+			`rel="noopener noreferrer"`,
+			`Open in Tailscale console`,
+		} {
+			if strings.Contains(body, forbidden) {
+				t.Fatalf("ineligible role must not render console markup %q", forbidden)
+			}
+		}
+	})
+
+	t.Run("Headscale never renders the console link regardless of role", func(t *testing.T) {
+		data := buildData("autogroup:owner")
+		data.ControlPlane.Provider = controlPlaneHeadscale
+		data.Policy.SSH.State = sshPolicySupported
+		rec := doPortalRequest(newTestHandler(data), "127.0.0.1:12345", "alice@example.com")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", rec.Code)
+		}
+		// Headscale never exposes the Machines projection at all, so neither the
+		// section nor the console link should render.
+		body := rec.Body.String()
+		if strings.Contains(body, `<div class="machine-console">`) || strings.Contains(body, `<a class="btn-console"`) {
+			t.Fatal("Headscale must never render the browser SSH console action")
+		}
+	})
 }
 
 func TestPortalHandler_FaviconInHTML(t *testing.T) {
