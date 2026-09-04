@@ -26,7 +26,7 @@ Files:
 - `compose.service-health.yaml` — optional read-only explicit health-probe overlay with a fixed in-container path and supplemental read group.
 - `service-health.example.json` — strict version-1 health example with bounded scheduling and topology allowlists.
 - `stack.env.example` — non-secret Compose interpolation values for the base stack.
-- `velociportal.env.example` — explicit Headscale application settings using raw quoted values.
+- `velociportal.env.example` — explicit Headscale application settings using raw quoted values, including the optional `PORTAL_LOGO_DEFAULT` browser-appearance default.
 - `velociportal.tailscale.env.example` — OAuth-only Tailscale SaaS preview settings with no access token, API URL, or explicit tailnet.
 - `tailscale-serve.json.example` — declarative tailnet-only HTTP Serve route for the existing Tailscale app.
 - `policy.hujson.example` — two-user/two-service legacy ACL seed that also permits both users to reach the Serve node on port `8081`.
@@ -120,6 +120,12 @@ VELOCIPORTAL_SERVICE_HEALTH_FILE=/absolute/host/path/velociportal-health.json VE
 The overlay mounts the file read-only at `/velociportal-health.json`, sets `SERVICE_HEALTH_FILE` to that fixed target, refuses to create a missing source, and adds only the supplied numeric supplemental group. Probes derive targets only from current NPM backend fields; metadata/browser URLs are never probed. HTTP uses credential-free `GET`, TCP connects and closes without payload, DNS answers are validated before direct-IP dialing, TLS remains verified, and NPM/selected-control-plane API sockets are protected. Health never changes authorization, cards, the discovery snapshot, or `/healthz`. Preserve the same `950:950`/`0750`/`0640` ownership and modes rather than loosening permissions.
 
 The private-CA, metadata, and health overlays can be stacked in any combination by including the selected files.
+
+## Portal appearance and browser SSH console action
+
+Each user's display name and login in the portal header open an accessible settings panel holding the one appearance preference: showing or hiding the fixed built-in Velociportal logo. That preference lives per exact identity in one browser only, is stored under an opaque SHA-256-scoped `localStorage` key, and is never sent to or stored by Velociportal; a legacy unscoped key migrates once. The optional `PORTAL_LOGO_DEFAULT=visible|hidden` environment value supplies only the initial deployment default used when no valid browser preference exists yet for that identity.
+
+On an eligible Tailscale machine card — a direct member holding an automatic-admin-equivalent role (Owner, Admin, IT admin, or Network admin) — the portal also renders a browser SSH console action that opens the fixed `https://console.tailscale.com/admin/machines?q=<validated target>` page in a new tab (`target=_blank rel="noopener noreferrer"`), using a target that passes the same narrow validation as the existing copy commands. This is role-gated navigation only, never a direct session, proxy, enforcement check, or reachability claim; Tailscale remains responsible for console eligibility, reauthentication, SSH policy, device posture, account choice, and the session itself. It is never rendered for ineligible roles, Headscale, or an unavailable Machines projection. Arbitrary per-service logos, access history, broader personalization, account-synchronized profiles, and delegated administration remain deferred.
 
 Follow the [TrueNAS Quickstart](../docs/guides/truenas-scale.md) rather than deploying these examples without completing the selected provider's credential/control-plane checks plus private-network, identity, LAN-negative, restart, backup/restore, join, and reachability gates. Tailscale remains preview until its dedicated live OAuth and policy acceptance passes. The base stack requires no manual CA lifecycle; the certificate on the canonical NPM Headscale endpoint comes from the operator's existing automated NPM lifecycle. If a pre-tailnet client does not trust it, stop rather than disabling verification.
 

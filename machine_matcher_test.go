@@ -218,6 +218,117 @@ func TestEvaluateMachineSSHAccessUsesRestrictiveCheckPrecedence(t *testing.T) {
 	})
 }
 
+func TestMachineConsoleEligibleRequiresTailscaleDirectMemberWithConsoleRole(t *testing.T) {
+	baseData := func() *CacheData {
+		return &CacheData{
+			ControlPlane: ControlPlaneMetadata{Provider: controlPlaneTailscale},
+			Policy:       &Policy{SSH: SSHPolicy{State: sshPolicySupported}},
+			GrantRoleSelectorsByLogin: map[string][]string{
+				"owner@example.com":   {"autogroup:admin", "autogroup:member", "autogroup:owner"},
+				"admin@example.com":   {"autogroup:admin", "autogroup:member"},
+				"it@example.com":      {"autogroup:it-admin", "autogroup:member"},
+				"network@example.com": {"autogroup:network-admin", "autogroup:member"},
+				"billing@example.com": {"autogroup:billing-admin", "autogroup:member"},
+				"auditor@example.com": {"autogroup:auditor", "autogroup:member"},
+				"member@example.com":  {"autogroup:member"},
+			},
+		}
+	}
+
+	tests := map[string]struct {
+		login string
+		want  bool
+	}{
+		"owner is eligible via automatic admin role": {login: "owner@example.com", want: true},
+		"admin is eligible":                          {login: "admin@example.com", want: true},
+		"it-admin is eligible":                       {login: "it@example.com", want: true},
+		"network-admin is eligible":                  {login: "network@example.com", want: true},
+		"billing-admin is not eligible":              {login: "billing@example.com", want: false},
+		"auditor is not eligible":                    {login: "auditor@example.com", want: false},
+		"plain member is not eligible":               {login: "member@example.com", want: false},
+		"shared user is not eligible":                {login: "shared@example.com", want: false},
+		"case variant is not eligible":               {login: "Owner@example.com", want: false},
+		"blank login is not eligible":                {login: "", want: false},
+		"whitespace-padded login is not eligible":    {login: "  owner@example.com  ", want: false},
+	}
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			if got := machineConsoleEligible(test.login, baseData()); got != test.want {
+				t.Fatalf("machineConsoleEligible(%q) = %t, want %t", test.login, got, test.want)
+			}
+		})
+	}
+
+	t.Run("Headscale provider is never eligible regardless of role", func(t *testing.T) {
+		data := baseData()
+		data.ControlPlane.Provider = controlPlaneHeadscale
+		if machineConsoleEligible("owner@example.com", data) {
+			t.Fatal("Headscale must never be console-eligible")
+		}
+	})
+
+	t.Run("unavailable SSH projection is never eligible", func(t *testing.T) {
+		data := baseData()
+		data.Policy = &Policy{SSH: SSHPolicy{State: sshPolicyUnsupported}}
+		if machineConsoleEligible("owner@example.com", data) {
+			t.Fatal("unsupported SSH projection must never be console-eligible")
+		}
+	})
+
+	t.Run("nil data is never eligible", func(t *testing.T) {
+		if machineConsoleEligible("owner@example.com", nil) {
+			t.Fatal("nil snapshot must never be console-eligible")
+		}
+	})
+}
+
+func TestMachineConsoleURLBuildsFixedFilteredMachinesLinkFromValidatedTargetsOnly(t *testing.T) {
+	tests := map[string]struct {
+		target string
+		want   string
+		ok     bool
+	}{
+		"canonical ts.net name": {
+			target: "server.tailnet.ts.net",
+			want:   "https://console.tailscale.com/admin/machines?q=server.tailnet.ts.net",
+			ok:     true,
+		},
+		"Tailscale CGNAT IPv4": {
+			target: "100.64.0.10",
+			want:   "https://console.tailscale.com/admin/machines?q=100.64.0.10",
+			ok:     true,
+		},
+		"Tailscale ULA IPv6": {
+			target: "fd7a:115c:a1e0::13",
+			want:   "https://console.tailscale.com/admin/machines?q=fd7a%3A115c%3Aa1e0%3A%3A13",
+			ok:     true,
+		},
+	}
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			got, ok := machineConsoleURL(test.target)
+			if got != test.want || ok != test.ok {
+				t.Fatalf("machineConsoleURL(%q) = %q, %t; want %q, %t", test.target, got, ok, test.want, test.ok)
+			}
+		})
+	}
+
+	for name, target := range map[string]string{
+		"single-label host is not a validated target":          "server",
+		"public non-MagicDNS domain is not a validated target": "public.example.com",
+		"ordinary private IPv4 is not a validated target":      "192.168.1.10",
+		"whitespace changes the byte-identical target":         " server.tailnet.ts.net",
+		"query metacharacters do not smuggle a new target":     "server.tailnet.ts.net&q=evil",
+		"empty target is never valid":                          "",
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got, ok := machineConsoleURL(target); ok || got != "" {
+				t.Fatalf("machineConsoleURL(%q) = %q, %t; want rejection", target, got, ok)
+			}
+		})
+	}
+}
+
 func TestMachineTargetUsesCanonicalNameOrNarrowTailnetAddressFallback(t *testing.T) {
 	tests := map[string]struct {
 		node Node

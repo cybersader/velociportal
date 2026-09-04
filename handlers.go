@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"html"
 	"io"
@@ -12,8 +14,9 @@ import (
 )
 
 type PortalHandler struct {
-	cache  *Cache
-	health *ServiceHealthStore
+	cache              *Cache
+	health             *ServiceHealthStore
+	logoDefaultVisible bool
 }
 
 func NewPortalHandler(cache *Cache) *PortalHandler {
@@ -21,7 +24,15 @@ func NewPortalHandler(cache *Cache) *PortalHandler {
 }
 
 func NewPortalHandlerWithHealth(cache *Cache, health *ServiceHealthStore) *PortalHandler {
-	return &PortalHandler{cache: cache, health: health}
+	return NewPortalHandlerWithOptions(cache, health, true)
+}
+
+// NewPortalHandlerWithOptions is the options-aware constructor used when the
+// deployment default for the browser-local logo preference is not simply
+// "visible". Existing constructors keep the historical visible-default behavior
+// for tests and callers that do not need to override it.
+func NewPortalHandlerWithOptions(cache *Cache, health *ServiceHealthStore, logoDefaultVisible bool) *PortalHandler {
+	return &PortalHandler{cache: cache, health: health, logoDefaultVisible: logoDefaultVisible}
 }
 
 func (h *PortalHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -41,13 +52,36 @@ func (h *PortalHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	cards := MatchServices(identity, data)
 	machinesAvailable := machineProjectionAvailable(data)
 	machines := MatchMachines(identity, data)
+	consoleEligible := machineConsoleEligible(identity.Login, data)
 	slog.Info("portal request", "cards", len(cards), "machines", len(machines))
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := renderPortalWithMachines(w, identity, cards, machines, machinesAvailable, serviceMetadataHasOrganization(data.ServiceMetadata), h.health); err != nil {
+	opts := portalRenderOptions{
+		Machines:           machines,
+		MachinesAvailable:  machinesAvailable,
+		ConsoleEligible:    consoleEligible,
+		Organized:          serviceMetadataHasOrganization(data.ServiceMetadata),
+		LogoDefaultVisible: h.logoDefaultVisible,
+		Health:             h.health,
+	}
+	if err := renderPortalWithOptions(w, identity, cards, opts); err != nil {
 		slog.Error("render portal", "err", err)
 	}
 	slog.Debug("portal rendered", "duration", time.Since(start))
+}
+
+// portalRenderOptions carries the request-scoped rendering inputs beyond the
+// identity and service cards. It exists so renderPortal's smaller-arity legacy
+// wrappers can keep working with sensible defaults (no machines section, the
+// visible logo default, no browser SSH Console action) while ServeHTTP supplies
+// the complete set derived from the current snapshot and viewer.
+type portalRenderOptions struct {
+	Machines           []MachineCard
+	MachinesAvailable  bool
+	ConsoleEligible    bool
+	Organized          bool
+	LogoDefaultVisible bool
+	Health             *ServiceHealthStore
 }
 
 func renderPortal(w io.Writer, id *Identity, cards []ServiceCard, healthStores ...*ServiceHealthStore) error {
@@ -55,14 +89,22 @@ func renderPortal(w io.Writer, id *Identity, cards []ServiceCard, healthStores .
 }
 
 func renderPortalWithOrganization(w io.Writer, id *Identity, cards []ServiceCard, organized bool, healthStores ...*ServiceHealthStore) error {
-	return renderPortalWithMachines(w, id, cards, nil, false, organized, healthStores...)
-}
-
-func renderPortalWithMachines(w io.Writer, id *Identity, cards []ServiceCard, machines []MachineCard, machinesAvailable, organized bool, healthStores ...*ServiceHealthStore) error {
 	var health *ServiceHealthStore
 	if len(healthStores) > 0 {
 		health = healthStores[0]
 	}
+	return renderPortalWithOptions(w, id, cards, portalRenderOptions{
+		Organized:          organized,
+		LogoDefaultVisible: true,
+		Health:             health,
+	})
+}
+
+func renderPortalWithOptions(w io.Writer, id *Identity, cards []ServiceCard, opts portalRenderOptions) error {
+	health := opts.Health
+	machines := opts.Machines
+	machinesAvailable := opts.MachinesAvailable
+	organized := opts.Organized
 
 	var servicesBody strings.Builder
 	servicesClass := "grid"
@@ -86,7 +128,7 @@ func renderPortalWithMachines(w io.Writer, id *Identity, cards []ServiceCard, ma
 	if machinesAvailable {
 		var machinesBody strings.Builder
 		for index, machine := range machines {
-			renderMachineCard(&machinesBody, machine, index+1)
+			renderMachineCard(&machinesBody, machine, index+1, opts.ConsoleEligible)
 		}
 		if len(machines) == 0 {
 			machinesBody.WriteString(`<div class="empty machine-empty">` +
@@ -103,18 +145,41 @@ func renderPortalWithMachines(w io.Writer, id *Identity, cards []ServiceCard, ma
 		)
 	}
 
+	displayName := strings.TrimSpace(id.Name)
+	if displayName == "" {
+		displayName = id.Login
+	}
+
+	// The deployment default maps to one of exactly two fixed HTML/JS literals.
+	// Raw PORTAL_LOGO_DEFAULT environment text is never interpolated into the page.
+	logoDefaultLiteral := "true"
+	if !opts.LogoDefaultVisible {
+		logoDefaultLiteral = "false"
+	}
+
 	page := strings.NewReplacer(
-		"{{USER_NAME}}", html.EscapeString(id.Name),
+		"{{USER_NAME}}", html.EscapeString(displayName),
 		"{{USER_LOGIN}}", html.EscapeString(id.Login),
 		"{{SERVICES_CLASS}}", servicesClass,
 		"{{SERVICES_BODY}}", servicesBody.String(),
 		"{{MACHINES_SECTION}}", machinesSection.String(),
+		"{{LOGO_PREF_SCOPE}}", logoPreferenceScope(id.Login),
+		"{{LOGO_DEFAULT_VISIBLE}}", logoDefaultLiteral,
 	).Replace(portalPage)
 
 	if _, err := io.WriteString(w, page); err != nil {
 		return fmt.Errorf("renderPortal: %w", err)
 	}
 	return nil
+}
+
+// logoPreferenceScope derives the opaque, fixed-format SHA-256 hex scope used to
+// namespace the browser-local logo preference by exact trusted login. The
+// plaintext login is never written into the storage-key namespace or otherwise
+// rendered by this scope.
+func logoPreferenceScope(login string) string {
+	sum := sha256.Sum256([]byte(login))
+	return hex.EncodeToString(sum[:])
 }
 
 func serviceCardsHaveOrganizationMetadata(cards []ServiceCard) bool {
@@ -191,7 +256,7 @@ func renderServiceCard(body *strings.Builder, card ServiceCard, health *ServiceH
 	)
 }
 
-func renderMachineCard(body *strings.Builder, machine MachineCard, index int) {
+func renderMachineCard(body *strings.Builder, machine MachineCard, index int, consoleEligible bool) {
 	machineID := fmt.Sprintf("machine-%d", index)
 	fmt.Fprintf(body,
 		`<article class="card machine-card" data-machine="%s" aria-labelledby="%s-name">`+
@@ -248,6 +313,21 @@ func renderMachineCard(body *strings.Builder, machine MachineCard, index int) {
 			feedbackID,
 			feedbackID,
 		)
+	}
+
+	if consoleEligible {
+		if consoleURL, ok := machineConsoleURL(machine.Target); ok {
+			noteID := machineID + "-console-note"
+			fmt.Fprintf(body,
+				`<div class="machine-console">`+
+					`<a class="btn-console" href="%s" target="_blank" rel="noopener noreferrer" aria-describedby="%s">Open in Tailscale console</a>`+
+					`<p class="machine-console-note" id="%s">Opens the filtered Tailscale admin console for this machine in a new tab. You still choose the SSH session and reauthenticate there.</p>`+
+					`</div>`,
+				html.EscapeString(consoleURL),
+				noteID,
+				noteID,
+			)
+		}
 	}
 	body.WriteString(`</article>`)
 }
@@ -402,11 +482,17 @@ header { max-width: 1200px; margin: 0 auto; padding: 2rem 1.5rem 1rem; display: 
 :root[data-logo="hidden"] .brand-logo { display: none; }
 .brand-name { font-size: 1.25rem; font-weight: 700; letter-spacing: -.01em; }
 .header-side { display: flex; align-items: center; justify-content: flex-end; gap: 1rem; min-width: 0; }
-.logo-toggle { border: 1px solid var(--border); border-radius: 999px; padding: .35rem .7rem; background: var(--card-bg); color: var(--muted); font: inherit; font-size: .78rem; line-height: 1.25; cursor: pointer; }
-.logo-toggle:hover, .logo-toggle:focus-visible { border-color: var(--accent); color: var(--text); }
+.account { position: relative; min-width: 0; }
+.account-trigger { display: block; border: 1px solid transparent; border-radius: 10px; padding: .3rem .5rem; margin: -.3rem -.5rem; background: none; text-align: right; cursor: pointer; font: inherit; color: inherit; max-width: 100%; }
+.account-trigger:hover, .account-trigger:focus-visible { border-color: var(--border); background: var(--card-bg); }
 .user { text-align: right; min-width: 0; }
 .user-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .user .login { color: var(--muted); font-size: .85rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.account-panel { position: absolute; top: calc(100% + .5rem); right: 0; z-index: 20; width: max-content; min-width: 14rem; max-width: min(20rem, calc(100vw - 2rem)); padding: .9rem 1rem; border: 1px solid var(--border); border-radius: 12px; background: var(--card-bg); box-shadow: 0 12px 30px rgba(0, 0, 0, .25); text-align: left; }
+.account-panel-title { margin: 0 0 .6rem; font-size: 1rem; }
+.account-panel-section + .account-panel-section { margin-top: .75rem; }
+.account-panel-heading { margin: 0 0 .4rem; font-size: .8rem; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .02em; }
+.account-panel-checkbox { display: flex; align-items: center; gap: .5rem; font-size: .9rem; cursor: pointer; }
 main { max-width: 1200px; margin: 0 auto; padding: 1rem 1.5rem 2.5rem; }
 .portal-content { display: grid; gap: 2.25rem; }
 .portal-section { min-width: 0; }
@@ -442,6 +528,10 @@ a.card:hover, a.card:focus-visible { border-color: var(--accent); background: va
 .copy-command { padding: .35rem .7rem; cursor: pointer; }
 .copy-command:hover, .copy-command:focus-visible { border-color: var(--accent); }
 .copy-feedback { grid-column: 1 / -1; min-height: 1.2em; color: var(--muted); font-size: .78rem; }
+.machine-console { margin-top: .5rem; }
+.btn-console { display: inline-block; padding: .35rem .7rem; border: 1px solid var(--border); border-radius: 8px; background: var(--card-bg); color: var(--text); font-size: .85rem; text-decoration: none; }
+.btn-console:hover, .btn-console:focus-visible { border-color: var(--accent); }
+.machine-console-note { margin: .35rem 0 0; color: var(--muted); font-size: .78rem; }
 .empty { grid-column: 1 / -1; text-align: center; padding: 4rem 1.5rem; color: var(--muted); }
 .machine-empty { padding-block: 2rem; }
 .empty-icon { font-size: 2.5rem; line-height: 1; margin-bottom: .5rem; opacity: .5; }
@@ -458,8 +548,40 @@ a.card:hover, a.card:focus-visible { border-color: var(--accent); background: va
   .health-status { margin-left: 0; text-align: left; }
   .machine-command { grid-template-columns: minmax(0, 1fr); align-items: stretch; }
   .machine-command label, .copy-feedback { grid-column: 1; }
+  .account { width: 100%; }
+  .account-trigger { width: 100%; text-align: left; }
+  .account-panel { left: 0; right: 0; width: auto; max-width: none; }
 }
 </style>
+<script>
+(function () {
+  "use strict";
+  var scope = "{{LOGO_PREF_SCOPE}}";
+  var scopedKey = "velociportal.logo.visible." + scope;
+  var legacyKey = "velociportal.logo.visible";
+  var defaultVisible = "{{LOGO_DEFAULT_VISIBLE}}" !== "false";
+  var visible = defaultVisible;
+
+  try {
+    var scopedValue = window.localStorage.getItem(scopedKey);
+    if (scopedValue === "true" || scopedValue === "false") {
+      visible = scopedValue === "true";
+    } else {
+      var legacyValue = window.localStorage.getItem(legacyKey);
+      if (legacyValue === "true" || legacyValue === "false") {
+        visible = legacyValue === "true";
+        window.localStorage.setItem(scopedKey, String(visible));
+        window.localStorage.removeItem(legacyKey);
+      }
+    }
+  } catch (_) {
+    visible = defaultVisible;
+  }
+
+  if (!visible) document.documentElement.setAttribute("data-logo", "hidden");
+  window.__velociportalLogoPreference = { scopedKey: scopedKey, visible: visible };
+}());
+</script>
 </head>
 <body>
 <header>
@@ -468,10 +590,30 @@ a.card:hover, a.card:focus-visible { border-color: var(--accent); background: va
 <span class="brand-name">Velociportal</span>
 </div>
 <div class="header-side">
-<button class="logo-toggle" id="logo-toggle" type="button" aria-controls="brand-logo" aria-pressed="true" hidden>Show logo</button>
-<div class="user">
+<div class="account" id="account">
+<button class="account-trigger" id="account-trigger" type="button" aria-label="Account settings for {{USER_LOGIN}}" aria-haspopup="dialog" aria-expanded="false" aria-controls="account-panel" hidden>
 <div class="user-name">{{USER_NAME}}</div>
 <div class="login">{{USER_LOGIN}}</div>
+</button>
+<div class="user" id="account-fallback">
+<div class="user-name">{{USER_NAME}}</div>
+<div class="login">{{USER_LOGIN}}</div>
+</div>
+<div class="account-panel" id="account-panel" role="dialog" aria-labelledby="account-panel-title" hidden>
+<h2 class="account-panel-title" id="account-panel-title">Account settings</h2>
+<div class="account-panel-section">
+<div class="account-panel-heading">Signed in as</div>
+<div class="user-name">{{USER_NAME}}</div>
+<div class="login">{{USER_LOGIN}}</div>
+</div>
+<div class="account-panel-section">
+<div class="account-panel-heading">Appearance</div>
+<label class="account-panel-checkbox">
+<input type="checkbox" id="logo-visible-checkbox">
+Show Velociportal logo
+</label>
+</div>
+</div>
 </div>
 </div>
 </header>
@@ -490,34 +632,66 @@ a.card:hover, a.card:focus-visible { border-color: var(--accent); background: va
 <script>
 (function () {
   "use strict";
-  var storageKey = "velociportal.logo.visible";
   var root = document.documentElement;
-  var button = document.getElementById("logo-toggle");
-  var logo = document.getElementById("brand-logo");
-  if (!button || !logo) return;
+  var trigger = document.getElementById("account-trigger");
+  var fallback = document.getElementById("account-fallback");
+  var panel = document.getElementById("account-panel");
+  var checkbox = document.getElementById("logo-visible-checkbox");
+  if (!trigger || !fallback || !panel || !checkbox) return;
 
-  var visible = true;
-  try {
-    visible = window.localStorage.getItem(storageKey) !== "false";
-  } catch (_) {
-    visible = true;
-  }
+  var pref = window.__velociportalLogoPreference || { scopedKey: "velociportal.logo.visible", visible: true };
+  var visible = pref.visible;
 
   function applyLogoPreference() {
     if (visible) root.removeAttribute("data-logo");
     else root.setAttribute("data-logo", "hidden");
-    button.setAttribute("aria-pressed", String(visible));
+    checkbox.checked = visible;
   }
 
-  button.addEventListener("click", function () {
-    visible = !visible;
+  checkbox.addEventListener("change", function () {
+    visible = checkbox.checked;
     applyLogoPreference();
     try {
-      window.localStorage.setItem(storageKey, String(visible));
+      window.localStorage.setItem(pref.scopedKey, String(visible));
     } catch (_) {}
   });
+
+  function openPanel() {
+    panel.hidden = false;
+    trigger.setAttribute("aria-expanded", "true");
+    checkbox.focus();
+    document.addEventListener("keydown", onKeydown, true);
+    document.addEventListener("click", onOutsideClick, true);
+  }
+
+  function closePanel(restoreFocus) {
+    panel.hidden = true;
+    trigger.setAttribute("aria-expanded", "false");
+    document.removeEventListener("keydown", onKeydown, true);
+    document.removeEventListener("click", onOutsideClick, true);
+    if (restoreFocus) trigger.focus();
+  }
+
+  function onKeydown(event) {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      closePanel(true);
+    }
+  }
+
+  function onOutsideClick(event) {
+    if (panel.contains(event.target) || trigger.contains(event.target)) return;
+    closePanel(true);
+  }
+
+  trigger.addEventListener("click", function () {
+    if (panel.hidden) openPanel();
+    else closePanel(true);
+  });
+
   applyLogoPreference();
-  button.hidden = false;
+  fallback.hidden = true;
+  trigger.hidden = false;
 }());
 
 (function () {

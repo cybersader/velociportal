@@ -25,7 +25,7 @@ velociportal help [command]
 | `velociportal setup --env-file FILE` | Runs the guided wizard and atomically creates or updates the local environment file |
 | `velociportal setup observe-proxy` | Observes the immediate peer on a one-time URL and proposes an exact trusted source for confirmation |
 | `velociportal doctor` | Validates configuration, upstreams, snapshot construction, and join coverage |
-| `velociportal doctor --identity LOGIN` | Also previews service cards and, only when the Tailscale SSH projection is available, a topology-free machine count for `LOGIN`; the option may be repeated |
+| `velociportal doctor --identity LOGIN` | Also previews service cards and, only when the Tailscale SSH projection is available, a topology-free machine count for `LOGIN`; the option may be repeated. Doctor never reports the browser SSH console link or appearance preference state, which are portal-only, role-gated, and browser-local |
 | `velociportal validate --identity LABEL=LOGIN ...` | Compares at least two labeled identities and emits explainable text or JSON join evidence |
 | `velociportal suggest-hostnames ...` | Privately reviews unambiguous hostname candidates and emits a strict metadata-v1 proposal after confirmation |
 | `velociportal healthcheck` | Probes `/healthz` without loading application configuration or credentials |
@@ -264,6 +264,7 @@ Do not commit a populated environment file, private service-name mapping, or ser
 | `SERVICE_METADATA_FILE` | No | Strict version-1-or-2 read-only JSON file keyed by existing NPM proxy-host IDs; v1 supports display-name/browser-URL overrides and v2 also supports presentation-only category/order; blank disables it |
 | `SERVICE_HEALTH_FILE` | No | Strict version-1 read-only JSON file for explicit proxy-host health probes, scheduling bounds, accepted HTTP statuses, and mandatory topology allowlists; blank disables probes |
 | `TRUSTED_PROXY_CIDR` | Yes | Exact source `/32`, `/128`, or the smallest intentionally trusted proxy subnet |
+| `PORTAL_LOGO_DEFAULT` | No | `visible` (default) or `hidden`; supplies only the initial browser-local built-in-logo state when no valid per-identity browser preference exists yet. The preference itself lives only in that browser's `localStorage`, scoped by an opaque SHA-256 digest of the exact login, and is never sent to or stored by Velociportal |
 
 Tailscale production configuration has no `TAILSCALE_API_URL`, `TAILSCALE_API_KEY`, `TAILSCALE_ACCESS_TOKEN`, or `TAILSCALE_TAILNET`. It always uses `https://api.tailscale.com/api/v2` and the OAuth credential's `-` tailnet alias. Inactive known provider variables are ignored at runtime with key-name-only warnings.
 

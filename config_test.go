@@ -322,6 +322,7 @@ func TestLoadConfigFromUsesDeterministicLookupOrder(t *testing.T) {
 		"POLL_INTERVAL",
 		"SERVICE_METADATA_FILE",
 		"SERVICE_HEALTH_FILE",
+		"PORTAL_LOGO_DEFAULT",
 	}
 	if !reflect.DeepEqual(calls, want) {
 		t.Fatalf("lookup calls = %v, want %v", calls, want)
@@ -466,7 +467,7 @@ func TestLoadConfigRejectsMalformedRawComposeValueWithoutExposingIt(t *testing.T
 }
 
 func TestLoadConfigFromPropagatesOptionalLookupErrors(t *testing.T) {
-	for _, failureKey := range []string{"LISTEN_ADDR", "POLL_INTERVAL", "SERVICE_METADATA_FILE", "SERVICE_HEALTH_FILE"} {
+	for _, failureKey := range []string{"LISTEN_ADDR", "POLL_INTERVAL", "SERVICE_METADATA_FILE", "SERVICE_HEALTH_FILE", "PORTAL_LOGO_DEFAULT"} {
 		t.Run(failureKey, func(t *testing.T) {
 			values := validConfigValues()
 			lookup := func(key string) (string, bool, error) {
@@ -592,6 +593,47 @@ func TestNormalizeListenAddr(t *testing.T) {
 		t.Run("invalid "+input, func(t *testing.T) {
 			if _, err := normalizeListenAddr(input); err == nil {
 				t.Fatalf("normalizeListenAddr(%q) error = nil", input)
+			}
+		})
+	}
+}
+
+func TestLoadConfigFromPortalLogoDefault(t *testing.T) {
+	tests := map[string]struct {
+		value       string
+		unset       bool
+		wantVisible bool
+		wantErr     bool
+	}{
+		"absent defaults to visible":     {unset: true, wantVisible: true},
+		"blank defaults to visible":      {value: "   ", wantVisible: true},
+		"explicit visible":               {value: "visible", wantVisible: true},
+		"explicit hidden":                {value: "hidden", wantVisible: false},
+		"visible trimmed and normalized": {value: " VISIBLE ", wantVisible: true},
+		"hidden trimmed and normalized":  {value: " HIDDEN ", wantVisible: false},
+		"unknown value rejected":         {value: "invisible", wantErr: true},
+		"boolean-looking value rejected": {value: "true", wantErr: true},
+	}
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			values := validConfigValues()
+			if test.unset {
+				delete(values, "PORTAL_LOGO_DEFAULT")
+			} else {
+				values["PORTAL_LOGO_DEFAULT"] = test.value
+			}
+			cfg, err := loadConfigFrom(mapConfigLookup(values))
+			if test.wantErr {
+				if err == nil || !strings.Contains(err.Error(), "PORTAL_LOGO_DEFAULT") {
+					t.Fatalf("loadConfigFrom() error = %v, want PORTAL_LOGO_DEFAULT error", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("loadConfigFrom() error = %v", err)
+			}
+			if cfg.PortalLogoDefaultVisible != test.wantVisible {
+				t.Fatalf("PortalLogoDefaultVisible = %t, want %t", cfg.PortalLogoDefaultVisible, test.wantVisible)
 			}
 		})
 	}
