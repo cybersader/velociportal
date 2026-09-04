@@ -151,8 +151,8 @@ func renderPortalWithOptions(w io.Writer, id *Identity, cards []ServiceCard, opt
 		fmt.Fprintf(&machinesSection,
 			`<section class="portal-section" aria-labelledby="machines-heading">`+
 				`<h2 class="section-title" id="machines-heading">Machines</h2>`+
-				`<p class="machines-help">These labels describe Tailscale's identity check, not machine health. Velociportal reads policy but does not discover which local accounts actually exist.</p>`+
-				`<div class="grid" id="machines">%s</div>`+
+				`<p class="machines-help">SSH access allowed by your Tailscale policy. Accounts and machine health are not verified. Tailscale Machines opens the admin console, not a session.</p>`+
+				`<div class="machine-list" id="machines">%s</div>`+
 				`</section>`,
 			machinesBody.String(),
 		)
@@ -284,10 +284,28 @@ func renderServiceCard(body *strings.Builder, card ServiceCard, health *ServiceH
 
 func renderMachineCard(body *strings.Builder, machine MachineCard, index int, consoleEligible bool) {
 	machineID := fmt.Sprintf("machine-%d", index)
+	selectID := machineID + "-user"
+	accountID := machineID + "-account"
+	accountPanelID := machineID + "-custom-account"
+	feedbackID := machineID + "-copy-feedback"
 	shortName, fullTarget, hasFullTarget := machineCardNames(machine.Target)
+
+	literalAccess := make([]MachineAccess, 0, len(machine.Access))
+	hasNonroot := false
+	for _, access := range machine.Access {
+		if access.User == machineNonrootSelector {
+			hasNonroot = true
+			continue
+		}
+		if _, ok := machineSSHCommand(access.User, machine.Target); ok {
+			literalAccess = append(literalAccess, access)
+		}
+	}
+	mixedAccounts := hasNonroot && len(literalAccess) > 0
+
 	fmt.Fprintf(body,
-		`<article class="card machine-card" data-machine="%s" aria-labelledby="%s-name">`+
-			`<span class="card-head"><span class="card-name" id="%s-name">%s</span></span>`,
+		`<article class="machine-row" data-machine="%s" aria-labelledby="%s-name">`+
+			`<div class="machine-identity"><h3 class="machine-name" id="%s-name">%s</h3>`,
 		html.EscapeString(machine.Target),
 		machineID,
 		machineID,
@@ -296,100 +314,88 @@ func renderMachineCard(body *strings.Builder, machine MachineCard, index int, co
 	if hasFullTarget {
 		fmt.Fprintf(body, `<p class="machine-target">%s</p>`, html.EscapeString(fullTarget))
 	}
-	body.WriteString(`<p class="machine-policy">Supported by SSH policy and a network Grant for port 22.</p>` +
-		`<div class="machine-accounts">` +
-		`<div class="machine-accounts-heading">Accounts allowed by policy</div>` +
-		`<ul class="machine-accounts-list" aria-label="Accounts allowed by policy">`)
+	body.WriteString(`</div><div class="machine-connect">`)
 
-	literalUsers := make([]string, 0, len(machine.Access))
-	hasNonroot := false
+	if len(literalAccess) > 0 {
+		fmt.Fprintf(body, `<label class="machine-field-label" for="%s">SSH as</label>`, selectID)
+		if mixedAccounts {
+			fmt.Fprintf(body, `<select id="%s" data-machine-account-select aria-controls="%s" aria-expanded="false">`, selectID, accountPanelID)
+		} else {
+			fmt.Fprintf(body, `<select id="%s" data-machine-account-select>`, selectID)
+		}
+		for _, access := range literalAccess {
+			command, _ := machineSSHCommand(access.User, machine.Target)
+			fmt.Fprintf(body,
+				`<option value="%s" data-command="%s">%s</option>`,
+				html.EscapeString(access.User),
+				html.EscapeString(command),
+				html.EscapeString(access.User),
+			)
+		}
+		if mixedAccounts {
+			body.WriteString(`<option value="" data-custom-account="true">Other non-root account&hellip;</option>`)
+		}
+		body.WriteString(`</select>`)
+	}
+
+	if hasNonroot {
+		hidden := ""
+		accountLabel := "SSH as"
+		if mixedAccounts {
+			hidden = " hidden"
+			accountLabel = "Non-root account"
+		}
+		fmt.Fprintf(body,
+			`<div class="machine-custom-account" id="%s"%s>`+
+				`<label class="machine-field-label" for="%s">%s</label>`+
+				`<input type="text" id="%s" class="machine-account-input" list="ssh-account-suggestions" autocomplete="off" spellcheck="false" maxlength="256" placeholder="Account name" data-account-target="%s">`+
+				`</div>`,
+			accountPanelID,
+			hidden,
+			accountID,
+			accountLabel,
+			accountID,
+			html.EscapeString(machine.Target),
+		)
+	}
+	body.WriteString(`</div><div class="machine-actions">`)
+
+	if len(literalAccess) > 0 || hasNonroot {
+		fmt.Fprintf(body, `<button type="button" class="copy-command machine-copy" data-copy-machine-ssh aria-describedby="%s"`, feedbackID)
+		if len(literalAccess) > 0 {
+			fmt.Fprintf(body, ` data-user-select="%s"`, selectID)
+		}
+		if hasNonroot {
+			fmt.Fprintf(body, ` data-account-input="%s"`, accountID)
+		}
+		body.WriteString(`>Copy SSH</button>`)
+	}
+	if consoleEligible {
+		if consoleURL, ok := machineConsoleURL(machine.Target); ok {
+			fmt.Fprintf(body,
+				`<a class="btn-console" href="%s" target="_blank" rel="noopener noreferrer" aria-label="Open %s in Tailscale Machines">Tailscale Machines</a>`,
+				html.EscapeString(consoleURL),
+				html.EscapeString(shortName),
+			)
+		}
+	}
+	fmt.Fprintf(body, `<span class="copy-feedback machine-feedback" id="%s" role="status" aria-live="polite"></span></div>`, feedbackID)
+
+	body.WriteString(`<details class="machine-policy-details"><summary>Policy details</summary><div class="machine-policy-body">` +
+		`<p class="machine-policy-evidence">Visible because SSH policy and a network Grant permit TCP port 22.</p>` +
+		`<ul class="machine-policy-accounts" aria-label="Accounts allowed by policy">`)
 	for _, access := range machine.Access {
 		account := access.User
 		if account == machineNonrootSelector {
 			account = "Any non-root account"
-			hasNonroot = true
-		} else if _, ok := machineSSHCommand(access.User, machine.Target); ok {
-			literalUsers = append(literalUsers, access.User)
 		}
 		fmt.Fprintf(body,
-			`<li class="machine-account-row"><span class="machine-account-name">%s</span><span class="machine-account-detail">%s</span></li>`,
+			`<li><span class="machine-account-name">%s</span><span class="machine-account-detail">%s</span></li>`,
 			html.EscapeString(account),
 			html.EscapeString(machineActionLabel(access)),
 		)
 	}
-	body.WriteString(`</ul>`)
-
-	// autogroup:nonroot is a policy scope, not an inventory of accounts that
-	// exist on the machine. This nested field only combines a client-validated
-	// typed account with the already safe server-rendered target.
-	if hasNonroot {
-		accountID := machineID + "-account"
-		accountFeedbackID := machineID + "-account-feedback"
-		fmt.Fprintf(body,
-			`<div class="machine-account-policy">`+
-				`<div class="machine-account-policy-heading">Use another non-root account</div>`+
-				`<div class="machine-command machine-command-custom">`+
-				`<label for="%s">Account on this machine</label>`+
-				`<input type="text" id="%s" class="machine-account-input" list="ssh-account-suggestions" autocomplete="off" spellcheck="false" maxlength="256" placeholder="e.g. jdoe" data-account-target="%s">`+
-				`<button type="button" class="copy-command" data-copy-ssh-account data-account-input="%s" aria-describedby="%s">Copy command</button>`+
-				`<span class="copy-feedback" id="%s" role="status" aria-live="polite"></span>`+
-				`<p class="machine-account-note">Velociportal cannot verify that this account exists on the machine.</p>`+
-				`</div></div>`,
-			accountID,
-			accountID,
-			html.EscapeString(machine.Target),
-			accountID,
-			accountFeedbackID,
-			accountFeedbackID,
-		)
-	}
-	body.WriteString(`</div>`)
-
-	if len(literalUsers) > 0 {
-		selectID := machineID + "-user"
-		feedbackID := machineID + "-copy-feedback"
-		fmt.Fprintf(body,
-			`<div class="machine-command">`+
-				`<label for="%s">SSH account</label>`+
-				`<select id="%s">`,
-			selectID,
-			selectID,
-		)
-		for _, user := range literalUsers {
-			command, _ := machineSSHCommand(user, machine.Target)
-			fmt.Fprintf(body,
-				`<option value="%s" data-command="%s">%s</option>`,
-				html.EscapeString(user),
-				html.EscapeString(command),
-				html.EscapeString(user),
-			)
-		}
-		fmt.Fprintf(body,
-			`</select>`+
-				`<button type="button" class="copy-command" data-copy-ssh-command data-user-select="%s" aria-describedby="%s">Copy command</button>`+
-				`<span class="copy-feedback" id="%s" role="status" aria-live="polite"></span>`+
-				`</div>`,
-			selectID,
-			feedbackID,
-			feedbackID,
-		)
-	}
-
-	if consoleEligible {
-		if consoleURL, ok := machineConsoleURL(machine.Target); ok {
-			noteID := machineID + "-console-note"
-			fmt.Fprintf(body,
-				`<div class="machine-console">`+
-					`<a class="btn-console" href="%s" target="_blank" rel="noopener noreferrer" aria-describedby="%s">Open in Tailscale Machines</a>`+
-					`<p class="machine-console-note" id="%s">Opens the filtered Machines page in a new tab. Start browser SSH there; Tailscale handles eligibility, account choice, reauthentication, posture, policy, and the session.</p>`+
-					`</div>`,
-				html.EscapeString(consoleURL),
-				noteID,
-				noteID,
-			)
-		}
-	}
-	body.WriteString(`</article>`)
+	body.WriteString(`</ul><p class="machine-policy-note">Local account existence and machine health are not verified.</p></div></details></article>`)
 }
 
 // machineCardNames returns the short, familiar name to render prominently on a
@@ -621,31 +627,33 @@ a.card:hover, a.card:focus-visible { border-color: var(--accent); background: va
 .health-unreachable { color: var(--health-unreachable); }
 .health-stale { color: var(--health-stale); }
 .health-unknown { color: var(--health-unknown); }
-.machines-help { margin: 0 0 .85rem; max-width: 60ch; color: var(--muted); font-size: .85rem; }
-.machine-card { min-width: 0; }
-.machine-target { margin: 0 0 .3rem; color: var(--muted); font-size: .78rem; overflow-wrap: anywhere; }
-.machine-policy { margin: 0; color: var(--muted); font-size: .88rem; }
-.machine-accounts { display: grid; gap: .45rem; margin: .15rem 0 .25rem; min-width: 0; }
-.machine-accounts-heading { color: var(--muted); font-size: .74rem; font-weight: 600; letter-spacing: .02em; text-transform: uppercase; }
-.machine-accounts-list { display: grid; gap: .5rem; margin: 0; padding: 0; list-style: none; }
-.machine-account-row { display: flex; flex-direction: column; gap: .08rem; min-width: 0; }
-.machine-account-name { font-size: .9rem; overflow-wrap: anywhere; }
-.machine-account-detail { color: var(--muted); font-size: .76rem; line-height: 1.35; overflow-wrap: anywhere; }
-.machine-account-policy { display: grid; gap: .35rem; min-width: 0; margin-top: .15rem; padding: .55rem 0 0 .7rem; border-left: 2px solid var(--border); }
-.machine-account-policy-heading { color: var(--muted); font-size: .76rem; font-weight: 600; }
-.machine-command { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: .45rem .6rem; align-items: end; margin-top: .3rem; }
-.machine-command label { grid-column: 1 / -1; color: var(--muted); font-size: .78rem; font-weight: 600; }
-.machine-command select, .machine-account-input, .copy-command { min-height: 2.35rem; border: 1px solid var(--border); border-radius: 8px; background: var(--card-bg); color: var(--text); font: inherit; }
-.machine-command select, .machine-account-input { min-width: 0; padding: .35rem .5rem; }
-.copy-command { padding: .35rem .7rem; cursor: pointer; }
-.copy-command:hover, .copy-command:focus-visible { border-color: var(--accent); }
-.copy-feedback { grid-column: 1 / -1; min-height: 1.2em; color: var(--muted); font-size: .78rem; }
-.machine-command-custom { margin-top: 0; }
-.machine-account-note { grid-column: 1 / -1; margin: .35rem 0 0; color: var(--muted); font-size: .78rem; }
-.machine-console { margin-top: .5rem; }
-.btn-console { display: inline-block; padding: .35rem .7rem; border: 1px solid var(--border); border-radius: 8px; background: var(--card-bg); color: var(--text); font-size: .85rem; text-decoration: none; }
-.btn-console:hover, .btn-console:focus-visible { border-color: var(--accent); }
-.machine-console-note { margin: .35rem 0 0; color: var(--muted); font-size: .78rem; }
+.machines-help { margin: 0 0 1rem; max-width: 76ch; color: var(--muted); font-size: .85rem; }
+.machine-list { display: grid; gap: .65rem; }
+.machine-row { display: grid; grid-template-columns: minmax(12rem, 1fr) minmax(16rem, 1.25fr) auto; grid-template-areas: "identity connect actions" "details details details"; gap: .65rem 1rem; align-items: center; min-width: 0; padding: .85rem 1rem; border: 1px solid var(--border); border-radius: 12px; background: var(--card-bg); }
+.machine-identity { grid-area: identity; min-width: 0; }
+.machine-name { margin: 0; color: var(--text); font-size: 1rem; line-height: 1.3; font-weight: 650; overflow-wrap: anywhere; }
+.machine-target { margin: .18rem 0 0; color: var(--muted); font-size: .76rem; line-height: 1.35; overflow-wrap: anywhere; }
+.machine-connect { grid-area: connect; display: grid; grid-template-columns: minmax(0, 1fr); gap: .3rem; min-width: 0; }
+.machine-field-label { color: var(--muted); font-size: .76rem; font-weight: 600; }
+.machine-connect select, .machine-account-input { width: 100%; min-width: 12rem; min-height: 2.75rem; padding: .45rem .65rem; border: 1px solid var(--border); border-radius: 8px; background: var(--card-bg); color: var(--text); font: inherit; }
+.machine-custom-account { display: grid; gap: .3rem; min-width: 0; }
+.machine-custom-account[hidden] { display: none; }
+.machine-actions { grid-area: actions; display: flex; justify-content: flex-end; align-items: center; gap: .5rem; flex-wrap: wrap; min-width: 9rem; }
+.copy-command, .btn-console { display: inline-flex; align-items: center; justify-content: center; min-height: 2.75rem; padding: .45rem .75rem; border: 1px solid var(--border); border-radius: 8px; background: var(--card-bg); color: var(--text); font: inherit; font-size: .85rem; line-height: 1.2; text-decoration: none; cursor: pointer; white-space: nowrap; }
+.machine-copy { border-color: var(--accent); background: var(--accent); color: var(--bg); font-weight: 650; }
+.copy-command:hover, .copy-command:focus-visible, .btn-console:hover, .btn-console:focus-visible { filter: brightness(1.08); }
+.copy-feedback { min-height: 1.2em; color: var(--muted); font-size: .76rem; }
+.machine-feedback { flex: 1 0 100%; text-align: right; }
+.machine-policy-details { grid-area: details; min-width: 0; padding-top: .15rem; border-top: 1px solid transparent; color: var(--muted); font-size: .78rem; }
+.machine-policy-details[open] { padding-top: .6rem; border-top-color: var(--border); }
+.machine-policy-details summary { width: fit-content; cursor: pointer; color: var(--muted); font-weight: 600; }
+.machine-policy-details summary:hover, .machine-policy-details summary:focus-visible { color: var(--text); }
+.machine-policy-body { display: grid; gap: .55rem; margin-top: .6rem; }
+.machine-policy-evidence, .machine-policy-note { margin: 0; }
+.machine-policy-accounts { display: grid; grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr)); gap: .45rem .9rem; margin: 0; padding: 0; list-style: none; }
+.machine-policy-accounts li { display: flex; flex-direction: column; gap: .06rem; min-width: 0; }
+.machine-account-name { color: var(--text); font-size: .85rem; overflow-wrap: anywhere; }
+.machine-account-detail { color: var(--muted); font-size: .74rem; line-height: 1.35; overflow-wrap: anywhere; }
 .btn-clear-accounts { min-height: 2.1rem; padding: .3rem .7rem; border: 1px solid var(--border); border-radius: 8px; background: var(--card-bg); color: var(--text); font: inherit; cursor: pointer; }
 .btn-clear-accounts:hover, .btn-clear-accounts:focus-visible { border-color: var(--accent); }
 .account-panel-status { display: block; margin-top: .35rem; color: var(--muted); font-size: .78rem; }
@@ -654,6 +662,11 @@ a.card:hover, a.card:focus-visible { border-color: var(--accent); background: va
 .empty-icon { font-size: 2.5rem; line-height: 1; margin-bottom: .5rem; opacity: .5; }
 .empty p { margin: 0; }
 .bottom-nav { display: none; }
+@media (max-width: 900px) {
+  .machine-row { grid-template-columns: minmax(10rem, .8fr) minmax(16rem, 1.2fr); grid-template-areas: "identity connect" "identity actions" "details details"; align-items: start; }
+  .machine-actions { justify-content: flex-start; min-width: 0; }
+  .machine-feedback { text-align: left; }
+}
 @media (max-width: 600px) {
   header { padding: 1.5rem 1rem .75rem; align-items: flex-start; }
   main { padding: 1rem 1rem 2rem; }
@@ -664,8 +677,10 @@ a.card:hover, a.card:focus-visible { border-color: var(--accent); background: va
   .card-head { align-items: flex-start; flex-wrap: wrap; }
   .card-name { white-space: normal; overflow-wrap: anywhere; }
   .health-status { margin-left: 0; text-align: left; }
-  .machine-command { grid-template-columns: minmax(0, 1fr); align-items: stretch; }
-  .machine-command label, .copy-feedback { grid-column: 1; }
+  .machine-row { grid-template-columns: minmax(0, 1fr); grid-template-areas: "identity" "connect" "actions" "details"; gap: .7rem; padding: .9rem; }
+  .machine-connect select, .machine-account-input { min-width: 0; }
+  .machine-actions > .machine-copy, .machine-actions > .btn-console { flex: 1 1 10rem; }
+  .machine-policy-accounts { grid-template-columns: minmax(0, 1fr); }
   body { padding-bottom: calc(4.75rem + env(safe-area-inset-bottom)); }
   .account { width: 100%; }
   .account-trigger { width: 100%; text-align: left; }
@@ -890,24 +905,6 @@ Show Velociportal logo
     });
   }
   window.__velociportalCopyText = copyText;
-
-  document.addEventListener("click", function (event) {
-    var button = event.target.closest("[data-copy-ssh-command]");
-    if (!button) return;
-
-    var select = document.getElementById(button.getAttribute("data-user-select"));
-    var feedback = document.getElementById(button.getAttribute("aria-describedby"));
-    var option = select && select.options[select.selectedIndex];
-    var command = option && option.getAttribute("data-command");
-    if (!feedback || !command || command.indexOf("tailscale ssh ") !== 0) return;
-
-    feedback.textContent = "Copying command...";
-    copyText(command).then(function () {
-      feedback.textContent = "Command copied.";
-    }, function () {
-      feedback.textContent = "Copy unavailable.";
-    });
-  });
 }());
 
 (function () {
@@ -1013,27 +1010,67 @@ Show Velociportal logo
     return "tailscale ssh " + argument;
   }
 
+  function syncMachineAccountControl(select, focusInput) {
+    if (!select) return;
+    var panelID = select.getAttribute("aria-controls");
+    if (!panelID) return;
+    var panel = document.getElementById(panelID);
+    var option = select.options[select.selectedIndex];
+    var custom = !!(option && option.hasAttribute("data-custom-account"));
+    if (!panel) return;
+    panel.hidden = !custom;
+    select.setAttribute("aria-expanded", String(custom));
+    if (custom && focusInput) {
+      var input = panel.querySelector(".machine-account-input");
+      if (input) input.focus();
+    }
+  }
+
+  function syncMachineAccountControls() {
+    document.querySelectorAll("[data-machine-account-select][aria-controls]").forEach(function (select) {
+      syncMachineAccountControl(select, false);
+    });
+  }
+
+  document.addEventListener("change", function (event) {
+    var select = event.target.closest("[data-machine-account-select]");
+    if (select) syncMachineAccountControl(select, true);
+  });
+
   document.addEventListener("click", function (event) {
-    var button = event.target.closest("[data-copy-ssh-account]");
+    var button = event.target.closest("[data-copy-machine-ssh]");
     if (!button) return;
 
-    var input = document.getElementById(button.getAttribute("data-account-input"));
     var feedback = document.getElementById(button.getAttribute("aria-describedby"));
-    if (!input || !feedback) return;
-
-    var value = input.value;
-    var target = input.getAttribute("data-account-target");
+    var selectID = button.getAttribute("data-user-select");
+    var select = selectID ? document.getElementById(selectID) : null;
+    var option = select && select.options[select.selectedIndex];
+    var command = option && option.getAttribute("data-command");
+    var custom = !select || !!(option && option.hasAttribute("data-custom-account"));
+    var customValue = "";
     var copyText = window.__velociportalCopyText;
-    if (!isValidAccount(value) || !target || !copyText) {
-      feedback.textContent = "Enter a valid account name.";
+    if (!feedback || !copyText) return;
+
+    if (custom) {
+      var inputID = button.getAttribute("data-account-input");
+      var input = inputID ? document.getElementById(inputID) : null;
+      customValue = input && input.value;
+      var target = input && input.getAttribute("data-account-target");
+      if (!isValidAccount(customValue) || !target) {
+        feedback.textContent = "Enter a valid non-root account.";
+        return;
+      }
+      command = buildAccountCommand(customValue, target);
+    }
+    if (!command || command.indexOf("tailscale ssh ") !== 0) {
+      feedback.textContent = "Copy unavailable.";
       return;
     }
 
-    var command = buildAccountCommand(value, target);
     feedback.textContent = "Copying command...";
     copyText(command).then(function () {
       feedback.textContent = "Command copied.";
-      rememberAccount(value);
+      if (custom) rememberAccount(customValue);
     }, function () {
       feedback.textContent = "Copy unavailable.";
     });
@@ -1046,9 +1083,11 @@ Show Velociportal logo
 
   document.body.addEventListener("htmx:afterSwap", function () {
     refreshAccountUI();
+    syncMachineAccountControls();
   });
 
   refreshAccountUI();
+  syncMachineAccountControls();
 }());
 
 (function () {

@@ -529,20 +529,25 @@ func TestPortalHandler_MachinesRenderAsAccessibleNonLinkablePolicyCards(t *testi
 		`<section class="portal-section" aria-labelledby="services-heading">`,
 		`<section class="portal-section" aria-labelledby="machines-heading">`,
 		`<h2 class="section-title" id="machines-heading">Machines</h2>`,
-		`<article class="card machine-card" data-machine="server.tailnet.ts.net" aria-labelledby="machine-1-name">`,
-		`<span class="card-name" id="machine-1-name">server</span>`,
+		`<div class="machine-list" id="machines">`,
+		`<article class="machine-row" data-machine="server.tailnet.ts.net" aria-labelledby="machine-1-name">`,
+		`<div class="machine-identity"><h3 class="machine-name" id="machine-1-name">server</h3>`,
 		`<p class="machine-target">server.tailnet.ts.net</p>`,
-		`<p class="machine-policy">Supported by SSH policy and a network Grant for port 22.</p>`,
-		`<div class="machine-accounts-heading">Accounts allowed by policy</div>`,
-		`<li class="machine-account-row"><span class="machine-account-name">Any non-root account</span><span class="machine-account-detail">No extra sign-in</span></li>`,
-		`<li class="machine-account-row"><span class="machine-account-name">deploy</span><span class="machine-account-detail">Reauthenticate every 12h</span></li>`,
-		`<div class="machine-account-policy"><div class="machine-account-policy-heading">Use another non-root account</div>`,
-		`<label for="machine-1-user">SSH account</label>`,
+		`<label class="machine-field-label" for="machine-1-user">SSH as</label>`,
+		`<select id="machine-1-user" data-machine-account-select aria-controls="machine-1-custom-account" aria-expanded="false">`,
 		`<option value="deploy" data-command="tailscale ssh deploy@server.tailnet.ts.net">deploy</option>`,
 		`<option value="root" data-command="tailscale ssh root@server.tailnet.ts.net">root</option>`,
-		`data-copy-ssh-command data-user-select="machine-1-user" aria-describedby="machine-1-copy-feedback"`,
+		`<option value="" data-custom-account="true">Other non-root account&hellip;</option>`,
+		`<div class="machine-custom-account" id="machine-1-custom-account" hidden>`,
+		`<input type="text" id="machine-1-account" class="machine-account-input" list="ssh-account-suggestions" autocomplete="off" spellcheck="false" maxlength="256" placeholder="Account name" data-account-target="server.tailnet.ts.net">`,
+		`<button type="button" class="copy-command machine-copy" data-copy-machine-ssh aria-describedby="machine-1-copy-feedback" data-user-select="machine-1-user" data-account-input="machine-1-account">Copy SSH</button>`,
+		`<details class="machine-policy-details"><summary>Policy details</summary>`,
+		`Visible because SSH policy and a network Grant permit TCP port 22.`,
+		`<li><span class="machine-account-name">Any non-root account</span><span class="machine-account-detail">No extra sign-in</span></li>`,
+		`<li><span class="machine-account-name">deploy</span><span class="machine-account-detail">Reauthenticate every 12h</span></li>`,
+		`Local account existence and machine health are not verified.`,
 		`role="status" aria-live="polite"`,
-		`document.addEventListener("click", function (event)`,
+		`var button = event.target.closest("[data-copy-machine-ssh]");`,
 		`feedback.textContent = "Command copied."`,
 	} {
 		if !strings.Contains(body, expected) {
@@ -550,7 +555,7 @@ func TestPortalHandler_MachinesRenderAsAccessibleNonLinkablePolicyCards(t *testi
 		}
 	}
 
-	start := strings.Index(body, `<article class="card machine-card"`)
+	start := strings.Index(body, `<article class="machine-row"`)
 	if start < 0 {
 		t.Fatal("machine article was not rendered")
 	}
@@ -559,9 +564,60 @@ func TestPortalHandler_MachinesRenderAsAccessibleNonLinkablePolicyCards(t *testi
 		t.Fatal("machine article was not closed")
 	}
 	article := body[start : start+end]
-	for _, forbidden := range []string{`<a `, `href=`, `ssh://`, machineNonrootSelector, `reachable`, `health`, `NPM`, `machine-user-summary`, `badge machine-action`} {
+	for _, forbidden := range []string{`<a `, `href=`, `ssh://`, machineNonrootSelector, `reachable`, `NPM`, `machine-user-summary`, `badge machine-action`, `<p class="machine-policy">`, `machine-accounts-heading`, `Copy command`} {
 		if strings.Contains(article, forbidden) {
 			t.Fatalf("machine article included forbidden claim or control %q: %s", forbidden, article)
+		}
+	}
+}
+
+func TestPortalHandler_MixedMachineUsesSingleAccountWorkflow(t *testing.T) {
+	data := machineMatcherFixture(t)
+	data.Policy.SSH.Rules = []SSHRule{{
+		Action: "check", Src: []string{"alice@example.com"}, Dst: []string{"tag:server"}, Users: []string{machineNonrootSelector, "deploy", "root"},
+	}}
+
+	rec := doPortalRequest(newTestHandler(data), "127.0.0.1:12345", "alice@example.com")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	body := rec.Body.String()
+	start := strings.Index(body, `<article class="machine-row"`)
+	if start < 0 {
+		t.Fatal("machine row was not rendered")
+	}
+	end := strings.Index(body[start:], `</article>`)
+	if end < 0 {
+		t.Fatal("machine row was not closed")
+	}
+	article := body[start : start+end]
+	for marker, want := range map[string]int{
+		`data-machine-account-select`:              1,
+		`class="machine-account-input"`:            1,
+		`data-copy-machine-ssh`:                    1,
+		`<details class="machine-policy-details">`: 1,
+	} {
+		if got := strings.Count(article, marker); got != want {
+			t.Fatalf("%q count = %d, want %d: %s", marker, got, want, article)
+		}
+	}
+	if strings.Contains(article, `<details class="machine-policy-details" open`) {
+		t.Fatal("policy details must be collapsed by default")
+	}
+	for _, expected := range []string{
+		`function syncMachineAccountControl(select, focusInput)`,
+		`panel.hidden = !custom;`,
+		`option.getAttribute("data-command")`,
+		`if (custom) rememberAccount(customValue);`,
+		`document.body.addEventListener("htmx:afterSwap", function ()`,
+	} {
+		if !strings.Contains(body, expected) {
+			t.Fatalf("mixed workflow omitted script behavior %q", expected)
+		}
+	}
+	for _, forbidden := range []string{`data-copy-ssh-account`, `data-copy-ssh-command`, `Copy command`} {
+		if strings.Contains(article, forbidden) {
+			t.Fatalf("mixed workflow retained competing control %q: %s", forbidden, article)
 		}
 	}
 }
@@ -610,7 +666,7 @@ func TestPortalHandler_NonrootPolicyDoesNotInventCommandAccount(t *testing.T) {
 		t.Fatalf("expected 200, got %d", rec.Code)
 	}
 	body := rec.Body.String()
-	start := strings.Index(body, `<article class="card machine-card"`)
+	start := strings.Index(body, `<article class="machine-row"`)
 	if start < 0 {
 		t.Fatal("machine article was not rendered")
 	}
@@ -625,17 +681,18 @@ func TestPortalHandler_NonrootPolicyDoesNotInventCommandAccount(t *testing.T) {
 	// The safe custom account input is allowed only because the viewer must type
 	// and confirm the account themselves; it must never pre-fill or imply one.
 	for _, expected := range []string{
-		`<label for="machine-1-account">Account on this machine</label>`,
-		`<input type="text" id="machine-1-account" class="machine-account-input" list="ssh-account-suggestions" autocomplete="off" spellcheck="false" maxlength="256" placeholder="e.g. jdoe" data-account-target="server.tailnet.ts.net">`,
-		`<div class="machine-account-policy"><div class="machine-account-policy-heading">Use another non-root account</div>`,
-		`data-copy-ssh-account data-account-input="machine-1-account"`,
-		`Velociportal cannot verify that this account exists on the machine.`,
+		`<div class="machine-custom-account" id="machine-1-custom-account">`,
+		`<label class="machine-field-label" for="machine-1-account">SSH as</label>`,
+		`<input type="text" id="machine-1-account" class="machine-account-input" list="ssh-account-suggestions" autocomplete="off" spellcheck="false" maxlength="256" placeholder="Account name" data-account-target="server.tailnet.ts.net">`,
+		`data-copy-machine-ssh aria-describedby="machine-1-copy-feedback" data-account-input="machine-1-account">Copy SSH</button>`,
+		`<details class="machine-policy-details"><summary>Policy details</summary>`,
+		`Local account existence and machine health are not verified.`,
 	} {
 		if !strings.Contains(article, expected) {
 			t.Fatalf("nonroot-only card omitted safe custom account input %q: %s", expected, article)
 		}
 	}
-	for _, forbidden := range []string{`<select`, `data-copy-ssh-command`, `data-command=`, machineNonrootSelector} {
+	for _, forbidden := range []string{`<select`, `data-user-select=`, `data-command=`, ` hidden>`, machineNonrootSelector} {
 		if strings.Contains(article, forbidden) {
 			t.Fatalf("nonroot-only policy invented a copyable account via %q: %s", forbidden, article)
 		}
@@ -672,7 +729,7 @@ func TestPortalHandler_LiteralOnlyMachineNeverRendersCustomAccountField(t *testi
 		t.Fatalf("expected 200, got %d", rec.Code)
 	}
 	body := rec.Body.String()
-	start := strings.Index(body, `<article class="card machine-card"`)
+	start := strings.Index(body, `<article class="machine-row"`)
 	if start < 0 {
 		t.Fatal("machine article was not rendered")
 	}
@@ -681,14 +738,26 @@ func TestPortalHandler_LiteralOnlyMachineNeverRendersCustomAccountField(t *testi
 		t.Fatal("machine article was not closed")
 	}
 	article := body[start : start+end]
+	for _, expected := range []string{
+		`<label class="machine-field-label" for="machine-1-user">SSH as</label>`,
+		`<select id="machine-1-user" data-machine-account-select>`,
+		`<option value="deploy" data-command="tailscale ssh deploy@server.tailnet.ts.net">deploy</option>`,
+		`<option value="root" data-command="tailscale ssh root@server.tailnet.ts.net">root</option>`,
+		`data-copy-machine-ssh aria-describedby="machine-1-copy-feedback" data-user-select="machine-1-user">Copy SSH</button>`,
+	} {
+		if !strings.Contains(article, expected) {
+			t.Fatalf("literal-only machine omitted %q: %s", expected, article)
+		}
+	}
 	for _, forbidden := range []string{
-		`machine-command-custom`,
-		`data-copy-ssh-account`,
-		`Account on this machine`,
+		`machine-custom-account`,
+		`data-account-input`,
+		`data-account-target`,
+		`data-custom-account`,
 		`machine-account-input`,
 	} {
 		if strings.Contains(article, forbidden) {
-			t.Fatalf("literal-only machine card rendered the nonroot-only custom account field via %q: %s", forbidden, article)
+			t.Fatalf("literal-only machine rendered the nonroot-only custom account field via %q: %s", forbidden, article)
 		}
 	}
 }
@@ -768,7 +837,7 @@ func TestPortalHandler_EligibleNonrootOnlyMachineShowsConsoleWithoutInventingCom
 		t.Fatalf("expected 200, got %d", rec.Code)
 	}
 	body := rec.Body.String()
-	start := strings.Index(body, `<article class="card machine-card"`)
+	start := strings.Index(body, `<article class="machine-row"`)
 	if start < 0 {
 		t.Fatal("machine article was not rendered")
 	}
@@ -777,10 +846,10 @@ func TestPortalHandler_EligibleNonrootOnlyMachineShowsConsoleWithoutInventingCom
 		t.Fatal("machine article was not closed")
 	}
 	article := body[start : start+end]
-	if !strings.Contains(article, `Open in Tailscale Machines`) {
+	if !strings.Contains(article, `aria-label="Open server in Tailscale Machines">Tailscale Machines</a>`) {
 		t.Fatal("eligible nonroot-only machine must retain the browser console action")
 	}
-	for _, forbidden := range []string{`<select`, `data-copy-ssh-command`, `data-command=`} {
+	for _, forbidden := range []string{`<select`, `data-user-select=`, `data-command=`} {
 		if strings.Contains(article, forbidden) {
 			t.Fatalf("nonroot-only policy invented a copyable account via %q", forbidden)
 		}
@@ -802,7 +871,7 @@ func TestRenderMachineConsoleLinkRevalidatesTarget(t *testing.T) {
 	if err != nil {
 		t.Fatalf("renderPortalWithOptions() error = %v", err)
 	}
-	if strings.Contains(body.String(), `console.tailscale.com`) || strings.Contains(body.String(), `Open in Tailscale Machines`) {
+	if strings.Contains(body.String(), `console.tailscale.com`) || strings.Contains(body.String(), `aria-label="Open public.example.com in Tailscale Machines"`) {
 		t.Fatal("rendering must reject an invalid machine target even for an eligible viewer")
 	}
 }
@@ -848,10 +917,11 @@ func TestPortalHandler_LocalLogoControlAndHTMXRefresh(t *testing.T) {
 		`id="portal-content" hx-get="/portal" hx-trigger="every 60s" hx-target="#portal-content" hx-select="#portal-content" hx-swap="outerHTML"`,
 		`.grid { grid-template-columns: minmax(0, 1fr); }`,
 		`.card-head { align-items: flex-start; flex-wrap: wrap; }`,
-		`.machine-account-row { display: flex; flex-direction: column;`,
-		`.machine-account-name { font-size: .9rem; overflow-wrap: anywhere; }`,
-		`.machine-account-detail { color: var(--muted); font-size: .76rem; line-height: 1.35; overflow-wrap: anywhere; }`,
-		`.machine-account-policy { display: grid;`,
+		`.machine-list { display: grid; gap: .65rem; }`,
+		`.machine-row { display: grid; grid-template-columns: minmax(12rem, 1fr) minmax(16rem, 1.25fr) auto;`,
+		`.machine-connect select, .machine-account-input { width: 100%; min-width: 12rem; min-height: 2.75rem;`,
+		`.machine-policy-details { grid-area: details;`,
+		`.machine-actions > .machine-copy, .machine-actions > .btn-console { flex: 1 1 10rem; }`,
 		`body { padding-bottom: calc(4.75rem + env(safe-area-inset-bottom)); }`,
 		`.bottom-nav-item { display: flex; flex: 1 1 0; min-width: 0; min-height: 44px;`,
 		`<div class="account-panel-heading">SSH accounts</div>`,
@@ -861,7 +931,7 @@ func TestPortalHandler_LocalLogoControlAndHTMXRefresh(t *testing.T) {
 		`var ACCOUNTS_KEY = "velociportal.ssh.accounts." + identityScope;`,
 		`var MAX_ACCOUNTS = 10;`,
 		`var seen = Object.create(null);`,
-		`var value = input.value;`,
+		`customValue = input && input.value;`,
 		`value !== "root"`,
 		`status.textContent = cleared ? "Saved SSH accounts cleared." : "Saved SSH accounts could not be cleared.";`,
 		`document.body.addEventListener("htmx:afterSwap", function ()`,
@@ -968,10 +1038,8 @@ func TestPortalHandler_MachineConsoleLinkOnlyForEligibleTailscaleRoles(t *testin
 		}
 		body := rec.Body.String()
 		for _, expected := range []string{
-			`<div class="machine-console">`,
-			`<a class="btn-console" href="https://console.tailscale.com/admin/machines?q=server+property%3Atailscale-ssh" target="_blank" rel="noopener noreferrer" aria-describedby="machine-1-console-note">Open in Tailscale Machines</a>`,
-			`id="machine-1-console-note"`,
-			`Opens the filtered Machines page in a new tab. Start browser SSH there; Tailscale handles eligibility, account choice, reauthentication, posture, policy, and the session.`,
+			`<a class="btn-console" href="https://console.tailscale.com/admin/machines?q=server+property%3Atailscale-ssh" target="_blank" rel="noopener noreferrer" aria-label="Open server in Tailscale Machines">Tailscale Machines</a>`,
+			`Tailscale Machines opens the admin console, not a session.`,
 		} {
 			if !strings.Contains(body, expected) {
 				t.Fatalf("eligible role did not render console link %q", expected)
@@ -990,7 +1058,7 @@ func TestPortalHandler_MachineConsoleLinkOnlyForEligibleTailscaleRoles(t *testin
 		if !strings.Contains(body, `data-machine="server.tailnet.ts.net"`) || !strings.Contains(body, `tailscale ssh deploy@server.tailnet.ts.net`) {
 			t.Fatal("missing capability metadata must not hide the machine card or copy command")
 		}
-		if strings.Contains(body, `<a class="btn-console"`) || strings.Contains(body, `Open in Tailscale Machines`) {
+		if strings.Contains(body, `<a class="btn-console"`) || strings.Contains(body, `aria-label="Open server in Tailscale Machines"`) {
 			t.Fatal("missing capability metadata must fail closed for the console link")
 		}
 	})
@@ -1001,16 +1069,14 @@ func TestPortalHandler_MachineConsoleLinkOnlyForEligibleTailscaleRoles(t *testin
 			t.Fatalf("expected 200, got %d", rec.Code)
 		}
 		body := rec.Body.String()
-		// The .machine-console / .btn-console CSS class rules are always present
-		// in the stylesheet, so assert against the actual anchor/div markup and
-		// the console-specific text rather than the bare class-name substrings.
+		// The .btn-console CSS rule and shared section explanation are always
+		// present, so assert against actual link-only markup and attributes.
 		for _, forbidden := range []string{
-			`<div class="machine-console">`,
 			`<a class="btn-console"`,
 			`console.tailscale.com`,
 			`target="_blank"`,
 			`rel="noopener noreferrer"`,
-			`Open in Tailscale Machines`,
+			`aria-label="Open server in Tailscale Machines"`,
 		} {
 			if strings.Contains(body, forbidden) {
 				t.Fatalf("ineligible role must not render console markup %q", forbidden)
@@ -1029,7 +1095,7 @@ func TestPortalHandler_MachineConsoleLinkOnlyForEligibleTailscaleRoles(t *testin
 		// Headscale never exposes the Machines projection at all, so neither the
 		// section nor the console link should render.
 		body := rec.Body.String()
-		if strings.Contains(body, `<div class="machine-console">`) || strings.Contains(body, `<a class="btn-console"`) {
+		if strings.Contains(body, `<a class="btn-console"`) {
 			t.Fatal("Headscale must never render the browser SSH console action")
 		}
 	})
