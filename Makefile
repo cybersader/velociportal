@@ -12,6 +12,7 @@ CONTAINER_ENV_FILE ?= /workspace/$(ENV_FILE)
 HEALTH_URL ?= http://127.0.0.1:8080/healthz
 DOCTOR_ARGS ?=
 VALIDATE_ARGS ?=
+STACK_ENV_FILE ?=
 VELOCIPORTAL_SUBNET ?= 172.31.255.0/24
 VELOCIPORTAL_GATEWAY ?= 172.31.255.1
 HOST_UID ?= $(shell id -u)
@@ -32,6 +33,7 @@ COMPOSE_ENV = IMAGE="$(IMAGE)" BUILD_VERSION="$(BUILD_VERSION)" GIT_REVISION="$(
 COMPOSE = ENV_FILE="$(ENV_FILE)" $(COMPOSE_ENV) docker compose -f docker-compose.yml $(PRIVATE_CA_COMPOSE) $(SERVICE_METADATA_COMPOSE) $(SERVICE_HEALTH_COMPOSE)
 SETUP_COMPOSE = ENV_FILE=".env.example" $(COMPOSE_ENV) docker compose -f docker-compose.yml $(PRIVATE_CA_COMPOSE) $(SERVICE_METADATA_COMPOSE) $(SERVICE_HEALTH_COMPOSE)
 WORKSPACE_VOLUME = $(CURDIR):/workspace
+CONTAINER_STACK_ENV_ARGS = $(if $(strip $(STACK_ENV_FILE)),--stack-env "/workspace/$(STACK_ENV_FILE)")
 
 build:
 	go build -ldflags="$(BUILD_LDFLAGS)" -o velociportal .
@@ -74,6 +76,13 @@ validate-env-file:
 			printf 'ENV_FILE must be a project-relative path without .. components: %s\n' "$(ENV_FILE)" >&2; \
 			exit 2 ;; \
 	esac
+	@if [ -n "$(STACK_ENV_FILE)" ]; then \
+		case "$(STACK_ENV_FILE)" in \
+			/*|..|../*|*/../*|*/..) \
+				printf 'STACK_ENV_FILE must be a project-relative path without .. components: %s\n' "$(STACK_ENV_FILE)" >&2; \
+				exit 2 ;; \
+		esac; \
+	fi
 
 # Run the production service as a one-off Compose container so the same raw,
 # literal env-file semantics and loopback-only publication are used.
@@ -104,7 +113,7 @@ doctor: validate-env-file docker
 	$(COMPOSE) run --rm --no-deps --no-TTY \
 		--user "$(CONTAINER_UID):$(CONTAINER_GID)" \
 		--volume "$(WORKSPACE_VOLUME):ro" \
-		velociportal-tools doctor --env-file "$(CONTAINER_ENV_FILE)" $(DOCTOR_ARGS)
+		velociportal-tools doctor --env-file "$(CONTAINER_ENV_FILE)" $(CONTAINER_STACK_ENV_ARGS) $(DOCTOR_ARGS)
 
 # Validation uses the same read-only configuration and production network as
 # doctor, but returns nonzero when the report still needs operator review.

@@ -117,6 +117,7 @@ The Tailscale-preview Machines section is a separate visibility projection. It i
 - Explicit opt-in HTTP GET or connect-only TCP backend probes with topology allowlists, direct validated-IP dialing, verified TLS, fixed worker bounds, no credentials/proxies/redirects, and identity-filtered presentation
 - Non-root `FROM scratch` image and Engine-28+-gated loopback-only publication
 - Portable one-service production bundle and declarative Tailscale HTTP Serve template
+- Read-only production `stack.env` preflight for image-pin, subnet/gateway, and trusted-proxy consistency, with process-environment interpolation and effective runtime override modeling
 - Provider-aware setup/doctor UX with atomic confirmed credential switching and complete credential redaction
 - Explainable schema-v3 validation reports with access-rule provenance, provider, policy-mode, support-level, selection, and build provenance
 
@@ -127,6 +128,7 @@ The Tailscale-preview Machines section is a separate visibility projection. It i
 - Direct Authentik, Authelia, `Remote-User`, or `X-Webauth-*` adapters
 - NPM access-list-driven visibility
 - Arbitrary per-service logos, access-history collection, or server-side/account-synchronized personalization
+- Automatic TrueNAS mutation or a complete guided update/rollback planner; the current deployment preflight is read-only
 - Headscale automatic HTTPS Serve certificate automation
 
 **Still requires real deployment validation**

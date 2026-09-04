@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"os"
 	"regexp"
 	"sort"
@@ -16,10 +17,11 @@ import (
 )
 
 const doctorUsage = `Usage:
-  velociportal doctor [--env-file FILE] [--identity LOGIN ...]
+  velociportal doctor [--env-file FILE] [--stack-env FILE] [--identity LOGIN ...]
 
 Options:
   --env-file FILE    Load configuration only from FILE instead of process environment
+  --stack-env FILE   Check a Compose stack.env file; combine with --env-file for full diagnostics
   --identity LOGIN   Preview cards for LOGIN; may be repeated
   -h, --help         Show this help
 `
@@ -103,12 +105,20 @@ func runDoctorCommandWithDependencies(args []string, stdout, stderr io.Writer, d
 	flags := flag.NewFlagSet("doctor", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	var envFile string
+	var stackEnvFile string
 	var identities doctorIdentityFlags
 	flags.Func("env-file", "load configuration from file", func(value string) error {
 		if strings.TrimSpace(value) == "" {
 			return errors.New("path must not be empty")
 		}
 		envFile = value
+		return nil
+	})
+	flags.Func("stack-env", "run offline checks against a Compose stack.env file", func(value string) error {
+		if strings.TrimSpace(value) == "" {
+			return errors.New("path must not be empty")
+		}
+		stackEnvFile = value
 		return nil
 	})
 	flags.Var(&identities, "identity", "preview cards for an identity")
@@ -121,6 +131,18 @@ func runDoctorCommandWithDependencies(args []string, stdout, stderr io.Writer, d
 	if flags.NArg() != 0 {
 		fmt.Fprintf(stderr, "velociportal: doctor does not accept positional arguments\n\n%s", doctorUsage)
 		return 2
+	}
+	if stackEnvFile != "" && envFile == "" {
+		if len(identities) > 0 {
+			fmt.Fprintf(stderr, "velociportal: doctor: --identity requires configuration; combine --stack-env with --env-file\n\n%s", doctorUsage)
+			return 2
+		}
+		_, failed := runDoctorStackEnvChecks(stdout, stackEnvFile, nil, processConfigLookup)
+		if failed {
+			return 1
+		}
+		fmt.Fprintln(stdout, "PASS doctor: stack environment diagnostics completed")
+		return 0
 	}
 
 	lookup := configLookup(processConfigLookup)
@@ -153,6 +175,14 @@ func runDoctorCommandWithDependencies(args []string, stdout, stderr io.Writer, d
 		fmt.Fprintf(stdout, "PASS env file mode: owner-only permissions (%04o)\n", permissions)
 	}
 
+	if stackEnvFile != "" {
+		trustedProxyCIDR, failed := runDoctorStackEnvChecks(stdout, stackEnvFile, lookup, processConfigLookup)
+		if failed {
+			return 1
+		}
+		lookup = doctorStackEnvConfigLookup(lookup, trustedProxyCIDR)
+	}
+
 	secrets := doctorSecretValues(lookup)
 	cfg, err := loadConfigFrom(lookup)
 	if err != nil {
@@ -171,12 +201,7 @@ func runDoctorCommandWithDependencies(args []string, stdout, stderr io.Writer, d
 		fmt.Fprintf(stdout, "WARN inactive control-plane configuration: ignoring %s\n", strings.Join(cfg.InactiveControlPlaneKeys, ", "))
 	}
 
-	ones, bits := cfg.TrustedProxyCIDR.Mask.Size()
-	if ones == bits {
-		fmt.Fprintf(stdout, "PASS trusted proxy CIDR: %s contains one address\n", cfg.TrustedProxyCIDR.String())
-	} else {
-		fmt.Fprintf(stdout, "WARN trusted proxy CIDR: %s contains multiple addresses; confirm every source may assert identity\n", cfg.TrustedProxyCIDR.String())
-	}
+	reportDoctorSingleAddressCIDR(stdout, "trusted proxy CIDR", cfg.TrustedProxyCIDR.String(), cfg.TrustedProxyCIDR)
 	if cfg.ControlPlane == controlPlaneHeadscale && classifyHeadscaleTransport(cfg.HeadscaleURL) == headscaleTransportRestrictedHTTP {
 		fmt.Fprintln(stdout, headscaleHTTPDoctorWarning)
 	}
@@ -519,6 +544,15 @@ func doctorProxyHostHasSupportedJoin(proxyHost ProxyHost, policy *Policy, matchD
 		}
 	}
 	return false
+}
+
+func reportDoctorSingleAddressCIDR(writer io.Writer, label, value string, network *net.IPNet) {
+	ones, bits := network.Mask.Size()
+	if ones == bits {
+		fmt.Fprintf(writer, "PASS %s: %s contains one address\n", label, value)
+		return
+	}
+	fmt.Fprintf(writer, "WARN %s: %s contains multiple addresses; confirm every source may assert identity\n", label, value)
 }
 
 func pluralDoctorNoun(count int, singular, plural string) string {
