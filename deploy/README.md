@@ -69,6 +69,24 @@ Both files set `CONTROL_PLANE` explicitly. Existing v0.2 Headscale files without
 
 Tailscale mode always uses OAuth client credentials against the fixed verified API origin. It has no access-token variable, API-key fallback, configurable API URL, or explicit tailnet variable.
 
+## Production stack preflight
+
+Before importing the bundle or changing its image for an update or rollback, run the standalone stack preflight:
+
+```bash
+velociportal doctor --stack-env stack.env
+```
+
+This mode is read-only and local: it checks the image reference, subnet/gateway containment, and trusted-proxy narrowness and gateway alignment without provider credentials, registry access, Docker inspection, or upstream calls. Same-name process-environment values are reported and checked with the precedence Docker Compose applies over `stack.env`. For complete diagnostics, combine both files:
+
+```bash
+velociportal doctor --env-file velociportal.env --stack-env stack.env
+```
+
+The combined form continues with normal configuration and upstream checks. The stack trusted-proxy value becomes the effective runtime value, matching `compose.yaml`; a duplicate provider-file value produces a warning because Compose overrides it.
+
+This preflight does not verify that a tag is immutable or published, render every Compose overlay, change TrueNAS, or replace the real deployment acceptance worksheet. Prefer a verified `@sha256` image reference and run the repository production Compose verifier before release work.
+
 ## Base and optional overlays
 
 The base stack requires no CA, metadata, or health file and mounts no host path:

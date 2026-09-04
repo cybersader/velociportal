@@ -545,7 +545,9 @@ The RC.1-to-RC.2 correction is not an ordinary image update: remove only the sto
 
 For later updates that do not change immutable Docker-network properties, change only the immutable image reference, redeploy through the same UI, and repeat acceptance. Velociportal has no database or persistent application volume.
 
-To roll back, restore the prior image reference and redeploy. Preserve:
+Before entering a new image reference in TrueNAS, run `velociportal doctor --stack-env stack.env` from the private deployment workspace. This read-only offline preflight rejects `latest`, missing or malformed image pins, subnet/gateway mismatches, and invalid trusted-proxy values without contacting TrueNAS, Docker, the registry, or either upstream. If the provider file is also available from a network context that resolves the private aliases, combine `--env-file velociportal.env --stack-env stack.env` for the normal upstream diagnostics using the exact effective production trusted-proxy value. This does not prove publication, immutability, or live acceptance.
+
+To roll back, restore the prior image reference, rerun the same preflight, and redeploy. Preserve:
 
 - `stack.env` and the matching provider-specific `velociportal.env`;
 - Headscale database/configuration/policy in Headscale mode, or externally managed OAuth-client records in Tailscale mode;

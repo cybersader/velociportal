@@ -83,7 +83,10 @@ Observation shows which source used one route. It does not prove that the source
 ## Doctor
 
 ```bash
+velociportal doctor --stack-env deploy/stack.env
 velociportal doctor --env-file .env
+velociportal doctor --env-file deploy/velociportal.env \
+  --stack-env deploy/stack.env
 velociportal doctor --env-file .env \
   --identity alice@example.com \
   --identity bob@example.com
@@ -92,6 +95,7 @@ velociportal doctor --env-file .env \
 Doctor reports stable `PASS`, `WARN`, and `FAIL` stages for:
 
 - configuration and owner-only environment-file permissions;
+- optional production `stack.env` checks for immutable image pinning, subnet/gateway containment, trusted-proxy narrowness and gateway alignment, and the production Compose trusted-proxy override;
 - explicit or implicit provider selection, plus variable-name-only warnings for inactive known credentials;
 - selected provider, `legacy_acl_visibility_v1` or `network_access_visibility_v1` policy mode, and `supported` or `preview` support level;
 - trusted proxy CIDR narrowness;
@@ -103,6 +107,8 @@ Doctor reports stable `PASS`, `WARN`, and `FAIL` stages for:
 - coarse SSH state/reason/rule diagnostics;
 - optional matcher-backed identity service previews plus machine counts only when Tailscale SSH projection availability is supported; Headscale, absent SSH, and unsupported SSH suppress per-identity machine previews; and
 - optional service-health configuration plus one bounded probe cycle with proxy-host IDs, coarse states, durations, HTTP status classes, and aggregate counts only.
+
+`--stack-env FILE` by itself runs only local Compose interpolation checks and exits; it needs no provider credentials or network access. Same-name process-environment values take Compose precedence over the file, are reported by key, and become the values Doctor checks. It never resolves image tags, contacts a registry, inspects Docker, or changes the file. Digest pins pass, explicit non-`latest` tags warn, and missing, untagged, `latest`, malformed-digest, invalid-network, surrounding-whitespace, or missing trusted-proxy values fail. When `--env-file` and `--stack-env` are combined, Doctor continues through normal configuration and upstream diagnostics using `VELOCIPORTAL_TRUSTED_PROXY_CIDR` as the effective runtime `TRUSTED_PROXY_CIDR`, matching `deploy/compose.yaml`; if the provider file also sets that key, Doctor warns that production Compose overrides it.
 
 Doctor sanitizes and bounds upstream errors. It does not print Headscale keys, OAuth client IDs/secrets, current or rejected OAuth tokens, NPM credentials/JWTs, machine IDs/names/addresses/accounts/commands, health paths, backend hostnames/IPs, response bodies, raw network errors, or complete configuration structs. Service probe failures are warnings rather than snapshot failures; malformed service-health configuration fails Doctor after safe upstream diagnostics continue. A passing run is a preflight result, not proof that rendered cards equal real network authorization.
 
@@ -174,7 +180,7 @@ make health
 |---|---|
 | `make setup` | Builds the local scratch image and runs the interactive setup wizard with a writable project mount |
 | `make observe-proxy` | Runs the temporary observer on the repository Compose network with a loopback-published port, then updates only the selected environment file |
-| `make doctor` | Mounts the environment file read-only and runs preflight diagnostics on the repository Compose network |
+| `make doctor` | Mounts the environment file read-only, optionally maps `STACK_ENV_FILE` into the tools container, and runs preflight diagnostics on the repository Compose network |
 | `make validate` | Builds a human-readable two-or-more-identity validation report on the same repository network |
 | `make validate-json` | Keeps stdout JSON-only so it can be redirected to an owner-readable report file |
 | `make up` | Builds the local image, starts Compose without rebuilding, and waits for Docker health |
@@ -207,6 +213,7 @@ Pass Make variables before or after the target:
 
 ```bash
 make doctor DOCTOR_ARGS="--identity ${VP_USER_A} --identity ${VP_USER_B}"
+make doctor ENV_FILE=deploy/velociportal.env STACK_ENV_FILE=deploy/stack.env
 make validate VALIDATE_ARGS="--identity user-a=${VP_USER_A} --identity user-b=${VP_USER_B}"
 make health HEALTH_URL=http://127.0.0.1:8080/healthz
 make doctor PRIVATE_CA_FILE="$HOME/.local/share/velociportal/certs/rootCA.pem"
@@ -221,6 +228,7 @@ For validation, populate `VP_USER_A` and `VP_USER_B` with hidden `read -s` promp
 |---|---|---|
 | `IMAGE` | `velociportal:latest` | Image build, Compose, and local container commands |
 | `ENV_FILE` | `.env` | Project-relative environment-file path used by guided and runtime commands; absolute paths and `..` components are rejected by Make wrappers so host and container cannot address different files |
+| `STACK_ENV_FILE` | empty | Optional project-relative production `stack.env` path checked by `make doctor`; it is mounted through the existing read-only workspace bind and receives the same path-safety checks as `ENV_FILE` |
 | `PRIVATE_CA_FILE` | empty | Opts into `docker-compose.private-ca.yml` and mounts only the public private-CA root read-only into runtime and tools containers |
 | `SERVICE_METADATA_FILE` | empty | Opts into `docker-compose.service-metadata.yml` and mounts one strict v1-or-v2 presentation-metadata JSON file read-only into runtime and tools containers |
 | `SERVICE_METADATA_GID` | empty | Numeric supplemental group that can read `SERVICE_METADATA_FILE`; required when the metadata overlay is selected |

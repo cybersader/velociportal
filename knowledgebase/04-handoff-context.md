@@ -104,7 +104,8 @@ A final diff scan found no Compose topology, network, host-port, bind-mount, pro
 13. **Backend health is narrow observational evidence.** It is explicit opt-in, shared, memory-only, and direct-backend. It is not NPM route state, authorization, browser-path proof, persistent history, or `/healthz` readiness.
 14. **Hostname suggestions are private proposals only.** They use selected-provider names plus optional bounded hostname-only stdin, reject ambiguous graph components, vanish at process exit, and never update active metadata or authorization.
 15. **SSH Machines is preview evidence only.** It is Tailscale-only and absent from validation schema v3. Headscale, absent SSH, and unsupported SSH omit the complete section and per-identity Doctor previews; supported zero-match identities retain an explicit empty portal state. It offers no command for `autogroup:nonroot` and proves neither Tailscale SSH enforcement nor reachability. Arbitrary FQDNs never become copied targets.
-16. **No real end-to-end validation yet.** Fixtures and local probes are not production proof.
+16. **Production stack preflight is read-only.** `doctor --stack-env` validates image-reference shape, subnet/gateway containment, and trusted-proxy consistency without registry, Docker, TrueNAS, credential, or upstream access. Same-name process-environment values are reported and validated with Docker Compose interpolation precedence. Combined `--env-file` plus `--stack-env` models the effective production Compose trusted-proxy override before normal diagnostics. It does not prove publication, immutability, Compose rendering, or live acceptance.
+17. **No real end-to-end validation yet.** Fixtures and local probes are not production proof.
 
 ## Next work
 
@@ -112,8 +113,9 @@ A final diff scan found no Compose topology, network, host-port, bind-mount, pro
 2. Keep Tailscale labeled preview and never replace or retag a published RC.
 3. Do not run the command against live TrueNAS or merge a generated proposal without a separate checkpoint. Do not change datasets, permissions, active metadata, the live tailnet policy, NPM, Headscale, Tailscale, DNS, certificates, networks, or ports without separate approval.
 4. Prefer adding the real concrete hostname to the same NPM proxy host; use an approved metadata proposal only if that is unsuitable. Avoid a duplicate NPM host/card.
-5. Keep arbitrary per-service logos, access history, server-side/account-synchronized personalization, and guided zero-friction deployment as separate future tasks.
-6. Complete service-card and SSH-machine/reachability parity, unsupported HTTP-policy and SSH-suppression negatives, copied-target checks, token refresh/revocation, stale/cold recovery, Serve header replacement, LAN-negative raw-port isolation, and live proposal/manual-merge non-effect checks. Retain Tailscale `preview` until all live acceptance requirements pass.
+5. Build the next guided-deployment slice as a read-only `update-plan` that reuses the stack validators to compare current and proposed non-secret deployment values and prints the preservation/rollback checklist. Keep automatic TrueNAS mutation and credential-bearing backups out of scope.
+6. Keep arbitrary per-service logos, access history, and server-side/account-synchronized personalization as separate future tasks.
+7. Complete service-card and SSH-machine/reachability parity, unsupported HTTP-policy and SSH-suppression negatives, copied-target checks, token refresh/revocation, stale/cold recovery, Serve header replacement, LAN-negative raw-port isolation, and live proposal/manual-merge non-effect checks. Retain Tailscale `preview` until all live acceptance requirements pass.
 
 ## Verification discipline
 

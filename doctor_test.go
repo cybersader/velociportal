@@ -677,13 +677,15 @@ func TestRunDoctorCommandRedactsAndBoundsErrors(t *testing.T) {
 
 func TestRunDoctorCommandUsage(t *testing.T) {
 	code, stdout, stderr := runDoctorForTest([]string{"--help"})
-	if code != 0 || !strings.Contains(stdout, "--identity LOGIN") || stderr != "" {
+	if code != 0 || !strings.Contains(stdout, "--identity LOGIN") || !strings.Contains(stdout, "--stack-env FILE") || stderr != "" {
 		t.Fatalf("help exit=%d stdout=%q stderr=%q", code, stdout, stderr)
 	}
 
 	for _, args := range [][]string{
 		{"--identity", ""},
 		{"--env-file"},
+		{"--stack-env", ""},
+		{"--stack-env"},
 		{"positional"},
 		{"--help", "--identity", "alice@example.com"},
 	} {
