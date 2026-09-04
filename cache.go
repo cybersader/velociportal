@@ -17,6 +17,7 @@ type CacheData struct {
 	ProxyHosts                []ProxyHost
 	ServiceMetadata           *ServiceMetadata
 	GrantRoleSelectorsByLogin map[string][]string
+	MachineSSHCapableByID     map[string]bool
 	ControlPlane              ControlPlaneMetadata
 	UpdatedAt                 time.Time
 }
@@ -183,6 +184,7 @@ func loadSnapshotWithProgress(ctx context.Context, controlPlane ControlPlane, np
 		ProxyHosts:                proxyHosts,
 		ServiceMetadata:           emptyServiceMetadata(),
 		GrantRoleSelectorsByLogin: controlResult.GrantRoleSelectorsByLogin,
+		MachineSSHCapableByID:     controlResult.MachineSSHCapableByID,
 		ControlPlane:              controlResult.Metadata,
 		UpdatedAt:                 time.Now(),
 	}, nil

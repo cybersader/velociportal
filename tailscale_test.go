@@ -85,7 +85,7 @@ func newTailscaleFixture(t *testing.T) *tailscaleFixture {
 func (f *tailscaleFixture) recordPath(r *http.Request) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.paths = append(f.paths, r.URL.Path)
+	f.paths = append(f.paths, r.URL.RequestURI())
 }
 
 func writeJSON(t *testing.T, w http.ResponseWriter, value any) {
@@ -129,12 +129,63 @@ func TestTailscaleLoadUsesApprovedEndpointsAndMapsOwners(t *testing.T) {
 	fixture.mu.Lock()
 	paths := append([]string(nil), fixture.paths...)
 	fixture.mu.Unlock()
-	wantPaths := []string{"/api/v2/tailnet/-/acl", "/api/v2/tailnet/-/users", "/api/v2/tailnet/-/devices"}
+	wantPaths := []string{"/api/v2/tailnet/-/acl", "/api/v2/tailnet/-/users", "/api/v2/tailnet/-/devices?fields=all"}
 	if !reflect.DeepEqual(paths, wantPaths) {
 		t.Fatalf("paths = %v, want %v", paths, wantPaths)
 	}
 	if fixture.tokenHits.Load() != 1 {
 		t.Fatalf("token requests = %d, want 1", fixture.tokenHits.Load())
+	}
+}
+
+func TestTailscaleDeviceSSHCapabilityIsSparsePresentationMetadata(t *testing.T) {
+	client, closeServer := tailscaleClientWithBodies(
+		t,
+		`{"users":[{"id":"user-1","loginName":"alice@example.com","type":"member","role":"admin"}]}`,
+		`{"devices":[
+			{"id":"capable","name":"capable.tailnet.ts.net","user":"user-1","addresses":["100.64.0.1"],"sshEnabled":true,"blocksIncomingConnections":false},
+			{"id":"missing","name":"missing.tailnet.ts.net","user":"user-1","addresses":["100.64.0.2"]},
+			{"id":"null","name":"null.tailnet.ts.net","user":"user-1","addresses":["100.64.0.3"],"sshEnabled":null,"blocksIncomingConnections":null},
+			{"id":"wrong-type","name":"wrong-type.tailnet.ts.net","user":"user-1","addresses":["100.64.0.4"],"sshEnabled":"true","blocksIncomingConnections":0},
+			{"id":"disabled","name":"disabled.tailnet.ts.net","user":"user-1","addresses":["100.64.0.5"],"sshEnabled":false,"blocksIncomingConnections":false},
+			{"id":"blocked","name":"blocked.tailnet.ts.net","user":"user-1","addresses":["100.64.0.6"],"sshEnabled":true,"blocksIncomingConnections":true}
+		]}`,
+		"",
+	)
+	defer closeServer()
+
+	result, err := client.Load(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if len(result.Nodes) != 6 {
+		t.Fatalf("nodes = %#v, want all six devices preserved", result.Nodes)
+	}
+	want := map[string]bool{"capable": true}
+	if !reflect.DeepEqual(result.MachineSSHCapableByID, want) {
+		t.Fatalf("MachineSSHCapableByID = %#v, want %#v", result.MachineSSHCapableByID, want)
+	}
+}
+
+func TestTailscaleOptionalBoolFailsClosedWithoutReturningErrors(t *testing.T) {
+	tests := []struct {
+		raw     string
+		value   bool
+		present bool
+	}{
+		{raw: "true", value: true, present: true},
+		{raw: "false", value: false, present: true},
+		{raw: ""},
+		{raw: "null"},
+		{raw: `"true"`},
+		{raw: "1"},
+		{raw: "{"},
+	}
+	for _, test := range tests {
+		value, present := tailscaleOptionalBool(json.RawMessage(test.raw))
+		if value != test.value || present != test.present {
+			t.Fatalf("tailscaleOptionalBool(%q) = %t, %t; want %t, %t", test.raw, value, present, test.value, test.present)
+		}
 	}
 }
 

@@ -282,6 +282,21 @@ func TestMachineConsoleEligibleRequiresTailscaleDirectMemberWithConsoleRole(t *t
 	})
 }
 
+func TestMachineConsoleCapableFailsClosedPerDevice(t *testing.T) {
+	data := &CacheData{MachineSSHCapableByID: map[string]bool{"capable": true, "explicit-false": false}}
+	if !machineConsoleCapable("capable", data) {
+		t.Fatal("explicitly capable device was hidden")
+	}
+	for _, id := range []string{"missing", "explicit-false", ""} {
+		if machineConsoleCapable(id, data) {
+			t.Fatalf("device %q must fail closed", id)
+		}
+	}
+	if machineConsoleCapable("capable", nil) {
+		t.Fatal("nil snapshot must fail closed")
+	}
+}
+
 func TestMachineConsoleURLBuildsFixedFilteredMachinesLinkFromValidatedTargetsOnly(t *testing.T) {
 	tests := map[string]struct {
 		target string
@@ -290,17 +305,17 @@ func TestMachineConsoleURLBuildsFixedFilteredMachinesLinkFromValidatedTargetsOnl
 	}{
 		"canonical ts.net name searches on the short Tailscale machine name": {
 			target: "server.tailnet.ts.net",
-			want:   "https://console.tailscale.com/admin/machines?q=server",
+			want:   "https://console.tailscale.com/admin/machines?q=server+property%3Atailscale-ssh",
 			ok:     true,
 		},
 		"Tailscale CGNAT IPv4": {
 			target: "100.64.0.10",
-			want:   "https://console.tailscale.com/admin/machines?q=100.64.0.10",
+			want:   "https://console.tailscale.com/admin/machines?q=100.64.0.10+property%3Atailscale-ssh",
 			ok:     true,
 		},
 		"Tailscale ULA IPv6": {
 			target: "fd7a:115c:a1e0::13",
-			want:   "https://console.tailscale.com/admin/machines?q=fd7a%3A115c%3Aa1e0%3A%3A13",
+			want:   "https://console.tailscale.com/admin/machines?q=fd7a%3A115c%3Aa1e0%3A%3A13+property%3Atailscale-ssh",
 			ok:     true,
 		},
 	}

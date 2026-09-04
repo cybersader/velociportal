@@ -25,7 +25,7 @@ velociportal help [command]
 | `velociportal setup --env-file FILE` | Runs the guided wizard and atomically creates or updates the local environment file |
 | `velociportal setup observe-proxy` | Observes the immediate peer on a one-time URL and proposes an exact trusted source for confirmation |
 | `velociportal doctor` | Validates configuration, upstreams, snapshot construction, and join coverage |
-| `velociportal doctor --identity LOGIN` | Also previews service cards and, only when the Tailscale SSH projection is available, a topology-free machine count for `LOGIN`; the option may be repeated. Doctor never reports the browser SSH console link or appearance preference state, which are portal-only, role-gated, and browser-local |
+| `velociportal doctor --identity LOGIN` | Also previews service cards and, only when the Tailscale SSH projection is available, a topology-free machine count for `LOGIN`; the option may be repeated. Doctor never reports the Tailscale Machines action, device capability self-report, or browser-local preference state, which are portal-only presentation inputs |
 | `velociportal validate --identity LABEL=LOGIN ...` | Compares at least two labeled identities and emits explainable text or JSON join evidence |
 | `velociportal suggest-hostnames ...` | Privately reviews unambiguous hostname candidates and emits a strict metadata-v1 proposal after confirmation |
 | `velociportal healthcheck` | Probes `/healthz` without loading application configuration or credentials |

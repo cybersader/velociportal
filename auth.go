@@ -18,6 +18,12 @@ type contextKey struct{}
 
 var identityKey contextKey
 
+func setIdentityResponseCacheHeaders(header http.Header) {
+	header.Set("Cache-Control", "no-store, max-age=0")
+	header.Set("Pragma", "no-cache")
+	header.Set("Vary", "Tailscale-User-Login, Tailscale-User-Name, Tailscale-User-Profile-Pic")
+}
+
 func IdentityFromContext(ctx context.Context) *Identity {
 	id, ok := ctx.Value(identityKey).(*Identity)
 	if !ok {
@@ -28,6 +34,7 @@ func IdentityFromContext(ctx context.Context) *Identity {
 
 func IdentityMiddleware(trustedCIDR *net.IPNet, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		setIdentityResponseCacheHeaders(w.Header())
 		host, _, err := net.SplitHostPort(r.RemoteAddr)
 		if err != nil {
 			host = r.RemoteAddr

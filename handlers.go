@@ -36,6 +36,7 @@ func NewPortalHandlerWithOptions(cache *Cache, health *ServiceHealthStore, logoD
 }
 
 func (h *PortalHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	setIdentityResponseCacheHeaders(w.Header())
 	identity := IdentityFromContext(r.Context())
 	if identity == nil {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
@@ -53,16 +54,25 @@ func (h *PortalHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	machinesAvailable := machineProjectionAvailable(data)
 	machines := MatchMachines(identity, data)
 	consoleEligible := machineConsoleEligible(identity.Login, data)
+	consoleCapableByID := make(map[string]bool)
+	if consoleEligible {
+		for _, machine := range machines {
+			if machineConsoleCapable(machine.ID, data) {
+				consoleCapableByID[machine.ID] = true
+			}
+		}
+	}
 	slog.Info("portal request", "cards", len(cards), "machines", len(machines))
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	opts := portalRenderOptions{
-		Machines:           machines,
-		MachinesAvailable:  machinesAvailable,
-		ConsoleEligible:    consoleEligible,
-		Organized:          serviceMetadataHasOrganization(data.ServiceMetadata),
-		LogoDefaultVisible: h.logoDefaultVisible,
-		Health:             h.health,
+		Machines:                  machines,
+		MachinesAvailable:         machinesAvailable,
+		ConsoleEligible:           consoleEligible,
+		MachineConsoleCapableByID: consoleCapableByID,
+		Organized:                 serviceMetadataHasOrganization(data.ServiceMetadata),
+		LogoDefaultVisible:        h.logoDefaultVisible,
+		Health:                    h.health,
 	}
 	if err := renderPortalWithOptions(w, identity, cards, opts); err != nil {
 		slog.Error("render portal", "err", err)
@@ -76,12 +86,13 @@ func (h *PortalHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // visible logo default, no browser SSH Console action) while ServeHTTP supplies
 // the complete set derived from the current snapshot and viewer.
 type portalRenderOptions struct {
-	Machines           []MachineCard
-	MachinesAvailable  bool
-	ConsoleEligible    bool
-	Organized          bool
-	LogoDefaultVisible bool
-	Health             *ServiceHealthStore
+	Machines                  []MachineCard
+	MachinesAvailable         bool
+	ConsoleEligible           bool
+	MachineConsoleCapableByID map[string]bool
+	Organized                 bool
+	LogoDefaultVisible        bool
+	Health                    *ServiceHealthStore
 }
 
 func renderPortal(w io.Writer, id *Identity, cards []ServiceCard, healthStores ...*ServiceHealthStore) error {
@@ -128,7 +139,8 @@ func renderPortalWithOptions(w io.Writer, id *Identity, cards []ServiceCard, opt
 	if machinesAvailable {
 		var machinesBody strings.Builder
 		for index, machine := range machines {
-			renderMachineCard(&machinesBody, machine, index+1, opts.ConsoleEligible)
+			showConsole := opts.ConsoleEligible && opts.MachineConsoleCapableByID[machine.ID]
+			renderMachineCard(&machinesBody, machine, index+1, showConsole)
 		}
 		if len(machines) == 0 {
 			machinesBody.WriteString(`<div class="empty machine-empty">` +
@@ -164,6 +176,7 @@ func renderPortalWithOptions(w io.Writer, id *Identity, cards []ServiceCard, opt
 		"{{SERVICES_CLASS}}", servicesClass,
 		"{{SERVICES_BODY}}", servicesBody.String(),
 		"{{MACHINES_SECTION}}", machinesSection.String(),
+		"{{BOTTOM_NAV}}", renderBottomNav(machinesAvailable),
 		"{{LOGO_PREF_SCOPE}}", logoPreferenceScope(id.Login),
 		"{{LOGO_DEFAULT_VISIBLE}}", logoDefaultLiteral,
 	).Replace(portalPage)
@@ -172,6 +185,18 @@ func renderPortalWithOptions(w io.Writer, id *Identity, cards []ServiceCard, opt
 		return fmt.Errorf("renderPortal: %w", err)
 	}
 	return nil
+}
+
+func renderBottomNav(machinesAvailable bool) string {
+	machinesHidden := ""
+	if !machinesAvailable {
+		machinesHidden = " hidden"
+	}
+	return `<nav class="bottom-nav" id="bottom-nav" aria-label="Portal navigation">` +
+		`<a class="bottom-nav-item" id="bottom-nav-services" href="#services-heading" data-bottom-nav-scroll="services-heading"><span class="bottom-nav-icon" aria-hidden="true">&#9638;</span><span class="bottom-nav-label">Services</span></a>` +
+		`<a class="bottom-nav-item" id="bottom-nav-machines" href="#machines-heading" data-bottom-nav-scroll="machines-heading"` + machinesHidden + `><span class="bottom-nav-icon" aria-hidden="true">&#9673;</span><span class="bottom-nav-label">Machines</span></a>` +
+		`<button type="button" class="bottom-nav-item" id="bottom-nav-more" aria-haspopup="dialog" aria-controls="account-panel" aria-expanded="false"><span class="bottom-nav-icon" aria-hidden="true">&#8943;</span><span class="bottom-nav-label">More</span></button>` +
+		`</nav>`
 }
 
 // logoPreferenceScope derives the opaque, fixed-format SHA-256 hex scope used to
@@ -272,25 +297,53 @@ func renderMachineCard(body *strings.Builder, machine MachineCard, index int, co
 		fmt.Fprintf(body, `<p class="machine-target">%s</p>`, html.EscapeString(fullTarget))
 	}
 	body.WriteString(`<p class="machine-policy">Supported by SSH policy and a network Grant for port 22.</p>` +
-		`<ul class="machine-access" aria-label="Allowed SSH accounts">`)
+		`<div class="machine-accounts">` +
+		`<div class="machine-accounts-heading">Accounts allowed by policy</div>` +
+		`<ul class="machine-accounts-list" aria-label="Accounts allowed by policy">`)
 
 	literalUsers := make([]string, 0, len(machine.Access))
 	hasNonroot := false
 	for _, access := range machine.Access {
 		account := access.User
 		if account == machineNonrootSelector {
-			account = "Any non-root account allowed by policy"
+			account = "Any non-root account"
 			hasNonroot = true
 		} else if _, ok := machineSSHCommand(access.User, machine.Target); ok {
 			literalUsers = append(literalUsers, access.User)
 		}
 		fmt.Fprintf(body,
-			`<li><span class="machine-user-summary">%s</span><span class="badge machine-action">%s</span></li>`,
+			`<li class="machine-account-row"><span class="machine-account-name">%s</span><span class="machine-account-detail">%s</span></li>`,
 			html.EscapeString(account),
 			html.EscapeString(machineActionLabel(access)),
 		)
 	}
 	body.WriteString(`</ul>`)
+
+	// autogroup:nonroot is a policy scope, not an inventory of accounts that
+	// exist on the machine. This nested field only combines a client-validated
+	// typed account with the already safe server-rendered target.
+	if hasNonroot {
+		accountID := machineID + "-account"
+		accountFeedbackID := machineID + "-account-feedback"
+		fmt.Fprintf(body,
+			`<div class="machine-account-policy">`+
+				`<div class="machine-account-policy-heading">Use another non-root account</div>`+
+				`<div class="machine-command machine-command-custom">`+
+				`<label for="%s">Account on this machine</label>`+
+				`<input type="text" id="%s" class="machine-account-input" list="ssh-account-suggestions" autocomplete="off" spellcheck="false" maxlength="256" placeholder="e.g. jdoe" data-account-target="%s">`+
+				`<button type="button" class="copy-command" data-copy-ssh-account data-account-input="%s" aria-describedby="%s">Copy command</button>`+
+				`<span class="copy-feedback" id="%s" role="status" aria-live="polite"></span>`+
+				`<p class="machine-account-note">Velociportal cannot verify that this account exists on the machine.</p>`+
+				`</div></div>`,
+			accountID,
+			accountID,
+			html.EscapeString(machine.Target),
+			accountID,
+			accountFeedbackID,
+			accountFeedbackID,
+		)
+	}
+	body.WriteString(`</div>`)
 
 	if len(literalUsers) > 0 {
 		selectID := machineID + "-user"
@@ -322,37 +375,13 @@ func renderMachineCard(body *strings.Builder, machine MachineCard, index int, co
 		)
 	}
 
-	// autogroup:nonroot is a policy scope, not an inventory of accounts that
-	// exist on the machine. This field only ever combines a client-validated
-	// typed account with the already safe server-rendered target; it never
-	// server-renders a command for an account Velociportal cannot verify.
-	if hasNonroot {
-		accountID := machineID + "-account"
-		accountFeedbackID := machineID + "-account-feedback"
-		fmt.Fprintf(body,
-			`<div class="machine-command machine-command-custom">`+
-				`<label for="%s">Account on this machine</label>`+
-				`<input type="text" id="%s" class="machine-account-input" list="ssh-account-suggestions" autocomplete="off" spellcheck="false" maxlength="256" placeholder="e.g. jdoe" data-account-target="%s">`+
-				`<button type="button" class="copy-command" data-copy-ssh-account data-account-input="%s" aria-describedby="%s">Copy command</button>`+
-				`<span class="copy-feedback" id="%s" role="status" aria-live="polite"></span>`+
-				`<p class="machine-account-note">Policy permits this account class, but Velociportal cannot verify that the typed account exists on this machine.</p>`+
-				`</div>`,
-			accountID,
-			accountID,
-			html.EscapeString(machine.Target),
-			accountID,
-			accountFeedbackID,
-			accountFeedbackID,
-		)
-	}
-
 	if consoleEligible {
 		if consoleURL, ok := machineConsoleURL(machine.Target); ok {
 			noteID := machineID + "-console-note"
 			fmt.Fprintf(body,
 				`<div class="machine-console">`+
-					`<a class="btn-console" href="%s" target="_blank" rel="noopener noreferrer" aria-describedby="%s">Browser SSH in Tailscale</a>`+
-					`<p class="machine-console-note" id="%s">Opens the filtered Tailscale Machines page in a new tab, where Tailscale handles account choice, reauthentication, posture, policy, and the session.</p>`+
+					`<a class="btn-console" href="%s" target="_blank" rel="noopener noreferrer" aria-describedby="%s">Open in Tailscale Machines</a>`+
+					`<p class="machine-console-note" id="%s">Opens the filtered Machines page in a new tab. Start browser SSH there; Tailscale handles eligibility, account choice, reauthentication, posture, policy, and the session.</p>`+
 					`</div>`,
 				html.EscapeString(consoleURL),
 				noteID,
@@ -469,8 +498,15 @@ const portalPage = `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0f1115" media="(prefers-color-scheme: dark)">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Velociportal">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<link rel="manifest" href="/static/manifest.json">
 <link rel="icon" type="image/svg+xml" href="/static/logo.svg">
+<link rel="apple-touch-icon" href="/static/icons/apple-touch-icon-180.png">
 <title>Velociportal</title>
 <style>
 :root {
@@ -589,10 +625,14 @@ a.card:hover, a.card:focus-visible { border-color: var(--accent); background: va
 .machine-card { min-width: 0; }
 .machine-target { margin: 0 0 .3rem; color: var(--muted); font-size: .78rem; overflow-wrap: anywhere; }
 .machine-policy { margin: 0; color: var(--muted); font-size: .88rem; }
-.machine-access { display: grid; gap: .4rem; margin: .15rem 0 .25rem; padding: 0; list-style: none; }
-.machine-access li { display: flex; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; gap: .4rem .75rem; min-width: 0; }
-.machine-user-summary { flex: 1 1 8rem; min-width: 0; overflow-wrap: anywhere; }
-.machine-action { flex: 0 1 auto; min-width: 0; max-width: 100%; line-height: 1.3; text-transform: none; white-space: normal; }
+.machine-accounts { display: grid; gap: .45rem; margin: .15rem 0 .25rem; min-width: 0; }
+.machine-accounts-heading { color: var(--muted); font-size: .74rem; font-weight: 600; letter-spacing: .02em; text-transform: uppercase; }
+.machine-accounts-list { display: grid; gap: .5rem; margin: 0; padding: 0; list-style: none; }
+.machine-account-row { display: flex; flex-direction: column; gap: .08rem; min-width: 0; }
+.machine-account-name { font-size: .9rem; overflow-wrap: anywhere; }
+.machine-account-detail { color: var(--muted); font-size: .76rem; line-height: 1.35; overflow-wrap: anywhere; }
+.machine-account-policy { display: grid; gap: .35rem; min-width: 0; margin-top: .15rem; padding: .55rem 0 0 .7rem; border-left: 2px solid var(--border); }
+.machine-account-policy-heading { color: var(--muted); font-size: .76rem; font-weight: 600; }
 .machine-command { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: .45rem .6rem; align-items: end; margin-top: .3rem; }
 .machine-command label { grid-column: 1 / -1; color: var(--muted); font-size: .78rem; font-weight: 600; }
 .machine-command select, .machine-account-input, .copy-command { min-height: 2.35rem; border: 1px solid var(--border); border-radius: 8px; background: var(--card-bg); color: var(--text); font: inherit; }
@@ -600,7 +640,7 @@ a.card:hover, a.card:focus-visible { border-color: var(--accent); background: va
 .copy-command { padding: .35rem .7rem; cursor: pointer; }
 .copy-command:hover, .copy-command:focus-visible { border-color: var(--accent); }
 .copy-feedback { grid-column: 1 / -1; min-height: 1.2em; color: var(--muted); font-size: .78rem; }
-.machine-command-custom { margin-top: .6rem; }
+.machine-command-custom { margin-top: 0; }
 .machine-account-note { grid-column: 1 / -1; margin: .35rem 0 0; color: var(--muted); font-size: .78rem; }
 .machine-console { margin-top: .5rem; }
 .btn-console { display: inline-block; padding: .35rem .7rem; border: 1px solid var(--border); border-radius: 8px; background: var(--card-bg); color: var(--text); font-size: .85rem; text-decoration: none; }
@@ -613,6 +653,7 @@ a.card:hover, a.card:focus-visible { border-color: var(--accent); background: va
 .machine-empty { padding-block: 2rem; }
 .empty-icon { font-size: 2.5rem; line-height: 1; margin-bottom: .5rem; opacity: .5; }
 .empty p { margin: 0; }
+.bottom-nav { display: none; }
 @media (max-width: 600px) {
   header { padding: 1.5rem 1rem .75rem; align-items: flex-start; }
   main { padding: 1rem 1rem 2rem; }
@@ -625,9 +666,15 @@ a.card:hover, a.card:focus-visible { border-color: var(--accent); background: va
   .health-status { margin-left: 0; text-align: left; }
   .machine-command { grid-template-columns: minmax(0, 1fr); align-items: stretch; }
   .machine-command label, .copy-feedback { grid-column: 1; }
+  body { padding-bottom: calc(4.75rem + env(safe-area-inset-bottom)); }
   .account { width: 100%; }
   .account-trigger { width: 100%; text-align: left; }
-  .account-panel { left: 0; right: 0; width: auto; max-width: none; }
+  .account-panel { position: fixed; top: auto; left: 1rem; right: 1rem; bottom: calc(4.5rem + env(safe-area-inset-bottom)); width: auto; max-width: none; max-height: min(70vh, 32rem); overflow-y: auto; z-index: 40; }
+  .bottom-nav { display: flex; position: fixed; left: 0; right: 0; bottom: 0; z-index: 30; justify-content: space-around; gap: .25rem; padding: .35rem max(.5rem, env(safe-area-inset-right)) calc(.35rem + env(safe-area-inset-bottom)) max(.5rem, env(safe-area-inset-left)); border-top: 1px solid var(--border); background: var(--card-bg); box-shadow: 0 -8px 24px rgba(0, 0, 0, .2); }
+  .bottom-nav-item { display: flex; flex: 1 1 0; min-width: 0; min-height: 44px; flex-direction: column; align-items: center; justify-content: center; gap: .12rem; padding: .3rem .2rem; border: 0; border-radius: 9px; background: transparent; color: var(--muted); text-decoration: none; font: inherit; cursor: pointer; }
+  .bottom-nav-item:hover, .bottom-nav-item:focus-visible { color: var(--text); background: var(--card-hover-bg); }
+  .bottom-nav-icon { font-size: 1rem; line-height: 1; }
+  .bottom-nav-label { font-size: .7rem; font-weight: 650; line-height: 1.15; }
 }
 </style>
 <script>
@@ -710,6 +757,7 @@ Show Velociportal logo
 {{MACHINES_SECTION}}
 </div>
 </main>
+{{BOTTOM_NAV}}
 <datalist id="ssh-account-suggestions"></datalist>
 <script src="/static/htmx.min.js"></script>
 <script>
@@ -720,10 +768,12 @@ Show Velociportal logo
   var fallback = document.getElementById("account-fallback");
   var panel = document.getElementById("account-panel");
   var checkbox = document.getElementById("logo-visible-checkbox");
+  var moreButton = document.getElementById("bottom-nav-more");
   if (!trigger || !fallback || !panel || !checkbox) return;
 
   var pref = window.__velociportalLogoPreference || { scopedKey: "velociportal.logo.visible", visible: true };
   var visible = pref.visible;
+  var panelOpener = trigger;
 
   function applyLogoPreference() {
     if (visible) root.removeAttribute("data-logo");
@@ -739,9 +789,15 @@ Show Velociportal logo
     } catch (_) {}
   });
 
-  function openPanel() {
+  function setExpanded(expanded) {
+    trigger.setAttribute("aria-expanded", String(expanded));
+    if (moreButton) moreButton.setAttribute("aria-expanded", String(expanded));
+  }
+
+  function openPanel(opener) {
+    panelOpener = opener || trigger;
     panel.hidden = false;
-    trigger.setAttribute("aria-expanded", "true");
+    setExpanded(true);
     checkbox.focus();
     document.addEventListener("keydown", onKeydown, true);
     document.addEventListener("click", onOutsideClick, true);
@@ -749,10 +805,10 @@ Show Velociportal logo
 
   function closePanel(restoreFocus) {
     panel.hidden = true;
-    trigger.setAttribute("aria-expanded", "false");
+    setExpanded(false);
     document.removeEventListener("keydown", onKeydown, true);
     document.removeEventListener("click", onOutsideClick, true);
-    if (restoreFocus) trigger.focus();
+    if (restoreFocus && panelOpener) panelOpener.focus();
   }
 
   function onKeydown(event) {
@@ -763,18 +819,49 @@ Show Velociportal logo
   }
 
   function onOutsideClick(event) {
-    if (panel.contains(event.target) || trigger.contains(event.target)) return;
+    if (panel.contains(event.target) || trigger.contains(event.target) || (moreButton && moreButton.contains(event.target))) return;
     closePanel(true);
   }
 
   trigger.addEventListener("click", function () {
-    if (panel.hidden) openPanel();
+    if (panel.hidden) openPanel(trigger);
     else closePanel(true);
   });
+  if (moreButton) {
+    moreButton.addEventListener("click", function () {
+      if (panel.hidden) openPanel(moreButton);
+      else closePanel(true);
+    });
+  }
 
   applyLogoPreference();
   fallback.hidden = true;
   trigger.hidden = false;
+}());
+
+(function () {
+  "use strict";
+
+  function syncBottomNavMachines() {
+    var machinesLink = document.getElementById("bottom-nav-machines");
+    if (machinesLink) machinesLink.hidden = !document.getElementById("machines-heading");
+  }
+
+  document.addEventListener("click", function (event) {
+    var link = event.target.closest("[data-bottom-nav-scroll]");
+    if (!link) return;
+    var target = document.getElementById(link.getAttribute("data-bottom-nav-scroll"));
+    if (!target) return;
+    event.preventDefault();
+    var reduced = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    target.scrollIntoView({ behavior: reduced ? "auto" : "smooth", block: "start" });
+    target.setAttribute("tabindex", "-1");
+    target.focus({ preventScroll: true });
+    target.addEventListener("blur", function () { target.removeAttribute("tabindex"); }, { once: true });
+  });
+
+  document.body.addEventListener("htmx:afterSwap", syncBottomNavMachines);
+  syncBottomNavMachines();
 }());
 
 (function () {
@@ -962,6 +1049,14 @@ Show Velociportal logo
   });
 
   refreshAccountUI();
+}());
+
+(function () {
+  "use strict";
+  if (!("serviceWorker" in navigator)) return;
+  window.addEventListener("load", function () {
+    navigator.serviceWorker.register("/static/sw.js", { scope: "/" }).catch(function () {});
+  });
 }());
 </script>
 </body>

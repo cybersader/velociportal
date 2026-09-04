@@ -42,6 +42,7 @@ type ControlPlaneResult struct {
 	Policy                    *Policy
 	Nodes                     []Node
 	GrantRoleSelectorsByLogin map[string][]string
+	MachineSSHCapableByID     map[string]bool
 	Metadata                  ControlPlaneMetadata
 }
 
