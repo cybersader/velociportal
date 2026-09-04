@@ -119,7 +119,7 @@ In Headscale mode, existing NPM provides the trusted HTTPS endpoint needed befor
     - Separate Tailscale-preview SSH Machines projection requiring supported SSH plus independent Grant TCP/22 evidence
     - Trusted `Tailscale-User-*` identity headers
     - Responsive server-rendered portal with embedded htmx, presentation-only organization, and bounded optional health labels
-    - A username-triggered accessible settings panel with a per-identity browser-local logo preference (opaque-scoped, legacy-key migration, optional `PORTAL_LOGO_DEFAULT` default) and a role-gated browser SSH console action that opens a fixed filtered Tailscale admin-console page in a new tab for eligible Tailscale machine cards only
+    - A username-triggered accessible settings panel with a per-identity browser-local logo preference (opaque-scoped, legacy-key migration, optional `PORTAL_LOGO_DEFAULT` default), browser-local saved SSH-account suggestions, and a role-gated browser SSH action that opens a fixed short-name-filtered Tailscale Machines page in a new tab for eligible cards only
     - Single non-root `FROM scratch` container
     - Portable one-service production bundle for Compose 2.33.1+ and Engine 28+
 

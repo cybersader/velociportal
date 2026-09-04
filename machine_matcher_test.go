@@ -288,9 +288,9 @@ func TestMachineConsoleURLBuildsFixedFilteredMachinesLinkFromValidatedTargetsOnl
 		want   string
 		ok     bool
 	}{
-		"canonical ts.net name": {
+		"canonical ts.net name searches on the short Tailscale machine name": {
 			target: "server.tailnet.ts.net",
-			want:   "https://console.tailscale.com/admin/machines?q=server.tailnet.ts.net",
+			want:   "https://console.tailscale.com/admin/machines?q=server",
 			ok:     true,
 		},
 		"Tailscale CGNAT IPv4": {
@@ -365,6 +365,51 @@ func TestMachineTargetUsesCanonicalNameOrNarrowTailnetAddressFallback(t *testing
 			got, ok := machineTarget(test.node)
 			if got != test.want || ok != test.ok {
 				t.Fatalf("machineTarget() = %q, %v; want %q, %v", got, ok, test.want, test.ok)
+			}
+		})
+	}
+}
+
+func TestMachineShortNameDerivesFromValidatedCanonicalTargetOnly(t *testing.T) {
+	tests := map[string]struct {
+		target string
+		want   string
+		ok     bool
+	}{
+		"canonical ts.net name yields its first label": {
+			target: "server.tailnet.ts.net",
+			want:   "server",
+			ok:     true,
+		},
+		"multi-label host still yields only the first label": {
+			target: "web-01.prod.tailnet.ts.net",
+			want:   "web-01",
+			ok:     true,
+		},
+		"Tailscale CGNAT IPv4 has no separate short form": {
+			target: "100.64.0.10",
+		},
+		"Tailscale ULA IPv6 has no separate short form": {
+			target: "fd7a:115c:a1e0::13",
+		},
+		"single-label host is not a validated target": {
+			target: "server",
+		},
+		"public non-MagicDNS domain is not a validated target": {
+			target: "public.example.com",
+		},
+		"whitespace changes the byte-identical target": {
+			target: " server.tailnet.ts.net",
+		},
+		"empty target is never valid": {
+			target: "",
+		},
+	}
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			got, ok := machineShortName(test.target)
+			if got != test.want || ok != test.ok {
+				t.Fatalf("machineShortName(%q) = %q, %t; want %q, %t", test.target, got, ok, test.want, test.ok)
 			}
 		})
 	}

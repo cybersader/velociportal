@@ -139,6 +139,7 @@ func renderPortalWithOptions(w io.Writer, id *Identity, cards []ServiceCard, opt
 		fmt.Fprintf(&machinesSection,
 			`<section class="portal-section" aria-labelledby="machines-heading">`+
 				`<h2 class="section-title" id="machines-heading">Machines</h2>`+
+				`<p class="machines-help">These labels describe Tailscale's identity check, not machine health. Velociportal reads policy but does not discover which local accounts actually exist.</p>`+
 				`<div class="grid" id="machines">%s</div>`+
 				`</section>`,
 			machinesBody.String(),
@@ -258,29 +259,35 @@ func renderServiceCard(body *strings.Builder, card ServiceCard, health *ServiceH
 
 func renderMachineCard(body *strings.Builder, machine MachineCard, index int, consoleEligible bool) {
 	machineID := fmt.Sprintf("machine-%d", index)
+	shortName, fullTarget, hasFullTarget := machineCardNames(machine.Target)
 	fmt.Fprintf(body,
 		`<article class="card machine-card" data-machine="%s" aria-labelledby="%s-name">`+
-			`<span class="card-head"><span class="card-name" id="%s-name">%s</span></span>`+
-			`<p class="machine-policy">Policy allows SSH access to this machine.</p>`+
-			`<ul class="machine-access" aria-label="Allowed SSH accounts">`,
-		html.EscapeString(machine.Name),
+			`<span class="card-head"><span class="card-name" id="%s-name">%s</span></span>`,
+		html.EscapeString(machine.Target),
 		machineID,
 		machineID,
-		html.EscapeString(machine.Name),
+		html.EscapeString(shortName),
 	)
+	if hasFullTarget {
+		fmt.Fprintf(body, `<p class="machine-target">%s</p>`, html.EscapeString(fullTarget))
+	}
+	body.WriteString(`<p class="machine-policy">Supported by SSH policy and a network Grant for port 22.</p>` +
+		`<ul class="machine-access" aria-label="Allowed SSH accounts">`)
 
 	literalUsers := make([]string, 0, len(machine.Access))
+	hasNonroot := false
 	for _, access := range machine.Access {
 		account := access.User
 		if account == machineNonrootSelector {
-			account = "any non-root account"
+			account = "Any non-root account allowed by policy"
+			hasNonroot = true
 		} else if _, ok := machineSSHCommand(access.User, machine.Target); ok {
 			literalUsers = append(literalUsers, access.User)
 		}
 		fmt.Fprintf(body,
 			`<li><span class="machine-user-summary">%s</span><span class="badge machine-action">%s</span></li>`,
 			html.EscapeString(account),
-			html.EscapeString(access.Action),
+			html.EscapeString(machineActionLabel(access)),
 		)
 	}
 	body.WriteString(`</ul>`)
@@ -315,13 +322,37 @@ func renderMachineCard(body *strings.Builder, machine MachineCard, index int, co
 		)
 	}
 
+	// autogroup:nonroot is a policy scope, not an inventory of accounts that
+	// exist on the machine. This field only ever combines a client-validated
+	// typed account with the already safe server-rendered target; it never
+	// server-renders a command for an account Velociportal cannot verify.
+	if hasNonroot {
+		accountID := machineID + "-account"
+		accountFeedbackID := machineID + "-account-feedback"
+		fmt.Fprintf(body,
+			`<div class="machine-command machine-command-custom">`+
+				`<label for="%s">Account on this machine</label>`+
+				`<input type="text" id="%s" class="machine-account-input" list="ssh-account-suggestions" autocomplete="off" spellcheck="false" maxlength="256" placeholder="e.g. jdoe" data-account-target="%s">`+
+				`<button type="button" class="copy-command" data-copy-ssh-account data-account-input="%s" aria-describedby="%s">Copy command</button>`+
+				`<span class="copy-feedback" id="%s" role="status" aria-live="polite"></span>`+
+				`<p class="machine-account-note">Policy permits this account class, but Velociportal cannot verify that the typed account exists on this machine.</p>`+
+				`</div>`,
+			accountID,
+			accountID,
+			html.EscapeString(machine.Target),
+			accountID,
+			accountFeedbackID,
+			accountFeedbackID,
+		)
+	}
+
 	if consoleEligible {
 		if consoleURL, ok := machineConsoleURL(machine.Target); ok {
 			noteID := machineID + "-console-note"
 			fmt.Fprintf(body,
 				`<div class="machine-console">`+
-					`<a class="btn-console" href="%s" target="_blank" rel="noopener noreferrer" aria-describedby="%s">Open in Tailscale console</a>`+
-					`<p class="machine-console-note" id="%s">Opens the filtered Tailscale admin console for this machine in a new tab. You still choose the SSH session and reauthenticate there.</p>`+
+					`<a class="btn-console" href="%s" target="_blank" rel="noopener noreferrer" aria-describedby="%s">Browser SSH in Tailscale</a>`+
+					`<p class="machine-console-note" id="%s">Opens the filtered Tailscale Machines page in a new tab, where Tailscale handles account choice, reauthentication, posture, policy, and the session.</p>`+
 					`</div>`,
 				html.EscapeString(consoleURL),
 				noteID,
@@ -330,6 +361,45 @@ func renderMachineCard(body *strings.Builder, machine MachineCard, index int, co
 		}
 	}
 	body.WriteString(`</article>`)
+}
+
+// machineCardNames returns the short, familiar name to render prominently on a
+// machine card and, only for a canonical *.ts.net target, the full canonical
+// target to render alongside it in smaller muted text. It is derived solely
+// from machineShortName's already validated canonical target; a validated IP
+// fallback target has no separate short form and is shown once.
+func machineCardNames(target string) (short string, full string, hasFull bool) {
+	if name, ok := machineShortName(target); ok {
+		return name, target, true
+	}
+	return target, "", false
+}
+
+// machineActionLabel renders MachineAccess.Action and CheckPeriod as truthful,
+// plain-language SSH policy text. It reads only the existing canonical Action
+// and CheckPeriod values and changes no normalization or precedence.
+func machineActionLabel(access MachineAccess) string {
+	switch access.Action {
+	case "accept":
+		return "No extra sign-in"
+	case "check":
+		return "Reauthenticate every " + machineCheckPeriodLabel(access.CheckPeriod)
+	default:
+		return "SSH policy action unavailable"
+	}
+}
+
+// machineCheckPeriodLabel formats a canonical checkPeriod duration -- always a
+// whole number of minutes or hours -- as a short human label, falling back to
+// Tailscale's documented 12-hour default when the optional checkPeriod is unset.
+func machineCheckPeriodLabel(period time.Duration) string {
+	if period <= 0 {
+		return "12h (default)"
+	}
+	if period%time.Hour == 0 {
+		return fmt.Sprintf("%dh", int64(period/time.Hour))
+	}
+	return fmt.Sprintf("%dm", int64(period/time.Minute))
 }
 
 func machineSSHCommand(user, target string) (string, bool) {
@@ -515,7 +585,9 @@ a.card:hover, a.card:focus-visible { border-color: var(--accent); background: va
 .health-unreachable { color: var(--health-unreachable); }
 .health-stale { color: var(--health-stale); }
 .health-unknown { color: var(--health-unknown); }
+.machines-help { margin: 0 0 .85rem; max-width: 60ch; color: var(--muted); font-size: .85rem; }
 .machine-card { min-width: 0; }
+.machine-target { margin: 0 0 .3rem; color: var(--muted); font-size: .78rem; overflow-wrap: anywhere; }
 .machine-policy { margin: 0; color: var(--muted); font-size: .88rem; }
 .machine-access { display: grid; gap: .4rem; margin: .15rem 0 .25rem; padding: 0; list-style: none; }
 .machine-access li { display: flex; align-items: center; justify-content: space-between; gap: .75rem; min-width: 0; }
@@ -523,15 +595,20 @@ a.card:hover, a.card:focus-visible { border-color: var(--accent); background: va
 .machine-action { flex-shrink: 0; }
 .machine-command { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: .45rem .6rem; align-items: end; margin-top: .3rem; }
 .machine-command label { grid-column: 1 / -1; color: var(--muted); font-size: .78rem; font-weight: 600; }
-.machine-command select, .copy-command { min-height: 2.35rem; border: 1px solid var(--border); border-radius: 8px; background: var(--card-bg); color: var(--text); font: inherit; }
-.machine-command select { min-width: 0; padding: .35rem .5rem; }
+.machine-command select, .machine-account-input, .copy-command { min-height: 2.35rem; border: 1px solid var(--border); border-radius: 8px; background: var(--card-bg); color: var(--text); font: inherit; }
+.machine-command select, .machine-account-input { min-width: 0; padding: .35rem .5rem; }
 .copy-command { padding: .35rem .7rem; cursor: pointer; }
 .copy-command:hover, .copy-command:focus-visible { border-color: var(--accent); }
 .copy-feedback { grid-column: 1 / -1; min-height: 1.2em; color: var(--muted); font-size: .78rem; }
+.machine-command-custom { margin-top: .6rem; }
+.machine-account-note { grid-column: 1 / -1; margin: .35rem 0 0; color: var(--muted); font-size: .78rem; }
 .machine-console { margin-top: .5rem; }
 .btn-console { display: inline-block; padding: .35rem .7rem; border: 1px solid var(--border); border-radius: 8px; background: var(--card-bg); color: var(--text); font-size: .85rem; text-decoration: none; }
 .btn-console:hover, .btn-console:focus-visible { border-color: var(--accent); }
 .machine-console-note { margin: .35rem 0 0; color: var(--muted); font-size: .78rem; }
+.btn-clear-accounts { min-height: 2.1rem; padding: .3rem .7rem; border: 1px solid var(--border); border-radius: 8px; background: var(--card-bg); color: var(--text); font: inherit; cursor: pointer; }
+.btn-clear-accounts:hover, .btn-clear-accounts:focus-visible { border-color: var(--accent); }
+.account-panel-status { display: block; margin-top: .35rem; color: var(--muted); font-size: .78rem; }
 .empty { grid-column: 1 / -1; text-align: center; padding: 4rem 1.5rem; color: var(--muted); }
 .machine-empty { padding-block: 2rem; }
 .empty-icon { font-size: 2.5rem; line-height: 1; margin-bottom: .5rem; opacity: .5; }
@@ -613,6 +690,11 @@ a.card:hover, a.card:focus-visible { border-color: var(--accent); background: va
 Show Velociportal logo
 </label>
 </div>
+<div class="account-panel-section">
+<div class="account-panel-heading">SSH accounts</div>
+<button type="button" class="btn-clear-accounts" id="clear-ssh-accounts-button" hidden>Clear saved SSH accounts</button>
+<span class="account-panel-status" id="clear-ssh-accounts-status" role="status" aria-live="polite"></span>
+</div>
 </div>
 </div>
 </div>
@@ -628,6 +710,7 @@ Show Velociportal logo
 {{MACHINES_SECTION}}
 </div>
 </main>
+<datalist id="ssh-account-suggestions"></datalist>
 <script src="/static/htmx.min.js"></script>
 <script>
 (function () {
@@ -719,6 +802,7 @@ Show Velociportal logo
       }
     });
   }
+  window.__velociportalCopyText = copyText;
 
   document.addEventListener("click", function (event) {
     var button = event.target.closest("[data-copy-ssh-command]");
@@ -737,6 +821,147 @@ Show Velociportal logo
       feedback.textContent = "Copy unavailable.";
     });
   });
+}());
+
+(function () {
+  "use strict";
+
+  // Browser-local, per-identity most-recently-used SSH account suggestions.
+  // These never leave the browser: the storage key reuses the same opaque
+  // SHA-256 login scope as the logo preference, never the raw login, and
+  // nothing here is sent to or read by Velociportal.
+  var identityScope = "{{LOGO_PREF_SCOPE}}";
+  var ACCOUNTS_KEY = "velociportal.ssh.accounts." + identityScope;
+  var MAX_ACCOUNTS = 10;
+  var MAX_ACCOUNT_LENGTH = 256;
+  var ACCOUNT_PATTERN = /^[A-Za-z_][A-Za-z0-9_.-]*\$?$/;
+
+  // isValidAccount mirrors the server's bounded literal-account grammar
+  // (supportedSSHUser): 1-256 ASCII characters, a letter/underscore first,
+  // then letters/digits/./-, with an optional final $. It additionally
+  // rejects "root" outright, because this field is only ever offered for the
+  // separate autogroup:nonroot policy scope, never the literal root account.
+  function isValidAccount(value) {
+    return typeof value === "string" &&
+      value.length >= 1 &&
+      value.length <= MAX_ACCOUNT_LENGTH &&
+      value !== "root" &&
+      ACCOUNT_PATTERN.test(value);
+  }
+
+  function readSavedAccounts() {
+    try {
+      var raw = window.localStorage.getItem(ACCOUNTS_KEY);
+      if (!raw) return [];
+      var parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return [];
+      var seen = Object.create(null);
+      var result = [];
+      for (var i = 0; i < parsed.length && result.length < MAX_ACCOUNTS; i++) {
+        var value = parsed[i];
+        if (!isValidAccount(value) || seen[value] === true) continue;
+        seen[value] = true;
+        result.push(value);
+      }
+      return result;
+    } catch (_) {
+      return [];
+    }
+  }
+
+  function writeSavedAccounts(list) {
+    try {
+      window.localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(list));
+    } catch (_) {
+      // Storage denial or quota exceeded: fail harmlessly, no saved accounts.
+    }
+  }
+
+  function rememberAccount(value) {
+    if (!isValidAccount(value)) return;
+    var list = readSavedAccounts().filter(function (entry) { return entry !== value; });
+    list.unshift(value);
+    if (list.length > MAX_ACCOUNTS) list = list.slice(0, MAX_ACCOUNTS);
+    writeSavedAccounts(list);
+    refreshAccountUI();
+  }
+
+  function clearSavedAccounts() {
+    var cleared = false;
+    try {
+      window.localStorage.removeItem(ACCOUNTS_KEY);
+      cleared = window.localStorage.getItem(ACCOUNTS_KEY) === null;
+    } catch (_) {}
+    refreshAccountUI();
+    var status = document.getElementById("clear-ssh-accounts-status");
+    if (status) status.textContent = cleared ? "Saved SSH accounts cleared." : "Saved SSH accounts could not be cleared.";
+  }
+
+  function populateDatalist() {
+    var datalist = document.getElementById("ssh-account-suggestions");
+    if (!datalist) return;
+    var accounts = readSavedAccounts();
+    while (datalist.firstChild) datalist.removeChild(datalist.firstChild);
+    accounts.forEach(function (account) {
+      var option = document.createElement("option");
+      option.value = account;
+      datalist.appendChild(option);
+    });
+  }
+
+  function refreshAccountUI() {
+    populateDatalist();
+    var button = document.getElementById("clear-ssh-accounts-button");
+    if (button) button.hidden = readSavedAccounts().length === 0;
+  }
+
+  // buildAccountCommand mirrors machineSSHCommand's safe trailing-$ shell
+  // escaping. The target here is always the existing server-rendered, already
+  // validated data-account-target attribute; only the typed account is new.
+  function buildAccountCommand(user, target) {
+    var argument = user + "@" + target;
+    if (user.charAt(user.length - 1) === "$") {
+      argument = user.slice(0, -1) + "\\$@" + target;
+    }
+    return "tailscale ssh " + argument;
+  }
+
+  document.addEventListener("click", function (event) {
+    var button = event.target.closest("[data-copy-ssh-account]");
+    if (!button) return;
+
+    var input = document.getElementById(button.getAttribute("data-account-input"));
+    var feedback = document.getElementById(button.getAttribute("aria-describedby"));
+    if (!input || !feedback) return;
+
+    var value = input.value;
+    var target = input.getAttribute("data-account-target");
+    var copyText = window.__velociportalCopyText;
+    if (!isValidAccount(value) || !target || !copyText) {
+      feedback.textContent = "Enter a valid account name.";
+      return;
+    }
+
+    var command = buildAccountCommand(value, target);
+    feedback.textContent = "Copying command...";
+    copyText(command).then(function () {
+      feedback.textContent = "Command copied.";
+      rememberAccount(value);
+    }, function () {
+      feedback.textContent = "Copy unavailable.";
+    });
+  });
+
+  document.addEventListener("click", function (event) {
+    if (event.target.id !== "clear-ssh-accounts-button") return;
+    clearSavedAccounts();
+  });
+
+  document.body.addEventListener("htmx:afterSwap", function () {
+    refreshAccountUI();
+  });
+
+  refreshAccountUI();
 }());
 </script>
 </body>

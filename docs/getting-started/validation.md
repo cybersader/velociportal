@@ -233,8 +233,10 @@ Skip this section in Headscale mode or when the Tailscale policy has no intended
 - [ ] Remove or change either side of that evidence in a controlled fixture/policy test and confirm the machine disappears; an ACL mentioning port 22 does not preserve it
 - [ ] Owner-to-Admin automatic membership and each specialized role are checked independently; no specialized role implies another
 - [ ] `autogroup:self` includes only devices with the exact separately resolved owner login; tags and `tagOwners` do not create human source membership
-- [ ] A literal allowed account produces the expected `tailscale ssh user@target` copy command; `autogroup:nonroot` remains a summary with no invented account or command
-- [ ] A canonical full `*.ts.net` device name is used when present; an arbitrary FQDN is rejected as a target and falls back only to the same device's validated Tailscale IPv4/IPv6 address
+- [ ] A literal allowed account produces the expected server-built `tailscale ssh user@target` copy command; `autogroup:nonroot` never invents or pre-fills an account but offers a separate client-side field for a typed validated non-root account
+- [ ] The custom non-root field rejects `root`, surrounding whitespace, selectors, and shell metacharacters; successful copies remember at most 10 deduplicated names only for the exact identity/browser, survive htmx refresh, and clear from account settings
+- [ ] A canonical full `*.ts.net` device name remains the copied-command target while the card and eligible Tailscale Machines link use its short first label for prominent display/search; an arbitrary FQDN is rejected and falls back only to the same device's validated Tailscale IPv4/IPv6 address
+- [ ] Plain-language action labels match policy semantics: `accept` shows no extra sign-in, while `check` shows the configured reauthentication period or the documented 12-hour default
 - [ ] Shell/HTML/JavaScript metacharacter fixtures never become executable markup or copied arguments
 - [ ] Each copied command is run from the corresponding real identity and compared with actual Tailscale SSH outcome, including `check` behavior where configured
 - [ ] A visible machine that cannot be reached or logged into is recorded as a visibility/reachability mismatch, not described as authorized or healthy
