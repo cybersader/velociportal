@@ -530,9 +530,11 @@ func TestPortalHandler_MachinesRenderAsAccessibleNonLinkablePolicyCards(t *testi
 		`<section class="portal-section" aria-labelledby="machines-heading">`,
 		`<h2 class="section-title" id="machines-heading">Machines</h2>`,
 		`<article class="card machine-card" data-machine="server.tailnet.ts.net" aria-labelledby="machine-1-name">`,
-		`Policy allows SSH access to this machine.`,
-		`<span class="machine-user-summary">any non-root account</span><span class="badge machine-action">accept</span>`,
-		`<span class="machine-user-summary">deploy</span><span class="badge machine-action">check</span>`,
+		`<span class="card-name" id="machine-1-name">server</span>`,
+		`<p class="machine-target">server.tailnet.ts.net</p>`,
+		`<p class="machine-policy">Supported by SSH policy and a network Grant for port 22.</p>`,
+		`<span class="machine-user-summary">Any non-root account allowed by policy</span><span class="badge machine-action">No extra sign-in</span>`,
+		`<span class="machine-user-summary">deploy</span><span class="badge machine-action">Reauthenticate every 12h</span>`,
 		`<label for="machine-1-user">SSH account</label>`,
 		`<option value="deploy" data-command="tailscale ssh deploy@server.tailnet.ts.net">deploy</option>`,
 		`<option value="root" data-command="tailscale ssh root@server.tailnet.ts.net">root</option>`,
@@ -615,8 +617,20 @@ func TestPortalHandler_NonrootPolicyDoesNotInventCommandAccount(t *testing.T) {
 		t.Fatal("machine article was not closed")
 	}
 	article := body[start : start+end]
-	if !strings.Contains(article, `any non-root account`) || !strings.Contains(article, `>check</span>`) {
+	if !strings.Contains(article, `Any non-root account allowed by policy`) || !strings.Contains(article, `Reauthenticate every 12h (default)`) {
 		t.Fatalf("nonroot policy summary missing: %s", article)
+	}
+	// The safe custom account input is allowed only because the viewer must type
+	// and confirm the account themselves; it must never pre-fill or imply one.
+	for _, expected := range []string{
+		`<label for="machine-1-account">Account on this machine</label>`,
+		`<input type="text" id="machine-1-account" class="machine-account-input" list="ssh-account-suggestions" autocomplete="off" spellcheck="false" maxlength="256" placeholder="e.g. jdoe" data-account-target="server.tailnet.ts.net">`,
+		`data-copy-ssh-account data-account-input="machine-1-account"`,
+		`Velociportal cannot verify that the typed account exists on this machine.`,
+	} {
+		if !strings.Contains(article, expected) {
+			t.Fatalf("nonroot-only card omitted safe custom account input %q: %s", expected, article)
+		}
 	}
 	for _, forbidden := range []string{`<select`, `data-copy-ssh-command`, `data-command=`, machineNonrootSelector} {
 		if strings.Contains(article, forbidden) {
@@ -645,6 +659,99 @@ func TestMachineSSHCommandRequiresValidatedLiteralInputs(t *testing.T) {
 	}
 }
 
+func TestPortalHandler_LiteralOnlyMachineNeverRendersCustomAccountField(t *testing.T) {
+	// The fixture's default SSH rule (deploy, root) carries no autogroup:nonroot
+	// evidence at all, so the safe custom-account input must never appear.
+	data := machineMatcherFixture(t)
+
+	rec := doPortalRequest(newTestHandler(data), "127.0.0.1:12345", "alice@example.com")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	body := rec.Body.String()
+	start := strings.Index(body, `<article class="card machine-card"`)
+	if start < 0 {
+		t.Fatal("machine article was not rendered")
+	}
+	end := strings.Index(body[start:], `</article>`)
+	if end < 0 {
+		t.Fatal("machine article was not closed")
+	}
+	article := body[start : start+end]
+	for _, forbidden := range []string{
+		`machine-command-custom`,
+		`data-copy-ssh-account`,
+		`Account on this machine`,
+		`machine-account-input`,
+	} {
+		if strings.Contains(article, forbidden) {
+			t.Fatalf("literal-only machine card rendered the nonroot-only custom account field via %q: %s", forbidden, article)
+		}
+	}
+}
+
+func TestMachineActionLabelAndCheckPeriodLabelAreTruthfulPlainLanguage(t *testing.T) {
+	tests := map[string]struct {
+		access MachineAccess
+		want   string
+	}{
+		"accept means no extra sign-in": {
+			access: MachineAccess{User: "deploy", Action: "accept"},
+			want:   "No extra sign-in",
+		},
+		"check with no period falls back to Tailscale's 12h default": {
+			access: MachineAccess{User: "deploy", Action: "check"},
+			want:   "Reauthenticate every 12h (default)",
+		},
+		"check with an exact-hour period renders whole hours": {
+			access: MachineAccess{User: "deploy", Action: "check", CheckPeriod: 2 * time.Hour},
+			want:   "Reauthenticate every 2h",
+		},
+		"check with a sub-hour period renders minutes": {
+			access: MachineAccess{User: "deploy", Action: "check", CheckPeriod: 30 * time.Minute},
+			want:   "Reauthenticate every 30m",
+		},
+		"unexpected action never implies accept semantics": {
+			access: MachineAccess{User: "deploy", Action: "unexpected"},
+			want:   "SSH policy action unavailable",
+		},
+	}
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			if got := machineActionLabel(test.access); got != test.want {
+				t.Fatalf("machineActionLabel(%#v) = %q, want %q", test.access, got, test.want)
+			}
+		})
+	}
+}
+
+func TestMachineCardNamesSplitsShortAndFullNameOnlyForCanonicalTargets(t *testing.T) {
+	tests := map[string]struct {
+		target  string
+		short   string
+		full    string
+		hasFull bool
+	}{
+		"canonical ts.net target splits into short and full": {
+			target: "server.tailnet.ts.net", short: "server", full: "server.tailnet.ts.net", hasFull: true,
+		},
+		"validated IPv4 fallback has no separate full name": {
+			target: "100.64.0.10", short: "100.64.0.10",
+		},
+		"validated IPv6 fallback has no separate full name": {
+			target: "fd7a:115c:a1e0::13", short: "fd7a:115c:a1e0::13",
+		},
+	}
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			short, full, hasFull := machineCardNames(test.target)
+			if short != test.short || full != test.full || hasFull != test.hasFull {
+				t.Fatalf("machineCardNames(%q) = %q, %q, %t; want %q, %q, %t", test.target, short, full, hasFull, test.short, test.full, test.hasFull)
+			}
+		})
+	}
+}
+
 func TestPortalHandler_EligibleNonrootOnlyMachineShowsConsoleWithoutInventingCommand(t *testing.T) {
 	data := machineMatcherFixture(t)
 	data.Policy.SSH.Rules = []SSHRule{{
@@ -666,7 +773,7 @@ func TestPortalHandler_EligibleNonrootOnlyMachineShowsConsoleWithoutInventingCom
 		t.Fatal("machine article was not closed")
 	}
 	article := body[start : start+end]
-	if !strings.Contains(article, `Open in Tailscale console`) {
+	if !strings.Contains(article, `Browser SSH in Tailscale`) {
 		t.Fatal("eligible nonroot-only machine must retain the browser console action")
 	}
 	for _, forbidden := range []string{`<select`, `data-copy-ssh-command`, `data-command=`} {
@@ -690,7 +797,7 @@ func TestRenderMachineConsoleLinkRevalidatesTarget(t *testing.T) {
 	if err != nil {
 		t.Fatalf("renderPortalWithOptions() error = %v", err)
 	}
-	if strings.Contains(body.String(), `console.tailscale.com`) || strings.Contains(body.String(), `Open in Tailscale console`) {
+	if strings.Contains(body.String(), `console.tailscale.com`) || strings.Contains(body.String(), `Browser SSH in Tailscale`) {
 		t.Fatal("rendering must reject an invalid machine target even for an eligible viewer")
 	}
 }
@@ -736,6 +843,17 @@ func TestPortalHandler_LocalLogoControlAndHTMXRefresh(t *testing.T) {
 		`id="portal-content" hx-get="/portal" hx-trigger="every 60s" hx-target="#portal-content" hx-select="#portal-content" hx-swap="outerHTML"`,
 		`.grid { grid-template-columns: minmax(0, 1fr); }`,
 		`.card-head { align-items: flex-start; flex-wrap: wrap; }`,
+		`<div class="account-panel-heading">SSH accounts</div>`,
+		`<button type="button" class="btn-clear-accounts" id="clear-ssh-accounts-button" hidden>Clear saved SSH accounts</button>`,
+		`id="clear-ssh-accounts-status" role="status" aria-live="polite"`,
+		`<datalist id="ssh-account-suggestions"></datalist>`,
+		`var ACCOUNTS_KEY = "velociportal.ssh.accounts." + identityScope;`,
+		`var MAX_ACCOUNTS = 10;`,
+		`var seen = Object.create(null);`,
+		`var value = input.value;`,
+		`value !== "root"`,
+		`status.textContent = cleared ? "Saved SSH accounts cleared." : "Saved SSH accounts could not be cleared.";`,
+		`document.body.addEventListener("htmx:afterSwap", function ()`,
 	} {
 		if !strings.Contains(body, expected) {
 			t.Fatalf("portal omitted guarded preference or refresh markup %q", expected)
@@ -746,6 +864,9 @@ func TestPortalHandler_LocalLogoControlAndHTMXRefresh(t *testing.T) {
 	}
 	if strings.Contains(body, `id="logo-toggle"`) {
 		t.Fatal("the old standalone logo-toggle control must be fully replaced")
+	}
+	if strings.Contains(body, `input.value.trim()`) {
+		t.Fatal("custom SSH accounts must reject surrounding whitespace rather than silently trimming it")
 	}
 	accountIndex := strings.Index(body, `id="account"`)
 	portalIndex := strings.Index(body, `id="portal-content"`)
@@ -836,9 +957,9 @@ func TestPortalHandler_MachineConsoleLinkOnlyForEligibleTailscaleRoles(t *testin
 		body := rec.Body.String()
 		for _, expected := range []string{
 			`<div class="machine-console">`,
-			`<a class="btn-console" href="https://console.tailscale.com/admin/machines?q=server.tailnet.ts.net" target="_blank" rel="noopener noreferrer" aria-describedby="machine-1-console-note">Open in Tailscale console</a>`,
+			`<a class="btn-console" href="https://console.tailscale.com/admin/machines?q=server" target="_blank" rel="noopener noreferrer" aria-describedby="machine-1-console-note">Browser SSH in Tailscale</a>`,
 			`id="machine-1-console-note"`,
-			`Opens the filtered Tailscale admin console`,
+			`Opens the filtered Tailscale Machines page in a new tab, where Tailscale handles account choice, reauthentication, posture, policy, and the session.`,
 		} {
 			if !strings.Contains(body, expected) {
 				t.Fatalf("eligible role did not render console link %q", expected)
@@ -861,7 +982,7 @@ func TestPortalHandler_MachineConsoleLinkOnlyForEligibleTailscaleRoles(t *testin
 			`console.tailscale.com`,
 			`target="_blank"`,
 			`rel="noopener noreferrer"`,
-			`Open in Tailscale console`,
+			`Browser SSH in Tailscale`,
 		} {
 			if strings.Contains(body, forbidden) {
 				t.Fatalf("ineligible role must not render console markup %q", forbidden)

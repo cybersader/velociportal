@@ -318,21 +318,52 @@ func machineTarget(node Node) (string, bool) {
 	return ipv6Fallback, ipv6Fallback != ""
 }
 
+// machineShortName derives the short, familiar Tailscale machine name from the
+// first label of an already validated canonical *.ts.net target. It reads only
+// that validated target -- never the raw device hostname or a hostname-suggestion
+// candidate -- and is byte-identical-checked the same way machineConsoleURL and
+// machineSSHCommand validate their inputs. A validated IP fallback target has no
+// separate short form and reports false.
+func machineShortName(target string) (string, bool) {
+	name, valid := normalizeMachineTargetName(target)
+	if !valid || name != target {
+		return "", false
+	}
+	label, _, found := strings.Cut(name, ".")
+	if !found || label == "" {
+		return "", false
+	}
+	return label, true
+}
+
 // machineConsoleURL builds the fixed, role-gated navigation target for Tailscale's
 // browser SSH Console. It revalidates that target is byte-identical to a
 // canonical *.ts.net MagicDNS name or a validated Tailscale CGNAT/ULA address --
 // the same invariant machineSSHCommand enforces for its copy commands -- before
-// ever placing it in a URL query value. Velociportal never invents an account,
-// session, device-ID route, or arbitrary host; SSH selection, reauthentication,
-// and policy enforcement remain with Tailscale.
+// ever placing it in a URL query value. Tailscale's own Machines search matches
+// the short machine name, not the full canonical name, so a canonical target
+// searches on its short name; a validated IP fallback target searches on the
+// address itself. Velociportal never invents an account, session, device-ID
+// route, or arbitrary host; SSH selection, reauthentication, and policy
+// enforcement remain with Tailscale.
 func machineConsoleURL(target string) (string, bool) {
 	name, validName := normalizeMachineTargetName(target)
 	address, validAddress := tailscaleMachineAddress(target)
-	if (!validName || name != target) && (!validAddress || address != target) {
+	canonical := validName && name == target
+	if !canonical && (!validAddress || address != target) {
 		return "", false
 	}
+
 	query := url.Values{}
-	query.Set("q", target)
+	if canonical {
+		short, ok := machineShortName(target)
+		if !ok {
+			return "", false
+		}
+		query.Set("q", short)
+	} else {
+		query.Set("q", target)
+	}
 	return tailscaleConsoleMachinesURL + "?" + query.Encode(), true
 }
 
