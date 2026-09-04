@@ -116,10 +116,10 @@ In Headscale mode, existing NPM provides the trusted HTTPS endpoint needed befor
     - Optional private-CA overlay; no base-stack CA mount
     - NPM credential login and proxy-host discovery
     - Legacy ACL `accept` matching plus a narrow Tailscale network-Grants subset with exact TCP/backend-port checks
-    - Separate Tailscale-preview SSH Machines projection requiring supported SSH plus independent Grant TCP/22 evidence
+    - Separate Tailscale-preview SSH Machines projection requiring supported SSH, independent Grant TCP/22, and explicit current device SSH capability
     - Trusted `Tailscale-User-*` identity headers
     - Responsive server-rendered portal with embedded htmx, presentation-only organization, and bounded optional health labels
-    - A username/mobile-More account settings panel with per-identity browser-local preferences, a role- and device-gated Tailscale Machines action, safe-area mobile navigation, and privacy-safe PWA metadata with no offline portal cache
+    - A username/mobile-More account settings panel with per-identity browser-local preferences, a role-gated Tailscale Machines action on SSH-capable rows, safe-area mobile navigation, and privacy-safe PWA metadata with no offline portal cache
     - Single non-root `FROM scratch` container
     - Portable one-service production bundle for Compose 2.33.1+ and Engine 28+
 

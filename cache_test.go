@@ -386,8 +386,8 @@ func TestCache_MachineInputsPublishAtomically(t *testing.T) {
 	if machines := MatchMachines(&Identity{Login: "alice@example.com"}, good); len(machines) != 1 || machines[0].ID != "device-1" {
 		t.Fatalf("initial machines = %#v", machines)
 	}
-	if !machineConsoleCapable("device-1", good) {
-		t.Fatal("initial presentation-only device capability was not published")
+	if !machineSSHCapable("device-1", good) {
+		t.Fatal("initial SSH-capable device evidence was not published")
 	}
 
 	provider.result = &ControlPlaneResult{
@@ -405,7 +405,7 @@ func TestCache_MachineInputsPublishAtomically(t *testing.T) {
 	if machines := MatchMachines(&Identity{Login: "alice@example.com"}, cache.Get()); len(machines) != 1 || machines[0].ID != "device-1" {
 		t.Fatalf("stale machines = %#v", machines)
 	}
-	if !machineConsoleCapable("device-1", cache.Get()) {
+	if !machineSSHCapable("device-1", cache.Get()) {
 		t.Fatal("failed refresh did not retain device capability with the exact snapshot")
 	}
 
@@ -419,7 +419,7 @@ func TestCache_MachineInputsPublishAtomically(t *testing.T) {
 	if machines := MatchMachines(&Identity{Login: "alice@example.com"}, cache.Get()); len(machines) != 0 {
 		t.Fatalf("recovered machines = %#v, want none", machines)
 	}
-	if machineConsoleCapable("device-1", cache.Get()) {
+	if machineSSHCapable("device-1", cache.Get()) {
 		t.Fatal("successful recovery retained stale device capability")
 	}
 }
