@@ -145,7 +145,7 @@ Only enabled, identity-independent structurally matched, wildcard-only NPM hosts
 
 The operator must request private mode, select the browser-facing HTTP/HTTPS scheme, review concrete hostnames/IDs, and type literal `yes`. Output is a strict service-metadata v1 fragment on stdout or a new atomic no-clobber `0600` file. The command never edits active metadata or attaches the proposal to `CacheData`, so generation cannot create, hide, reorder, enable, or authorize cards. Applying a proposal remains a separate manual review/merge action.
 
-## D20 — SSH Machines is a separate dual-evidence Tailscale preview
+## D20 — SSH Machines is a separate triple-evidence Tailscale preview
 
 The portal may render a Tailscale-only Machines section, but it remains a visibility projection rather than authentication, enforcement, reachability, or health. Projection availability requires both the Tailscale provider and a present, fully supported SSH policy. Headscale, absent SSH, and unsupported SSH omit the complete section; a supported projection with zero identity matches preserves an explicit empty state. HTTP service matching remains unchanged and never consumes SSH policy.
 
@@ -153,8 +153,11 @@ A device becomes a machine card only when all of these inputs agree:
 
 1. the browser login is an exact canonical full login for a direct `type: member` user in the complete Users API response;
 2. one fully supported normalized Tailscale `ssh` rule matches that login through an exact login, defined exact-login group, or authoritative human-role autogroup and matches the device through a tag or `autogroup:self`;
-3. an independent safe network Grant matches the same exact browser identity and the device's validated Tailscale address and permits TCP/22; and
-4. the device has either a canonical full `*.ts.net` name or a validated Tailscale CGNAT IPv4/Tailscale ULA IPv6 fallback target.
+3. an independent safe network Grant matches the same exact browser identity and the device's validated Tailscale address and permits TCP/22;
+4. the exact device ID currently reports exact `sshEnabled=true` and `blocksIncomingConnections=false` booleans in the complete Devices response; and
+5. the device has either a canonical full `*.ts.net` name or a validated Tailscale CGNAT IPv4/Tailscale ULA IPv6 fallback target.
+
+Missing, null, malformed, wrong-type, false, blocked, or mismatched capability values fail closed for that device. Capability is never inferred from a device's OS, name, tags, owner, or addresses. A supported SSH projection with no triple-evidence matches remains available and renders its explicit empty state.
 
 Legacy ACLs, including port-22-looking destinations, are never machine evidence. NPM proxy hosts, access lists, service metadata, organization, health observations, and browser URLs are not machine inputs. Shared users and machine-derived selectors never become humans; Owner-to-Admin automatic membership and specialized-role isolation remain authoritative and exact. Padded API `loginName` values reject the complete refresh rather than being normalized into membership.
 
@@ -168,11 +171,11 @@ Machine cards are non-service-link summaries; D22 permits only the separately bo
 
 When combined with `--env-file`, Doctor uses `VELOCIPORTAL_TRUSTED_PROXY_CIDR` as the effective runtime `TRUSTED_PROXY_CIDR`, matching the unconditional production Compose environment override. A duplicate provider-file value is reported as overridden. The command remains read-only and cannot prove that a tag is immutable or published, that the real bridge gateway is trustworthy, that every Compose overlay renders, or that a TrueNAS deployment is healthy. Future update/rollback planning may reuse these validators but must remain non-secret and operator-confirmed; automatic TrueNAS mutation and plaintext credential backups remain out of scope.
 
-## D22 — Tailscale Machines action is role- and device-gated navigation, not a session
+## D22 — Tailscale Machines action is role-gated navigation, not a session
 
-Tailscale does not expose a standalone browser-SSH session URL. An eligible machine card may therefore only navigate to the fixed admin-console Machines page. Viewer eligibility requires an exact direct Tailscale member holding an automatic-admin-equivalent role — Owner, Admin, IT admin, or Network admin — using the same authoritative Users-API role mapping as D20. Device eligibility separately requires the exact device to report `sshEnabled=true` and `blocksIncomingConnections=false` in `/tailnet/-/devices?fields=all`.
+Tailscale does not expose a standalone browser-SSH session URL. An eligible machine card may therefore only navigate to the fixed admin-console Machines page. D20 already requires the exact device to report `sshEnabled=true` and `blocksIncomingConnections=false` in `/tailnet/-/devices?fields=all`. Viewer eligibility for the additional navigation action requires an exact direct Tailscale member holding an automatic-admin-equivalent role — Owner, Admin, IT admin, or Network admin — using the same authoritative Users-API role mapping as D20.
 
-The two device values are decoded as optional exact JSON booleans and retained only as a sparse true-only map keyed by validated device ID. Missing, null, malformed, wrong-type, disabled, or incoming-blocked values hide only the navigation action; they never reject the device, remove a D20 machine card, alter SSH/Grant evidence, affect ordering/counts, or enter Doctor. This metadata is current device self-report used only to narrow presentation, not authorization, health, reachability, or proof that browser SSH will succeed.
+The two device values are decoded as optional exact JSON booleans and retained only as a sparse true-only map keyed by validated device ID. Missing, null, malformed, wrong-type, disabled, incoming-blocked, or mismatched values remove the D20 machine card and therefore its command and console action. This metadata narrows the projection but remains current device self-report, not authorization, health, reachability, or proof that browser SSH will succeed. Doctor receives only the resulting coarse machine count.
 
 The action opens `https://console.tailscale.com/admin/machines?q=<value>%20property:tailscale-ssh` in a new tab with `target=_blank rel="noopener noreferrer"`. The value must be the already validated short first label of a canonical `*.ts.net` target or a validated Tailscale IP fallback. Velociportal never opens a session, authenticates the console request, or asserts reachability; Tailscale remains responsible for console eligibility, reauthentication, SSH policy, device posture, account choice, and the session itself. This adds no OAuth scope, configurable origin, session endpoint, proxy, or terminal.
 

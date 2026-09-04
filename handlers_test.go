@@ -485,16 +485,17 @@ func TestPortalHandler_HealthJoinsOnlyAuthorizedCards(t *testing.T) {
 
 func TestRenderServiceHealthStatusLabels(t *testing.T) {
 	tests := []struct {
-		state ServiceHealthState
-		label string
-		class string
+		state      ServiceHealthState
+		accessible string
+		display    string
+		class      string
 	}{
-		{ServiceHealthStateUnknown, "unknown", "health-unknown"},
-		{ServiceHealthStateReachable, "reachable", "health-reachable"},
-		{ServiceHealthStateAuthRequired, "authentication required", "health-auth-required"},
-		{ServiceHealthStateResponseError, "response error", "health-response-error"},
-		{ServiceHealthStateUnreachable, "unreachable", "health-unreachable"},
-		{ServiceHealthStateStale, "stale", "health-stale"},
+		{ServiceHealthStateUnknown, "unknown", "unknown", "health-unknown"},
+		{ServiceHealthStateReachable, "reachable", "reachable", "health-reachable"},
+		{ServiceHealthStateAuthRequired, "authentication required", "auth required", "health-auth-required"},
+		{ServiceHealthStateResponseError, "response error", "response error", "health-response-error"},
+		{ServiceHealthStateUnreachable, "unreachable", "unreachable", "health-unreachable"},
+		{ServiceHealthStateStale, "stale", "stale", "health-stale"},
 	}
 	for _, test := range tests {
 		t.Run(string(test.state), func(t *testing.T) {
@@ -502,14 +503,36 @@ func TestRenderServiceHealthStatusLabels(t *testing.T) {
 			store.publish(map[int]ServiceHealthResult{
 				1: {ProxyHostID: 1, State: test.state, CheckedAt: time.Now()},
 			}, time.Hour)
-			markup := renderServiceHealthStatus(store, 1)
-			if !strings.Contains(markup, test.label) || !strings.Contains(markup, test.class) {
-				t.Fatalf("markup = %q", markup)
+			want := `<span class="health-status ` + test.class + `" aria-label="Service health: ` + test.accessible + `">` + test.display + `</span>`
+			if markup := renderServiceHealthStatus(store, 1); markup != want {
+				t.Fatalf("markup = %q, want %q", markup, want)
 			}
 		})
 	}
 	if markup := renderServiceHealthStatus(NewServiceHealthStore(), 1); markup != "" {
 		t.Fatalf("unconfigured health markup = %q", markup)
+	}
+}
+
+func TestRenderServiceCardKeepsNameSeparateFromHealth(t *testing.T) {
+	store := NewServiceHealthStore()
+	store.publish(map[int]ServiceHealthResult{
+		1: {ProxyHostID: 1, State: ServiceHealthStateAuthRequired, CheckedAt: time.Now()},
+	}, time.Hour)
+
+	var body strings.Builder
+	renderServiceCard(&body, ServiceCard{ID: 1, Name: "very-long-service-name.example.com", URL: "https://very-long-service-name.example.com", LinkState: serviceLinkReady}, store)
+	markup := body.String()
+	for _, expected := range []string{
+		`<span class="card-head"><span class="card-name">very-long-service-name.example.com</span></span>`,
+		`<span class="card-meta"><span class="badge">https</span><span class="health-status health-auth-required" aria-label="Service health: authentication required">auth required</span></span>`,
+	} {
+		if !strings.Contains(markup, expected) {
+			t.Fatalf("service card omitted %q: %s", expected, markup)
+		}
+	}
+	if strings.Contains(markup, `card-name">very-long-service-name.example.com</span><span class="health-status`) {
+		t.Fatal("service health must not share the service-name row")
 	}
 }
 
@@ -540,9 +563,9 @@ func TestPortalHandler_MachinesRenderAsAccessibleNonLinkablePolicyCards(t *testi
 		`<option value="" data-custom-account="true">Other non-root account&hellip;</option>`,
 		`<div class="machine-custom-account" id="machine-1-custom-account" hidden>`,
 		`<input type="text" id="machine-1-account" class="machine-account-input" list="ssh-account-suggestions" autocomplete="off" spellcheck="false" maxlength="256" placeholder="Account name" data-account-target="server.tailnet.ts.net">`,
-		`<button type="button" class="copy-command machine-copy" data-copy-machine-ssh aria-describedby="machine-1-copy-feedback" data-user-select="machine-1-user" data-account-input="machine-1-account">Copy SSH</button>`,
+		`<button type="button" class="copy-command machine-copy" data-copy-machine-ssh aria-describedby="machine-1-copy-feedback" data-user-select="machine-1-user" data-account-input="machine-1-account">Copy Tailscale SSH</button>`,
 		`<details class="machine-policy-details"><summary>Policy details</summary>`,
-		`Visible because SSH policy and a network Grant permit TCP port 22.`,
+		`Visible because this device reports Tailscale SSH enabled, SSH policy matches, and a network Grant permits TCP port 22.`,
 		`<li><span class="machine-account-name">Any non-root account</span><span class="machine-account-detail">No extra sign-in</span></li>`,
 		`<li><span class="machine-account-name">deploy</span><span class="machine-account-detail">Reauthenticate every 12h</span></li>`,
 		`Local account existence and machine health are not verified.`,
@@ -684,7 +707,7 @@ func TestPortalHandler_NonrootPolicyDoesNotInventCommandAccount(t *testing.T) {
 		`<div class="machine-custom-account" id="machine-1-custom-account">`,
 		`<label class="machine-field-label" for="machine-1-account">SSH as</label>`,
 		`<input type="text" id="machine-1-account" class="machine-account-input" list="ssh-account-suggestions" autocomplete="off" spellcheck="false" maxlength="256" placeholder="Account name" data-account-target="server.tailnet.ts.net">`,
-		`data-copy-machine-ssh aria-describedby="machine-1-copy-feedback" data-account-input="machine-1-account">Copy SSH</button>`,
+		`data-copy-machine-ssh aria-describedby="machine-1-copy-feedback" data-account-input="machine-1-account">Copy Tailscale SSH</button>`,
 		`<details class="machine-policy-details"><summary>Policy details</summary>`,
 		`Local account existence and machine health are not verified.`,
 	} {
@@ -743,7 +766,7 @@ func TestPortalHandler_LiteralOnlyMachineNeverRendersCustomAccountField(t *testi
 		`<select id="machine-1-user" data-machine-account-select>`,
 		`<option value="deploy" data-command="tailscale ssh deploy@server.tailnet.ts.net">deploy</option>`,
 		`<option value="root" data-command="tailscale ssh root@server.tailnet.ts.net">root</option>`,
-		`data-copy-machine-ssh aria-describedby="machine-1-copy-feedback" data-user-select="machine-1-user">Copy SSH</button>`,
+		`data-copy-machine-ssh aria-describedby="machine-1-copy-feedback" data-user-select="machine-1-user">Copy Tailscale SSH</button>`,
 	} {
 		if !strings.Contains(article, expected) {
 			t.Fatalf("literal-only machine omitted %q: %s", expected, article)
@@ -916,12 +939,16 @@ func TestPortalHandler_LocalLogoControlAndHTMXRefresh(t *testing.T) {
 		`<div class="user-name">alice@example.com</div>`,
 		`id="portal-content" hx-get="/portal" hx-trigger="every 60s" hx-target="#portal-content" hx-select="#portal-content" hx-swap="outerHTML"`,
 		`.grid { grid-template-columns: minmax(0, 1fr); }`,
-		`.card-head { align-items: flex-start; flex-wrap: wrap; }`,
-		`.machine-list { display: grid; gap: .65rem; }`,
-		`.machine-row { display: grid; grid-template-columns: minmax(12rem, 1fr) minmax(16rem, 1.25fr) auto;`,
+		`.card-name { display: block; color: var(--text); font-weight: 600; line-height: 1.3; overflow-wrap: anywhere; }`,
+		`.card-meta { display: flex; align-items: center; gap: .5rem; min-width: 0; margin-top: auto; flex-wrap: wrap; }`,
+		`.card-meta { align-items: flex-start; }`,
+		`.machine-list { display: grid; gap: .55rem; }`,
+		`.machine-row { display: grid; grid-template-columns: minmax(14rem, .7fr) minmax(18rem, 1.3fr) 20rem;`,
 		`.machine-connect select, .machine-account-input { width: 100%; min-width: 12rem; min-height: 2.75rem;`,
 		`.machine-policy-details { grid-area: details;`,
-		`.machine-actions > .machine-copy, .machine-actions > .btn-console { flex: 1 1 10rem; }`,
+		`.machine-actions { grid-area: actions; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));`,
+		`.machine-feedback:empty { display: none; }`,
+		`.machine-actions:not(.machine-actions-with-console) { grid-template-columns: minmax(0, 1fr); }`,
 		`body { padding-bottom: calc(4.75rem + env(safe-area-inset-bottom)); }`,
 		`.bottom-nav-item { display: flex; flex: 1 1 0; min-width: 0; min-height: 44px;`,
 		`<div class="account-panel-heading">SSH accounts</div>`,
@@ -1047,7 +1074,7 @@ func TestPortalHandler_MachineConsoleLinkOnlyForEligibleTailscaleRoles(t *testin
 		}
 	})
 
-	t.Run("eligible role without device capability hides only the console link", func(t *testing.T) {
+	t.Run("eligible role without device capability hides the machine", func(t *testing.T) {
 		data := buildData("autogroup:admin")
 		data.MachineSSHCapableByID = nil
 		rec := doPortalRequest(newTestHandler(data), "127.0.0.1:12345", "alice@example.com")
@@ -1055,11 +1082,13 @@ func TestPortalHandler_MachineConsoleLinkOnlyForEligibleTailscaleRoles(t *testin
 			t.Fatalf("expected 200, got %d", rec.Code)
 		}
 		body := rec.Body.String()
-		if !strings.Contains(body, `data-machine="server.tailnet.ts.net"`) || !strings.Contains(body, `tailscale ssh deploy@server.tailnet.ts.net`) {
-			t.Fatal("missing capability metadata must not hide the machine card or copy command")
+		for _, forbidden := range []string{`data-machine="server.tailnet.ts.net"`, `tailscale ssh deploy@server.tailnet.ts.net`, `<a class="btn-console"`} {
+			if strings.Contains(body, forbidden) {
+				t.Fatalf("missing device capability rendered forbidden machine output %q", forbidden)
+			}
 		}
-		if strings.Contains(body, `<a class="btn-console"`) || strings.Contains(body, `aria-label="Open server in Tailscale Machines"`) {
-			t.Fatal("missing capability metadata must fail closed for the console link")
+		if !strings.Contains(body, `No machines are available from the supported SSH policy view.`) {
+			t.Fatal("supported projection with no SSH-capable devices must retain the explicit empty state")
 		}
 	})
 

@@ -287,7 +287,7 @@ func runDoctorCommandWithDependencies(args []string, stdout, stderr io.Writer, d
 	)
 	switch snapshot.Policy.SSH.State {
 	case sshPolicySupported:
-		fmt.Fprintf(stdout, "PASS policy support: SSH Machines view requires separate matching SSH policy and Grant TCP/22 evidence (state=%s rules=%d)\n", snapshot.Policy.SSH.State, snapshot.Policy.SSH.RuleCount)
+		fmt.Fprintf(stdout, "PASS policy support: SSH Machines view requires matching SSH policy, Grant TCP/22, and reported SSH-capable device evidence (state=%s rules=%d)\n", snapshot.Policy.SSH.State, snapshot.Policy.SSH.RuleCount)
 	case sshPolicyUnsupported:
 		fmt.Fprintf(stdout, "WARN policy support: SSH Machines view is suppressed while HTTP service cards remain valid (state=%s reason=%s rules=%d)\n", snapshot.Policy.SSH.State, snapshot.Policy.SSH.UnsupportedReason, snapshot.Policy.SSH.RuleCount)
 	}
@@ -593,12 +593,12 @@ func reportDoctorIdentityPreviews(writer io.Writer, identities []string, snapsho
 		}
 		machines := MatchMachines(identity, snapshot)
 		if len(machines) == 0 {
-			fmt.Fprintf(writer, "WARN machine preview %q: 0 machines from separate SSH policy and Grant TCP/22 evidence\n", login)
+			fmt.Fprintf(writer, "WARN machine preview %q: 0 machines from SSH policy, Grant TCP/22, and reported SSH-capable device evidence\n", login)
 			continue
 		}
 		fmt.Fprintf(
 			writer,
-			"PASS machine preview %q: %d %s from separate SSH policy and Grant TCP/22 evidence; targets and accounts omitted\n",
+			"PASS machine preview %q: %d %s from SSH policy, Grant TCP/22, and reported SSH-capable device evidence; targets and accounts omitted\n",
 			login,
 			len(machines),
 			pluralDoctorNoun(len(machines), "machine", "machines"),

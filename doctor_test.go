@@ -271,6 +271,7 @@ func TestRunDoctorCommandReportsTailscalePreviewWithoutCredentialDisclosure(t *t
 func TestReportDoctorIdentityPreviewsKeepsMachineTopologyPrivate(t *testing.T) {
 	snapshot := machineMatcherFixture(t)
 	snapshot.Nodes[0].ID = "private-node-id"
+	snapshot.MachineSSHCapableByID = map[string]bool{"private-node-id": true}
 	snapshot.Nodes[0].Name = "private-machine.tailnet.ts.net"
 	snapshot.Nodes[0].Addresses = []string{"100.64.0.99"}
 	snapshot.Policy.SSH.Rules[0].Users = []string{"privateaccount"}
@@ -280,7 +281,7 @@ func TestReportDoctorIdentityPreviewsKeepsMachineTopologyPrivate(t *testing.T) {
 	text := output.String()
 	for _, expected := range []string{
 		`WARN identity preview "alice@example.com": 0 cards from the supported matcher`,
-		`PASS machine preview "alice@example.com": 1 machine from separate SSH policy and Grant TCP/22 evidence; targets and accounts omitted`,
+		`PASS machine preview "alice@example.com": 1 machine from SSH policy, Grant TCP/22, and reported SSH-capable device evidence; targets and accounts omitted`,
 	} {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("Doctor preview omitted %q: %s", expected, text)

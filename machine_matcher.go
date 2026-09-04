@@ -86,17 +86,17 @@ func machineConsoleEligible(login string, data *CacheData) bool {
 	return false
 }
 
-// machineConsoleCapable narrows the browser-console navigation action to a
-// device whose current Tailscale Devices response explicitly reported SSH
-// enabled and incoming connections allowed. It is presentation-only metadata:
-// missing evidence hides the link but never hides a policy-matched machine.
-func machineConsoleCapable(machineID string, data *CacheData) bool {
+// machineSSHCapable reports whether the exact device explicitly reported SSH
+// enabled and incoming connections allowed in the complete Tailscale Devices
+// response. Missing or invalid capability evidence fails closed.
+func machineSSHCapable(machineID string, data *CacheData) bool {
 	return data != nil && data.MachineSSHCapableByID[machineID]
 }
 
 // evaluateMachines is deliberately separate from service evaluation. A machine
-// requires both a supported Tailscale SSH rule and a Tailscale Grant that permits
-// TCP/22; legacy ACLs, NPM, service metadata, and health observations are not inputs.
+// requires a supported Tailscale SSH rule, a Grant that permits TCP/22, and exact
+// current device SSH capability; legacy ACLs, NPM, service metadata, and health
+// observations are not inputs.
 func evaluateMachines(identity *Identity, data *CacheData) []machineMatchEvidence {
 	if identity == nil || !machineProjectionAvailable(data) {
 		return []machineMatchEvidence{}
@@ -122,6 +122,9 @@ func evaluateMachines(identity *Identity, data *CacheData) []machineMatchEvidenc
 
 	matches := make([]machineMatchEvidence, 0, len(data.Nodes))
 	for _, node := range data.Nodes {
+		if !machineSSHCapable(node.ID, data) {
+			continue
+		}
 		target, safe := machineTarget(node)
 		if !safe {
 			continue

@@ -257,7 +257,7 @@ func TestTailscaleLoadFeedsGrantBackedMachineEvaluator(t *testing.T) {
 	client, closeServer := tailscaleClientWithBodies(
 		t,
 		`{"users":[{"id":"user-1","loginName":"alice@example.com","type":"member","role":"admin"}]}`,
-		`{"devices":[{"id":"device-1","name":"Server.Tailnet.TS.Net.","user":"user-1","tags":["tag:server"],"addresses":["100.64.0.10"]}]}`,
+		`{"devices":[{"id":"device-1","name":"Server.Tailnet.TS.Net.","user":"user-1","tags":["tag:server"],"addresses":["100.64.0.10"],"sshEnabled":true,"blocksIncomingConnections":false}]}`,
 		`{
 			"ssh":[{"action":"check","src":["autogroup:admin"],"dst":["tag:server"],"users":["autogroup:nonroot"],"checkPeriod":"30m"}],
 			"grants":[{"src":["autogroup:admin"],"dst":["tag:server"],"ip":["tcp:22"]}]
@@ -273,6 +273,7 @@ func TestTailscaleLoadFeedsGrantBackedMachineEvaluator(t *testing.T) {
 		Policy:                    result.Policy,
 		Nodes:                     result.Nodes,
 		GrantRoleSelectorsByLogin: result.GrantRoleSelectorsByLogin,
+		MachineSSHCapableByID:     result.MachineSSHCapableByID,
 		ControlPlane:              result.Metadata,
 	}
 	cards := MatchMachines(&Identity{Login: "alice@example.com"}, snapshot)

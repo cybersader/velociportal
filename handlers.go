@@ -57,7 +57,7 @@ func (h *PortalHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	consoleCapableByID := make(map[string]bool)
 	if consoleEligible {
 		for _, machine := range machines {
-			if machineConsoleCapable(machine.ID, data) {
+			if machineSSHCapable(machine.ID, data) {
 				consoleCapableByID[machine.ID] = true
 			}
 		}
@@ -151,7 +151,7 @@ func renderPortalWithOptions(w io.Writer, id *Identity, cards []ServiceCard, opt
 		fmt.Fprintf(&machinesSection,
 			`<section class="portal-section" aria-labelledby="machines-heading">`+
 				`<h2 class="section-title" id="machines-heading">Machines</h2>`+
-				`<p class="machines-help">SSH access allowed by your Tailscale policy. Accounts and machine health are not verified. Tailscale Machines opens the admin console, not a session.</p>`+
+				`<p class="machines-help">Only devices that currently report Tailscale SSH enabled and match your SSH policy plus TCP/22 Grant are shown. Accounts and reachability are not verified. Tailscale Machines opens the admin console, not a session.</p>`+
 				`<div class="machine-list" id="machines">%s</div>`+
 				`</section>`,
 			machinesBody.String(),
@@ -255,14 +255,14 @@ func renderServiceCard(body *strings.Builder, card ServiceCard, health *ServiceH
 	if linkable {
 		fmt.Fprintf(body,
 			`<a class="card" href="%s" data-service="%s">`+
-				`<span class="card-head"><span class="card-name">%s</span>%s</span>`+
-				`<span class="badge">%s</span>`+
+				`<span class="card-head"><span class="card-name">%s</span></span>`+
+				`<span class="card-meta"><span class="badge">%s</span>%s</span>`+
 				`</a>`,
 			html.EscapeString(card.URL),
 			html.EscapeString(card.Name),
 			html.EscapeString(card.Name),
-			healthMarkup,
 			html.EscapeString(scheme),
+			healthMarkup,
 		)
 		return
 	}
@@ -272,8 +272,8 @@ func renderServiceCard(body *strings.Builder, card ServiceCard, health *ServiceH
 	}
 	fmt.Fprintf(body,
 		`<article class="card card-unlinked" data-service="%s">`+
-			`<span class="card-head"><span class="card-name">%s</span>%s</span>`+
-			`<span class="badge">link needed</span>`+
+			`<span class="card-head"><span class="card-name">%s</span></span>`+
+			`<span class="card-meta"><span class="badge">link needed</span>%s</span>`+
 			`<span class="card-note">Add a concrete service URL in Velociportal metadata.</span>`+
 			`</article>`,
 		html.EscapeString(card.Name),
@@ -289,6 +289,10 @@ func renderMachineCard(body *strings.Builder, machine MachineCard, index int, co
 	accountPanelID := machineID + "-custom-account"
 	feedbackID := machineID + "-copy-feedback"
 	shortName, fullTarget, hasFullTarget := machineCardNames(machine.Target)
+	consoleURL, showConsole := "", false
+	if consoleEligible {
+		consoleURL, showConsole = machineConsoleURL(machine.Target)
+	}
 
 	literalAccess := make([]MachineAccess, 0, len(machine.Access))
 	hasNonroot := false
@@ -358,7 +362,11 @@ func renderMachineCard(body *strings.Builder, machine MachineCard, index int, co
 			html.EscapeString(machine.Target),
 		)
 	}
-	body.WriteString(`</div><div class="machine-actions">`)
+	actionsClass := "machine-actions"
+	if showConsole {
+		actionsClass += " machine-actions-with-console"
+	}
+	fmt.Fprintf(body, `</div><div class="%s">`, actionsClass)
 
 	if len(literalAccess) > 0 || hasNonroot {
 		fmt.Fprintf(body, `<button type="button" class="copy-command machine-copy" data-copy-machine-ssh aria-describedby="%s"`, feedbackID)
@@ -368,21 +376,19 @@ func renderMachineCard(body *strings.Builder, machine MachineCard, index int, co
 		if hasNonroot {
 			fmt.Fprintf(body, ` data-account-input="%s"`, accountID)
 		}
-		body.WriteString(`>Copy SSH</button>`)
+		body.WriteString(`>Copy Tailscale SSH</button>`)
 	}
-	if consoleEligible {
-		if consoleURL, ok := machineConsoleURL(machine.Target); ok {
-			fmt.Fprintf(body,
-				`<a class="btn-console" href="%s" target="_blank" rel="noopener noreferrer" aria-label="Open %s in Tailscale Machines">Tailscale Machines</a>`,
-				html.EscapeString(consoleURL),
-				html.EscapeString(shortName),
-			)
-		}
+	if showConsole {
+		fmt.Fprintf(body,
+			`<a class="btn-console" href="%s" target="_blank" rel="noopener noreferrer" aria-label="Open %s in Tailscale Machines">Tailscale Machines</a>`,
+			html.EscapeString(consoleURL),
+			html.EscapeString(shortName),
+		)
 	}
 	fmt.Fprintf(body, `<span class="copy-feedback machine-feedback" id="%s" role="status" aria-live="polite"></span></div>`, feedbackID)
 
 	body.WriteString(`<details class="machine-policy-details"><summary>Policy details</summary><div class="machine-policy-body">` +
-		`<p class="machine-policy-evidence">Visible because SSH policy and a network Grant permit TCP port 22.</p>` +
+		`<p class="machine-policy-evidence">Visible because this device reports Tailscale SSH enabled, SSH policy matches, and a network Grant permits TCP port 22.</p>` +
 		`<ul class="machine-policy-accounts" aria-label="Accounts allowed by policy">`)
 	for _, access := range machine.Access {
 		account := access.User
@@ -463,6 +469,7 @@ func renderServiceHealthStatus(store *ServiceHealthStore, proxyHostID int) strin
 	}
 
 	label := "unknown"
+	displayLabel := "unknown"
 	className := "unknown"
 	switch result.State {
 	case ServiceHealthStateReachable:
@@ -481,11 +488,15 @@ func renderServiceHealthStatus(store *ServiceHealthStore, proxyHostID int) strin
 		label = "stale"
 		className = "stale"
 	}
+	displayLabel = label
+	if result.State == ServiceHealthStateAuthRequired {
+		displayLabel = "auth required"
+	}
 	return fmt.Sprintf(
 		`<span class="health-status health-%s" aria-label="Service health: %s">%s</span>`,
 		className,
 		html.EscapeString(label),
-		html.EscapeString(label),
+		html.EscapeString(displayLabel),
 	)
 }
 
@@ -616,8 +627,9 @@ main { max-width: 1200px; margin: 0 auto; padding: 1rem 1.5rem 2.5rem; }
 .card { display: flex; flex-direction: column; gap: .55rem; padding: 1rem 1.1rem; border: 1px solid var(--border); border-radius: 12px; background: var(--card-bg); color: inherit; text-decoration: none; transition: border-color .15s, transform .15s, background-color .15s; }
 a.card:hover, a.card:focus-visible { border-color: var(--accent); background: var(--card-hover-bg); transform: translateY(-2px); }
 .card-unlinked { color: var(--muted); }
-.card-head { display: flex; align-items: center; gap: .5rem; min-width: 0; }
-.card-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
+.card-head { display: block; min-width: 0; }
+.card-name { display: block; color: var(--text); font-weight: 600; line-height: 1.3; overflow-wrap: anywhere; }
+.card-meta { display: flex; align-items: center; gap: .5rem; min-width: 0; margin-top: auto; flex-wrap: wrap; }
 .card-note { font-size: .82rem; line-height: 1.35; }
 .badge { align-self: flex-start; padding: .1rem .5rem; border-radius: 999px; font-size: .72rem; font-weight: 600; letter-spacing: .02em; text-transform: uppercase; background: var(--badge-bg); color: var(--badge-text); }
 .health-status { margin-left: auto; flex-shrink: 0; font-size: .72rem; font-weight: 650; line-height: 1.2; text-align: right; }
@@ -628,8 +640,8 @@ a.card:hover, a.card:focus-visible { border-color: var(--accent); background: va
 .health-stale { color: var(--health-stale); }
 .health-unknown { color: var(--health-unknown); }
 .machines-help { margin: 0 0 1rem; max-width: 76ch; color: var(--muted); font-size: .85rem; }
-.machine-list { display: grid; gap: .65rem; }
-.machine-row { display: grid; grid-template-columns: minmax(12rem, 1fr) minmax(16rem, 1.25fr) auto; grid-template-areas: "identity connect actions" "details details details"; gap: .65rem 1rem; align-items: center; min-width: 0; padding: .85rem 1rem; border: 1px solid var(--border); border-radius: 12px; background: var(--card-bg); }
+.machine-list { display: grid; gap: .55rem; }
+.machine-row { display: grid; grid-template-columns: minmax(14rem, .7fr) minmax(18rem, 1.3fr) 20rem; grid-template-areas: "identity connect actions" "details details details"; gap: .4rem 1rem; align-items: center; min-width: 0; padding: .7rem 1rem; border: 1px solid var(--border); border-radius: 12px; background: var(--card-bg); }
 .machine-identity { grid-area: identity; min-width: 0; }
 .machine-name { margin: 0; color: var(--text); font-size: 1rem; line-height: 1.3; font-weight: 650; overflow-wrap: anywhere; }
 .machine-target { margin: .18rem 0 0; color: var(--muted); font-size: .76rem; line-height: 1.35; overflow-wrap: anywhere; }
@@ -638,12 +650,13 @@ a.card:hover, a.card:focus-visible { border-color: var(--accent); background: va
 .machine-connect select, .machine-account-input { width: 100%; min-width: 12rem; min-height: 2.75rem; padding: .45rem .65rem; border: 1px solid var(--border); border-radius: 8px; background: var(--card-bg); color: var(--text); font: inherit; }
 .machine-custom-account { display: grid; gap: .3rem; min-width: 0; }
 .machine-custom-account[hidden] { display: none; }
-.machine-actions { grid-area: actions; display: flex; justify-content: flex-end; align-items: center; gap: .5rem; flex-wrap: wrap; min-width: 9rem; }
-.copy-command, .btn-console { display: inline-flex; align-items: center; justify-content: center; min-height: 2.75rem; padding: .45rem .75rem; border: 1px solid var(--border); border-radius: 8px; background: var(--card-bg); color: var(--text); font: inherit; font-size: .85rem; line-height: 1.2; text-decoration: none; cursor: pointer; white-space: nowrap; }
+.machine-actions { grid-area: actions; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: center; gap: .4rem .5rem; min-width: 0; }
+.copy-command, .btn-console { display: inline-flex; align-items: center; justify-content: center; width: 100%; min-width: 0; min-height: 2.75rem; padding: .45rem .65rem; border: 1px solid var(--border); border-radius: 8px; background: var(--card-bg); color: var(--text); font: inherit; font-size: .82rem; line-height: 1.2; text-decoration: none; cursor: pointer; white-space: nowrap; }
 .machine-copy { border-color: var(--accent); background: var(--accent); color: var(--bg); font-weight: 650; }
 .copy-command:hover, .copy-command:focus-visible, .btn-console:hover, .btn-console:focus-visible { filter: brightness(1.08); }
 .copy-feedback { min-height: 1.2em; color: var(--muted); font-size: .76rem; }
-.machine-feedback { flex: 1 0 100%; text-align: right; }
+.machine-feedback { grid-column: 1 / -1; min-height: 0; text-align: right; }
+.machine-feedback:empty { display: none; }
 .machine-policy-details { grid-area: details; min-width: 0; padding-top: .15rem; border-top: 1px solid transparent; color: var(--muted); font-size: .78rem; }
 .machine-policy-details[open] { padding-top: .6rem; border-top-color: var(--border); }
 .machine-policy-details summary { width: fit-content; cursor: pointer; color: var(--muted); font-weight: 600; }
@@ -663,8 +676,7 @@ a.card:hover, a.card:focus-visible { border-color: var(--accent); background: va
 .empty p { margin: 0; }
 .bottom-nav { display: none; }
 @media (max-width: 900px) {
-  .machine-row { grid-template-columns: minmax(10rem, .8fr) minmax(16rem, 1.2fr); grid-template-areas: "identity connect" "identity actions" "details details"; align-items: start; }
-  .machine-actions { justify-content: flex-start; min-width: 0; }
+  .machine-row { grid-template-columns: minmax(11rem, .75fr) minmax(18rem, 1.25fr); grid-template-areas: "identity connect" "details actions"; align-items: start; }
   .machine-feedback { text-align: left; }
 }
 @media (max-width: 600px) {
@@ -674,12 +686,11 @@ a.card:hover, a.card:focus-visible { border-color: var(--accent); background: va
   .user { text-align: left; max-width: 100%; }
   .user-name, .user .login { white-space: normal; overflow-wrap: anywhere; }
   .grid { grid-template-columns: minmax(0, 1fr); }
-  .card-head { align-items: flex-start; flex-wrap: wrap; }
-  .card-name { white-space: normal; overflow-wrap: anywhere; }
+  .card-meta { align-items: flex-start; }
   .health-status { margin-left: 0; text-align: left; }
-  .machine-row { grid-template-columns: minmax(0, 1fr); grid-template-areas: "identity" "connect" "actions" "details"; gap: .7rem; padding: .9rem; }
+  .machine-row { grid-template-columns: minmax(0, 1fr); grid-template-areas: "identity" "connect" "actions" "details"; gap: .6rem; padding: .8rem; }
   .machine-connect select, .machine-account-input { min-width: 0; }
-  .machine-actions > .machine-copy, .machine-actions > .btn-console { flex: 1 1 10rem; }
+  .machine-actions:not(.machine-actions-with-console) { grid-template-columns: minmax(0, 1fr); }
   .machine-policy-accounts { grid-template-columns: minmax(0, 1fr); }
   body { padding-bottom: calc(4.75rem + env(safe-area-inset-bottom)); }
   .account { width: 100%; }

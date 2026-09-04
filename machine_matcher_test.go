@@ -40,6 +40,7 @@ func machineMatcherFixture(t *testing.T) *CacheData {
 		GrantRoleSelectorsByLogin: map[string][]string{
 			"alice@example.com": {"autogroup:member"},
 		},
+		MachineSSHCapableByID: map[string]bool{"node-1": true},
 	}
 }
 
@@ -95,6 +96,15 @@ func TestEvaluateMachinesRequiresSeparateSSHandGrantTCP22Evidence(t *testing.T) 
 		"node has no validated tailnet address": func(snapshot *CacheData) {
 			snapshot.Nodes[0].Addresses = []string{"10.0.0.10", "fd00::10"}
 		},
+		"device does not report SSH capability": func(snapshot *CacheData) {
+			snapshot.MachineSSHCapableByID = nil
+		},
+		"device explicitly fails SSH capability": func(snapshot *CacheData) {
+			snapshot.MachineSSHCapableByID["node-1"] = false
+		},
+		"capability belongs to a different device": func(snapshot *CacheData) {
+			snapshot.MachineSSHCapableByID = map[string]bool{"node-2": true}
+		},
 		"Headscale provider": func(snapshot *CacheData) {
 			snapshot.ControlPlane.Provider = controlPlaneHeadscale
 		},
@@ -148,6 +158,10 @@ func TestEvaluateMachinesPreservesExactIdentityRolesSelfAndMachineSourceNegative
 			"admin@example.com":  {"autogroup:admin", "autogroup:member"},
 			"member@example.com": {"autogroup:member"},
 			"it@example.com":     {"autogroup:it-admin", "autogroup:member"},
+		},
+		MachineSSHCapableByID: map[string]bool{
+			"1": true, "2": true, "3": true, "4": true,
+			"5": true, "6": true, "7": true, "8": true,
 		},
 	}
 
@@ -282,17 +296,17 @@ func TestMachineConsoleEligibleRequiresTailscaleDirectMemberWithConsoleRole(t *t
 	})
 }
 
-func TestMachineConsoleCapableFailsClosedPerDevice(t *testing.T) {
+func TestMachineSSHCapableFailsClosedPerDevice(t *testing.T) {
 	data := &CacheData{MachineSSHCapableByID: map[string]bool{"capable": true, "explicit-false": false}}
-	if !machineConsoleCapable("capable", data) {
+	if !machineSSHCapable("capable", data) {
 		t.Fatal("explicitly capable device was hidden")
 	}
 	for _, id := range []string{"missing", "explicit-false", ""} {
-		if machineConsoleCapable(id, data) {
+		if machineSSHCapable(id, data) {
 			t.Fatalf("device %q must fail closed", id)
 		}
 	}
-	if machineConsoleCapable("capable", nil) {
+	if machineSSHCapable("capable", nil) {
 		t.Fatal("nil snapshot must fail closed")
 	}
 }

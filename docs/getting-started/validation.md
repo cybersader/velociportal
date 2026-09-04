@@ -229,14 +229,14 @@ Skip this section in Headscale mode or when the Tailscale policy has no intended
 - [ ] Doctor reports `state=supported` with the expected SSH rule count and per-identity counts only when the projection is available; unsupported SSH retains one coarse top-level reason but emits no per-identity machine preview lines
 - [ ] Headscale, absent SSH, and unsupported SSH omit the complete Machines section; supported SSH with zero matches preserves the explicit empty Machines state
 - [ ] At least two exact direct-member identities receive intentionally different machine sets; a shared user receives none
-- [ ] Every visible machine has one matching supported SSH rule and one independent matching Grant that permits TCP/22 to the same device address
+- [ ] Every visible machine has one matching supported SSH rule, one independent matching Grant that permits TCP/22 to the same device address, and exact current device `sshEnabled=true` plus `blocksIncomingConnections=false`
 - [ ] Remove or change either side of that evidence in a controlled fixture/policy test and confirm the machine disappears; an ACL mentioning port 22 does not preserve it
 - [ ] Owner-to-Admin automatic membership and each specialized role are checked independently; no specialized role implies another
 - [ ] `autogroup:self` includes only devices with the exact separately resolved owner login; tags and `tagOwners` do not create human source membership
 - [ ] A literal allowed account produces the expected server-built `tailscale ssh user@target` copy command; `autogroup:nonroot` never invents or pre-fills an account but offers a separate client-side field for a typed validated non-root account
 - [ ] The custom non-root field rejects `root`, surrounding whitespace, selectors, and shell metacharacters; successful copies remember at most 10 deduplicated names only for the exact identity/browser, survive htmx refresh, and clear from account settings
 - [ ] A canonical full `*.ts.net` device name remains the copied-command target while the card and eligible Tailscale Machines link use its short first label for prominent display/search; the link also includes `property:tailscale-ssh`, while an arbitrary FQDN is rejected and falls back only to the same device's validated Tailscale IPv4/IPv6 address
-- [ ] The Tailscale Machines action requires both an eligible exact direct-member role and exact device `sshEnabled=true` plus `blocksIncomingConnections=false`; absent, null, wrong-type, disabled, or blocked fields hide only the action and preserve the same machine card/command
+- [ ] Absent, null, wrong-type, disabled, blocked, or mismatched device capability removes the machine and command; the Tailscale Machines action on a remaining machine additionally requires an eligible exact direct-member role
 - [ ] Plain-language action labels match policy semantics: `accept` shows no extra sign-in, while `check` shows the configured reauthentication period or the documented 12-hour default
 - [ ] Shell/HTML/JavaScript metacharacter fixtures never become executable markup or copied arguments
 - [ ] Each copied command is run from the corresponding real identity and compared with actual Tailscale SSH outcome, including `check` behavior where configured
