@@ -1,0 +1,2536 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Identity-aware service visibility derived from Headscale or Tailscale legacy ACLs and Nginx Proxy Manager">
+      
+      
+      
+        <link rel="canonical" href="https://cybersader.github.io/velociportal/reference/cli/">
+      
+      
+        <link rel="prev" href="../../concept/alternatives/">
+      
+      
+        <link rel="next" href="../known-limitations/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/logo-card.svg">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>CLI and Make targets - Velociportal</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/extra.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="custom" data-md-color-accent="custom">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#cli-and-make-targets" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="Velociportal" class="md-header__button md-logo" aria-label="Velociportal" data-md-component="logo">
+      
+  <img src="../../assets/logo-card.svg" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Velociportal
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              CLI and Make targets
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="custom" data-md-color-accent="custom"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="custom" data-md-color-accent="custom"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+          <a href="javascript:void(0)" class="md-search__icon md-icon" title="Share" aria-label="Share" data-clipboard data-clipboard-text="" data-md-component="search-share" tabindex="-1">
+            
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9a3 3 0 0 0-3 3 3 3 0 0 0 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.15c-.05.21-.08.43-.08.66 0 1.61 1.31 2.91 2.92 2.91s2.92-1.3 2.92-2.91A2.92 2.92 0 0 0 18 16.08"/></svg>
+          </a>
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/cybersader/velociportal" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    cybersader/velociportal
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../.." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../guides/truenas-scale/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  TrueNAS Quickstart
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../getting-started/validation/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Start here
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../guides/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Choose an architecture
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../guides/private-tls/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Deploy
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../integrations/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Integrate identity
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../concept/overview/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Understand
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="./" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Reference
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="Velociportal" class="md-nav__button md-logo" aria-label="Velociportal" data-md-component="logo">
+      
+  <img src="../../assets/logo-card.svg" alt="logo">
+
+    </a>
+    Velociportal
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/cybersader/velociportal" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    cybersader/velociportal
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/truenas-scale/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    TrueNAS Quickstart
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Start here
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Start here
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/validation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Validate a real deployment
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/setup/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Local-source diagnostics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../guides/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Choose an architecture
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_4" id="__nav_4_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Choose an architecture
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/headscale-npm/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Headscale + NPM control and runtime
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/tailscale-saas-npm/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tailscale SaaS + NPM (preview)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/headscale-caddy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Headscale + Caddy (planned)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/headscale-traefik/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Headscale + Traefik (planned)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deploy
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Deploy
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/private-tls/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Optional native Headscale TLS
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/vps-headscale/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    VPS for Headscale
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../integrations/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Integrate identity
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_6" id="__nav_6_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Integrate identity
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../integrations/no-idp/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    No IdP / Tailscale identity
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../integrations/authentik/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Authentik
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../integrations/authelia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Authelia
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Understand
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Understand
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../concept/overview/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Concept overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../concept/how-it-works/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    How it works
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../concept/alternatives/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Alternatives
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_8" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_8" id="__nav_8_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_8_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_8">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI and Make targets
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI and Make targets
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#binary-commands" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Binary commands
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#setup" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Setup
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Setup">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#observe-the-trusted-proxy-source" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Observe the trusted proxy source
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#doctor" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Doctor
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#validate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Validate
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#suggest-hostnames" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Suggest hostnames
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#healthcheck" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Healthcheck
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#production-deployment-versus-repository-commands" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Production deployment versus repository commands
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#other-make-targets" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Other Make targets
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#make-variables" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Make variables
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#runtime-environment" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Runtime environment
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#health-endpoint" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Health endpoint
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#interpreting-common-failures" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Interpreting common failures
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../known-limitations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Known limitations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../headscale-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Headscale API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../tailscale-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tailscale API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../npm-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    NPM API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../tailscale-headers/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tailscale identity headers
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#binary-commands" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Binary commands
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#setup" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Setup
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Setup">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#observe-the-trusted-proxy-source" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Observe the trusted proxy source
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#doctor" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Doctor
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#validate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Validate
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#suggest-hostnames" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Suggest hostnames
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#healthcheck" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Healthcheck
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#production-deployment-versus-repository-commands" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Production deployment versus repository commands
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#other-make-targets" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Other Make targets
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#make-variables" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Make variables
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#runtime-environment" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Runtime environment
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#health-endpoint" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Health endpoint
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#interpreting-common-failures" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Interpreting common failures
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="cli-and-make-targets">CLI and Make targets<a class="headerlink" href="#cli-and-make-targets" title="Permanent link">&para;</a></h1>
+<p>Velociportal is one static binary. The server remains environment-configured, while setup, diagnostics, and health probing are explicit commands that can run without starting the server.</p>
+<h2 id="binary-commands">Binary commands<a class="headerlink" href="#binary-commands" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>velociportal
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>velociportal serve [--env-file FILE] [--listen ADDR]
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>velociportal setup [--env-file FILE]
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>velociportal setup observe-proxy [options]
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>velociportal doctor [options]
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>velociportal validate [options]
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>velociportal suggest-hostnames --privacy private --browser-scheme http|https [options]
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>velociportal healthcheck [options]
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>velociportal help [command]
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>Behavior</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>velociportal</code></td>
+<td>Starts the server from the process environment</td>
+</tr>
+<tr>
+<td><code>velociportal serve</code></td>
+<td>Starts the server from the process environment</td>
+</tr>
+<tr>
+<td><code>velociportal serve --env-file FILE</code></td>
+<td>Loads configuration only from <code>FILE</code>, then starts the server</td>
+</tr>
+<tr>
+<td><code>velociportal serve --env-file FILE --listen ADDR</code></td>
+<td>Uses the literal file values but overrides only the listener, which Compose uses for the bridged container</td>
+</tr>
+<tr>
+<td><code>velociportal setup --env-file FILE</code></td>
+<td>Runs the guided wizard and atomically creates or updates the local environment file</td>
+</tr>
+<tr>
+<td><code>velociportal setup observe-proxy</code></td>
+<td>Observes the immediate peer on a one-time URL and proposes an exact trusted source for confirmation</td>
+</tr>
+<tr>
+<td><code>velociportal doctor</code></td>
+<td>Validates configuration, upstreams, snapshot construction, and join coverage</td>
+</tr>
+<tr>
+<td><code>velociportal doctor --identity LOGIN</code></td>
+<td>Also previews service cards and, only when the Tailscale SSH projection is available, a topology-free machine count for <code>LOGIN</code>; the option may be repeated. Doctor never reports the Tailscale Machines action, device capability self-report, or browser-local preference state, which are portal-only presentation inputs</td>
+</tr>
+<tr>
+<td><code>velociportal validate --identity LABEL=LOGIN ...</code></td>
+<td>Compares at least two labeled identities and emits explainable text or JSON join evidence</td>
+</tr>
+<tr>
+<td><code>velociportal suggest-hostnames ...</code></td>
+<td>Privately reviews unambiguous hostname candidates and emits a strict metadata-v1 proposal after confirmation</td>
+</tr>
+<tr>
+<td><code>velociportal healthcheck</code></td>
+<td>Probes <code>/healthz</code> without loading application configuration or credentials</td>
+</tr>
+<tr>
+<td><code>velociportal help COMMAND</code></td>
+<td>Prints command-specific usage</td>
+</tr>
+</tbody>
+</table>
+<p>Command exit codes are stable:</p>
+<ul>
+<li><strong><code>0</code></strong> — success or a safe operator rejection/no-candidate result; doctor warnings do not make the command fail, while validate requires no unresolved review findings.</li>
+<li><strong><code>1</code></strong> — operational failure or a complete validation report that still requires operator review.</li>
+<li><strong><code>2</code></strong> — command-line usage error.</li>
+</ul>
+<div class="admonition note">
+<p class="admonition-title">Environment-file behavior</p>
+<p>Environment files are parsed as configuration data. Velociportal does not execute shell interpolation, variable expansion, or command substitution, and file-backed commands do not merge missing values from the process environment. Compose 2.33.1+ loads the file in raw mode, then the binary applies the same strict unquoted, single-quoted, or Go-style double-quoted value grammar used by file-backed commands. Credentials containing <code>$</code>, <code>${...}</code>, quotes, spaces, <code>#</code>, or backslashes therefore reach runtime unchanged, while malformed quoting fails startup instead of becoming a different credential.</p>
+</div>
+<h2 id="setup">Setup<a class="headerlink" href="#setup" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>velociportal<span class="w"> </span>setup<span class="w"> </span>--env-file<span class="w"> </span>.env
+</code></pre></div>
+<p>The wizard:</p>
+<ul>
+<li>prompts first for Headscale (supported) or Tailscale SaaS (preview), then asks only for that provider's credentials plus common NPM settings;</li>
+<li>always writes an explicit <code>CONTROL_PLANE</code> selector;</li>
+<li>accepts Headscale HTTP only for the implementation's exact local/internal allowlist and otherwise requires verified HTTPS;</li>
+<li>warns that an accepted Headscale HTTP hostname does not prove route confinement or external inaccessibility;</li>
+<li>uses OAuth client credentials only for Tailscale; there is no API-key, access-token, API-origin, or tailnet prompt;</li>
+<li>lists inactive known credential key names during a provider switch and requires explicit confirmation before deleting them;</li>
+<li>leaves the original file byte-for-byte unchanged when switch confirmation is refused or input aborts;</li>
+<li>reads secrets through hidden terminal input;</li>
+<li>preserves existing hidden secrets when Enter is pressed;</li>
+<li>validates values before writing;</li>
+<li>preserves unknown environment-file keys;</li>
+<li>locks the environment-file directory against another cooperating setup/observer command;</li>
+<li>writes atomically with owner-only mode <code>0600</code>; and</li>
+<li>never guesses <code>TRUSTED_PROXY_CIDR</code>.</li>
+</ul>
+<p>The lock closes the check/replace race between Velociportal commands. Unrelated editors do not honor this advisory lock, so avoid manually editing the file while setup or observation is running.</p>
+<p>Secret values are not accepted through command-line flags and are never printed.</p>
+<h3 id="observe-the-trusted-proxy-source">Observe the trusted proxy source<a class="headerlink" href="#observe-the-trusted-proxy-source" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>velociportal<span class="w"> </span>setup<span class="w"> </span>observe-proxy<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span>--env-file<span class="w"> </span>.env<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">  </span>--listen<span class="w"> </span><span class="m">127</span>.0.0.1:8080<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="w">  </span>--timeout<span class="w"> </span>2m
+</code></pre></div>
+<p>The observer generates a cryptographically random one-time path to append to the existing browser-facing proxy origin, records only the connection's immediate <code>RemoteAddr</code>, ignores forwarding and identity headers, and proposes an exact IPv4 <code>/32</code> or IPv6 <code>/128</code>. After explicit confirmation it changes only the <code>TRUSTED_PROXY_CIDR</code> value, while canonically rewriting and preserving all parsed key/value entries.</p>
+<p>Observation shows which source used one route. It does not prove that the source is trustworthy. Never widen the result to a Docker, LAN, or tailnet supernet merely to make a rejected request succeed.</p>
+<h2 id="doctor">Doctor<a class="headerlink" href="#doctor" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>velociportal<span class="w"> </span>doctor<span class="w"> </span>--stack-env<span class="w"> </span>deploy/stack.env
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>velociportal<span class="w"> </span>doctor<span class="w"> </span>--env-file<span class="w"> </span>.env
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>velociportal<span class="w"> </span>doctor<span class="w"> </span>--env-file<span class="w"> </span>deploy/velociportal.env<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">  </span>--stack-env<span class="w"> </span>deploy/stack.env
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>velociportal<span class="w"> </span>doctor<span class="w"> </span>--env-file<span class="w"> </span>.env<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="w">  </span>--identity<span class="w"> </span>alice@example.com<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="w">  </span>--identity<span class="w"> </span>bob@example.com
+</code></pre></div>
+<p>Doctor reports stable <code>PASS</code>, <code>WARN</code>, and <code>FAIL</code> stages for:</p>
+<ul>
+<li>configuration and owner-only environment-file permissions;</li>
+<li>optional production <code>stack.env</code> checks for immutable image pinning, subnet/gateway containment, trusted-proxy narrowness and gateway alignment, and the production Compose trusted-proxy override;</li>
+<li>explicit or implicit provider selection, plus variable-name-only warnings for inactive known credentials;</li>
+<li>selected provider, <code>legacy_acl_visibility_v1</code> or <code>network_access_visibility_v1</code> policy mode, and <code>supported</code> or <code>preview</code> support level;</li>
+<li>trusted proxy CIDR narrowness;</li>
+<li>a pre-contact warning only when Headscale uses allowlisted HTTP, because the CLI cannot prove private route confinement;</li>
+<li>Headscale policy/node API progress or Tailscale OAuth/policy/users/devices progress;</li>
+<li>NPM authentication and proxy-host retrieval;</li>
+<li>complete snapshot construction;</li>
+<li>supported access-rule-to-<code>forward_host</code> join coverage, including exact Grant TCP/backend-port checks;</li>
+<li>coarse SSH state/reason/rule diagnostics;</li>
+<li>optional matcher-backed identity service previews plus machine counts only when Tailscale SSH projection availability is supported; Headscale, absent SSH, and unsupported SSH suppress per-identity machine previews; and</li>
+<li>optional service-health configuration plus one bounded probe cycle with proxy-host IDs, coarse states, durations, HTTP status classes, and aggregate counts only.</li>
+</ul>
+<p><code>--stack-env FILE</code> by itself runs only local Compose interpolation checks and exits; it needs no provider credentials or network access. Same-name process-environment values take Compose precedence over the file, are reported by key, and become the values Doctor checks. It never resolves image tags, contacts a registry, inspects Docker, or changes the file. Digest pins pass, explicit non-<code>latest</code> tags warn, and missing, untagged, <code>latest</code>, malformed-digest, invalid-network, surrounding-whitespace, or missing trusted-proxy values fail. When <code>--env-file</code> and <code>--stack-env</code> are combined, Doctor continues through normal configuration and upstream diagnostics using <code>VELOCIPORTAL_TRUSTED_PROXY_CIDR</code> as the effective runtime <code>TRUSTED_PROXY_CIDR</code>, matching <code>deploy/compose.yaml</code>; if the provider file also sets that key, Doctor warns that production Compose overrides it.</p>
+<p>Doctor sanitizes and bounds upstream errors. It does not print Headscale keys, OAuth client IDs/secrets, current or rejected OAuth tokens, NPM credentials/JWTs, machine IDs/names/addresses/accounts/commands, health paths, backend hostnames/IPs, response bodies, raw network errors, or complete configuration structs. Service probe failures are warnings rather than snapshot failures; malformed service-health configuration fails Doctor after safe upstream diagnostics continue. A passing run is a preflight result, not proof that rendered cards equal real network authorization.</p>
+<h2 id="validate">Validate<a class="headerlink" href="#validate" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>velociportal<span class="w"> </span>validate<span class="w"> </span>--env-file<span class="w"> </span>.env<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="w">  </span>--identity<span class="w"> </span>user-a<span class="o">=</span>alice@example.com<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="w">  </span>--identity<span class="w"> </span>user-b<span class="o">=</span>bob@example.com
+</code></pre></div>
+<p>Validation loads one complete live snapshot, compares the supplied identity labels through the same matcher used by the portal, and explains supported destination kinds. Summary privacy is the default: it emits opaque service IDs and never emits identity logins, domains, IPs, forward hosts, or raw selectors. <code>--privacy private</code> adds internal topology for local diagnosis and prints a warning to stderr.</p>
+<p>Use <code>--format json</code> for deterministic schema-v3 output. The report records <code>access_rules</code> plus per-match <code>rule_kind</code> and original <code>rule_index</code>; its <code>control_plane</code> object records <code>provider</code>, <code>policy_mode</code>, <code>support_level</code>, and whether selection was explicit or implicit, without including endpoints or credentials. A complete report returns <code>1</code> when findings such as an unmatched forward host, a zero-card identity, identical card sets, or an unknown/dirty build require review. Notices about known limitations do not by themselves fail the report. GNU Make converts any failed recipe into Make exit code <code>2</code>, so automation that needs the application's exact <code>0</code>/<code>1</code>/<code>2</code> distinction should invoke <code>velociportal validate</code> directly; Make users should inspect the report status and findings.</p>
+<p>Validation is still a visibility prediction. An implicit Headscale selector emits a deprecation warning and a non-failing report notice. When Headscale uses allowlisted HTTP, validation also emits a redacted route-confinement notice. Tailscale reports remain labeled <code>preview</code> until live SaaS acceptance passes. Follow the <a href="../../getting-started/validation/">real-deployment worksheet</a> to verify the private upstream network, NPM control proxy, final identity path, <code>401</code>/<code>403</code> behavior, LAN-negative ports, browser-facing links, and actual selected-control-plane reachability.</p>
+<h2 id="suggest-hostnames">Suggest hostnames<a class="headerlink" href="#suggest-hostnames" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>velociportal<span class="w"> </span>suggest-hostnames<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="w">  </span>--env-file<span class="w"> </span>.env<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="w">  </span>--privacy<span class="w"> </span>private<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="w">  </span>--browser-scheme<span class="w"> </span>https<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="w">  </span>--output<span class="w"> </span>hostname-proposal.json
+</code></pre></div>
+<p>This one-shot operator command loads the normal selected-control-plane policy/nodes or policy/users/devices data plus NPM proxy hosts. Headscale contributes node names; Tailscale contributes both device <code>name</code> and <code>hostname</code>. Those names are untrusted suggestions—not evidence that a device is associated with the NPM backend—so verify every browser destination independently before merging. Optional <code>--stdin-hostnames</code> accepts only a bounded newline-delimited hostname feed. It does not scan DNS, read resolver or proxy logs, query new APIs, or retain candidates after exit.</p>
+<p>Only enabled, structurally policy-matched, wildcard-only NPM hosts without an active metadata URL are eligible. Candidates must be canonical ASCII FQDNs and match an exact wildcard suffix on a label boundary. Velociportal models candidate-to-NPM matches as a bipartite graph and excludes every connected component that contains more than one hostname or proxy-host ID; it never picks a first, shortest, or preferred guess.</p>
+<p>The command always requires <code>--privacy private</code> and an explicit browser-facing <code>http</code> or <code>https</code> scheme. It prints the private review and confirmation prompt to stderr, keeps stdout empty until literal <code>yes</code>, and emits only strict service-metadata v1 JSON after approval. With <code>--stdin-hostnames</code>, stdin is the candidate feed and confirmation must come from the controlling terminal. EOF or a missing terminal fails before emission. As with any stdout stream, a downstream write failure after approval can leave a partial document; use <code>--output</code> when atomic file publication is required.</p>
+<p><code>--output FILE</code> creates a new owner-only <code>0600</code> file atomically and refuses existing paths, symlinks, or the configured active <code>SERVICE_METADATA_FILE</code>. The proposal is a fragment for manual review and merge; the command never changes active metadata, runtime snapshots, cards, policy evidence, health, Compose, NPM, or DNS.</p>
+<div class="admonition danger">
+<p class="admonition-title">Private topology</p>
+<p>Reviews and proposals contain internal hostnames and NPM proxy-host IDs. Keep them owner-readable, do not publish them, and remove rejected or superseded proposals.</p>
+</div>
+<h2 id="healthcheck">Healthcheck<a class="headerlink" href="#healthcheck" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>velociportal<span class="w"> </span>healthcheck
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>velociportal<span class="w"> </span>healthcheck<span class="w"> </span>--url<span class="w"> </span>http://127.0.0.1:8080/healthz<span class="w"> </span>--timeout<span class="w"> </span>3s
+</code></pre></div>
+<p>The probe succeeds only on HTTP 200, refuses redirects, bounds response headers, and does not load application secrets. The production image invokes the same command directly through its Docker healthcheck.</p>
+<h2 id="production-deployment-versus-repository-commands">Production deployment versus repository commands<a class="headerlink" href="#production-deployment-versus-repository-commands" title="Permanent link">&para;</a></h2>
+<p>The normal TrueNAS, Dockge, Dokploy, or Docker Compose installation uses <code>deploy/compose.yaml</code> with a published immutable image. It creates <code>velociportal-upstreams</code>, has no base-stack CA mount, and does not require Git, Make, Go, a source build on the NAS, or recurring NAS shell access. Follow the <a href="../../guides/truenas-scale/">TrueNAS Quickstart</a> for the linear UI-managed journey.</p>
+<p>The commands below are the <strong>local-source and diagnostic workflow</strong> for contributors, preflight investigation, and detailed validation:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>make<span class="w"> </span>setup
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>make<span class="w"> </span>observe-proxy
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>make<span class="w"> </span>doctor
+<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a>make<span class="w"> </span>up
+<a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a>make<span class="w"> </span>health
+</code></pre></div>
+<div class="vp-chip-row" aria-label="Local-source target availability">
+<span class="vp-chip vp-chip--supported">Repository diagnostics implemented</span>
+<span class="vp-chip vp-chip--security">Exact proxy confirmation required</span>
+<span class="vp-chip vp-chip--validation">Real deployment validation still required</span>
+</div>
+
+<table>
+<thead>
+<tr>
+<th>Local-source step</th>
+<th>What it runs</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>make setup</code></td>
+<td>Builds the local scratch image and runs the interactive setup wizard with a writable project mount</td>
+</tr>
+<tr>
+<td><code>make observe-proxy</code></td>
+<td>Runs the temporary observer on the repository Compose network with a loopback-published port, then updates only the selected environment file</td>
+</tr>
+<tr>
+<td><code>make doctor</code></td>
+<td>Mounts the environment file read-only, optionally maps <code>STACK_ENV_FILE</code> into the tools container, and runs preflight diagnostics on the repository Compose network</td>
+</tr>
+<tr>
+<td><code>make validate</code></td>
+<td>Builds a human-readable two-or-more-identity validation report on the same repository network</td>
+</tr>
+<tr>
+<td><code>make validate-json</code></td>
+<td>Keeps stdout JSON-only so it can be redirected to an owner-readable report file</td>
+</tr>
+<tr>
+<td><code>make up</code></td>
+<td>Builds the local image, starts Compose without rebuilding, and waits for Docker health</td>
+</tr>
+<tr>
+<td><code>make health</code></td>
+<td>Executes the binary-native health client in the running container</td>
+</tr>
+</tbody>
+</table>
+<p>Use the full <a href="../../getting-started/setup/">local-source and diagnostic workflow</a> for the ordered commands and diagnostic validation matrix.</p>
+<h2 id="other-make-targets">Other Make targets<a class="headerlink" href="#other-make-targets" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Target</th>
+<th>Command role</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>make build</code></td>
+<td>Build the local <code>velociportal</code> binary; requires Go</td>
+</tr>
+<tr>
+<td><code>make fmt-check</code></td>
+<td>Fail if Go files need formatting; requires Go</td>
+</tr>
+<tr>
+<td><code>make test</code></td>
+<td>Run race-enabled Go tests without test-result caching; requires Go</td>
+</tr>
+<tr>
+<td><code>make vet</code></td>
+<td>Run <code>go vet ./...</code>; requires Go</td>
+</tr>
+<tr>
+<td><code>make lint</code></td>
+<td>Run formatting and vet checks</td>
+</tr>
+<tr>
+<td><code>make check</code></td>
+<td>Run formatting, vet, and race tests</td>
+</tr>
+<tr>
+<td><code>make run</code></td>
+<td>Run from source with <code>serve --env-file</code>; requires Go</td>
+</tr>
+<tr>
+<td><code>make docker</code></td>
+<td>Build the local production-shaped scratch image</td>
+</tr>
+<tr>
+<td><code>make docker-run</code></td>
+<td>Run the local image read-only with loopback-only publication</td>
+</tr>
+<tr>
+<td><code>make production-compose-check</code></td>
+<td>Render Headscale and Tailscale provider examples, short-form includes, and all base/CA/service-metadata/service-health overlay combinations while asserting the unchanged one-service/two-network, always-pull, no-build, loopback, raw-env, gateway-priority, healthcheck, and hardening shape</td>
+</tr>
+<tr>
+<td><code>make logs</code></td>
+<td>Follow repository Compose logs</td>
+</tr>
+<tr>
+<td><code>make down</code></td>
+<td>Stop the repository Compose deployment</td>
+</tr>
+<tr>
+<td><code>make verify</code></td>
+<td>Run Go, contributor and production Compose, image metadata, and in-image CLI checks; requires Go, Python 3, and Docker Compose</td>
+</tr>
+<tr>
+<td><code>make clean</code></td>
+<td>Remove the locally built binary</td>
+</tr>
+</tbody>
+</table>
+<h2 id="make-variables">Make variables<a class="headerlink" href="#make-variables" title="Permanent link">&para;</a></h2>
+<p>Pass Make variables before or after the target:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>make<span class="w"> </span>doctor<span class="w"> </span><span class="nv">DOCTOR_ARGS</span><span class="o">=</span><span class="s2">"--identity </span><span class="si">${</span><span class="nv">VP_USER_A</span><span class="si">}</span><span class="s2"> --identity </span><span class="si">${</span><span class="nv">VP_USER_B</span><span class="si">}</span><span class="s2">"</span>
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>make<span class="w"> </span>doctor<span class="w"> </span><span class="nv">ENV_FILE</span><span class="o">=</span>deploy/velociportal.env<span class="w"> </span><span class="nv">STACK_ENV_FILE</span><span class="o">=</span>deploy/stack.env
+<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>make<span class="w"> </span>validate<span class="w"> </span><span class="nv">VALIDATE_ARGS</span><span class="o">=</span><span class="s2">"--identity user-a=</span><span class="si">${</span><span class="nv">VP_USER_A</span><span class="si">}</span><span class="s2"> --identity user-b=</span><span class="si">${</span><span class="nv">VP_USER_B</span><span class="si">}</span><span class="s2">"</span>
+<a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a>make<span class="w"> </span>health<span class="w"> </span><span class="nv">HEALTH_URL</span><span class="o">=</span>http://127.0.0.1:8080/healthz
+<a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a>make<span class="w"> </span>doctor<span class="w"> </span><span class="nv">PRIVATE_CA_FILE</span><span class="o">=</span><span class="s2">"</span><span class="nv">$HOME</span><span class="s2">/.local/share/velociportal/certs/rootCA.pem"</span>
+<a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a>make<span class="w"> </span>doctor<span class="w"> </span><span class="nv">SERVICE_METADATA_FILE</span><span class="o">=</span><span class="s2">"</span><span class="nv">$HOME</span><span class="s2">/.config/velociportal/services.json"</span><span class="w"> </span><span class="nv">SERVICE_METADATA_GID</span><span class="o">=</span><span class="s2">"</span><span class="k">$(</span>id<span class="w"> </span>-g<span class="k">)</span><span class="s2">"</span>
+<a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a>make<span class="w"> </span>doctor<span class="w"> </span><span class="nv">SERVICE_HEALTH_FILE</span><span class="o">=</span><span class="s2">"</span><span class="nv">$HOME</span><span class="s2">/.config/velociportal/health.json"</span><span class="w"> </span><span class="nv">SERVICE_HEALTH_GID</span><span class="o">=</span><span class="s2">"</span><span class="k">$(</span>id<span class="w"> </span>-g<span class="k">)</span><span class="s2">"</span>
+<a id="__codelineno-8-8" name="__codelineno-8-8" href="#__codelineno-8-8"></a>make<span class="w"> </span>docker<span class="w"> </span><span class="nv">IMAGE</span><span class="o">=</span>registry.example/velociportal:test
+</code></pre></div>
+<p>For validation, populate <code>VP_USER_A</code> and <code>VP_USER_B</code> with hidden <code>read -s</code> prompts as shown in the <a href="../../getting-started/validation/">real-deployment validation guide</a>. This avoids literal logins in shell history, but command-line identities can still be observed by trusted same-host administration tools while the command runs.</p>
+<table>
+<thead>
+<tr>
+<th>Variable</th>
+<th>Default</th>
+<th>Used for</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>IMAGE</code></td>
+<td><code>velociportal:latest</code></td>
+<td>Image build, Compose, and local container commands</td>
+</tr>
+<tr>
+<td><code>ENV_FILE</code></td>
+<td><code>.env</code></td>
+<td>Project-relative environment-file path used by guided and runtime commands; absolute paths and <code>..</code> components are rejected by Make wrappers so host and container cannot address different files</td>
+</tr>
+<tr>
+<td><code>STACK_ENV_FILE</code></td>
+<td>empty</td>
+<td>Optional project-relative production <code>stack.env</code> path checked by <code>make doctor</code>; it is mounted through the existing read-only workspace bind and receives the same path-safety checks as <code>ENV_FILE</code></td>
+</tr>
+<tr>
+<td><code>PRIVATE_CA_FILE</code></td>
+<td>empty</td>
+<td>Opts into <code>docker-compose.private-ca.yml</code> and mounts only the public private-CA root read-only into runtime and tools containers</td>
+</tr>
+<tr>
+<td><code>SERVICE_METADATA_FILE</code></td>
+<td>empty</td>
+<td>Opts into <code>docker-compose.service-metadata.yml</code> and mounts one strict v1-or-v2 presentation-metadata JSON file read-only into runtime and tools containers</td>
+</tr>
+<tr>
+<td><code>SERVICE_METADATA_GID</code></td>
+<td>empty</td>
+<td>Numeric supplemental group that can read <code>SERVICE_METADATA_FILE</code>; required when the metadata overlay is selected</td>
+</tr>
+<tr>
+<td><code>SERVICE_HEALTH_FILE</code></td>
+<td>empty</td>
+<td>Opts into <code>docker-compose.service-health.yml</code> and mounts one strict health JSON file read-only into runtime and tools containers</td>
+</tr>
+<tr>
+<td><code>SERVICE_HEALTH_GID</code></td>
+<td>empty</td>
+<td>Numeric supplemental group that can read <code>SERVICE_HEALTH_FILE</code>; required when the health overlay is selected</td>
+</tr>
+<tr>
+<td><code>DOCTOR_ARGS</code></td>
+<td>empty</td>
+<td>Additional doctor options, such as repeated identity previews</td>
+</tr>
+<tr>
+<td><code>VALIDATE_ARGS</code></td>
+<td>empty</td>
+<td>Labeled identities plus optional privacy/format flags; never place credentials here</td>
+</tr>
+<tr>
+<td><code>BUILD_VERSION</code></td>
+<td><code>dev</code></td>
+<td>Build provenance included in validation reports</td>
+</tr>
+<tr>
+<td><code>GIT_REVISION</code></td>
+<td>current Git <code>HEAD</code></td>
+<td>Source revision included in the binary and report</td>
+</tr>
+<tr>
+<td><code>GIT_SOURCE_STATE</code></td>
+<td>detected <code>clean</code> or <code>dirty</code></td>
+<td>Prevents dirty/unknown builds from being mistaken for source-traceable evidence</td>
+</tr>
+<tr>
+<td><code>HEALTH_URL</code></td>
+<td><code>http://127.0.0.1:8080/healthz</code></td>
+<td>URL passed to the in-container health client</td>
+</tr>
+<tr>
+<td><code>VELOCIPORTAL_SUBNET</code></td>
+<td><code>172.31.255.0/24</code></td>
+<td>Stable private Compose subnet; override only to resolve a route conflict</td>
+</tr>
+<tr>
+<td><code>VELOCIPORTAL_GATEWAY</code></td>
+<td><code>172.31.255.1</code></td>
+<td>Stable host-side gateway paired with the selected subnet</td>
+</tr>
+<tr>
+<td><code>HOST_UID</code> / <code>HOST_GID</code></td>
+<td>current operator IDs</td>
+<td>Native-Docker ownership for files written through the setup bind mount</td>
+</tr>
+<tr>
+<td><code>CONTAINER_UID</code> / <code>CONTAINER_GID</code></td>
+<td>host IDs, or <code>0:0</code> when rootless Docker is detected</td>
+<td>Container identity for one-off tools; rootless container UID 0 maps to the unprivileged daemon owner</td>
+</tr>
+</tbody>
+</table>
+<p>Do not commit a populated environment file, private service-name mapping, or service-health topology. Registry names and image tags are not secrets, but credentials, API keys, passwords, private domains, metadata URLs, proxy-host IDs, paths, hosts, and CIDRs may be sensitive. Use separate Headscale operator and Velociportal runtime keys. <code>PRIVATE_CA_FILE</code> must identify only a public root certificate, never a private key. <code>SERVICE_METADATA_FILE</code> and <code>SERVICE_HEALTH_FILE</code> must each identify one strict JSON file; use their supplemental GID variables for read access instead of loosening ownership or modes. See <a href="../../guides/private-tls/">Optional native Headscale TLS</a>.</p>
+<h2 id="runtime-environment">Runtime environment<a class="headerlink" href="#runtime-environment" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Variable</th>
+<th style="text-align: right;">Required</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>CONTROL_PLANE</code></td>
+<td style="text-align: right;">Yes for new files</td>
+<td><code>headscale</code> or <code>tailscale</code>; absence defaults to Headscale only through v0.2 with a deprecation warning</td>
+</tr>
+<tr>
+<td><code>HEADSCALE_URL</code></td>
+<td style="text-align: right;">Headscale only</td>
+<td>Exact allowlisted local/internal HTTP or verified HTTPS elsewhere; canonical production value is <code>http://headscale.velociportal.internal:8080</code></td>
+</tr>
+<tr>
+<td><code>HEADSCALE_API_KEY</code></td>
+<td style="text-align: right;">Headscale only</td>
+<td>Dedicated Velociportal runtime key; Headscale v0.29.3 keys are unscoped administrator credentials</td>
+</tr>
+<tr>
+<td><code>TAILSCALE_OAUTH_CLIENT_ID</code></td>
+<td style="text-align: right;">Tailscale only</td>
+<td>Dedicated OAuth client ID; omitted from Doctor/validation output</td>
+</tr>
+<tr>
+<td><code>TAILSCALE_OAUTH_CLIENT_SECRET</code></td>
+<td style="text-align: right;">Tailscale only</td>
+<td>Dedicated OAuth client secret for the exact four documented read scopes</td>
+</tr>
+<tr>
+<td><code>NPM_URL</code></td>
+<td style="text-align: right;">Yes</td>
+<td>Canonical production value is <code>http://npm.velociportal.internal:81</code>; HTTP is limited to the exact internal/same-host allowlist and every other location requires verified HTTPS</td>
+</tr>
+<tr>
+<td><code>NPM_EMAIL</code></td>
+<td style="text-align: right;">Yes</td>
+<td>NPM account identity</td>
+</tr>
+<tr>
+<td><code>NPM_PASSWORD</code></td>
+<td style="text-align: right;">Yes</td>
+<td>NPM account password</td>
+</tr>
+<tr>
+<td><code>LISTEN_ADDR</code></td>
+<td style="text-align: right;">No</td>
+<td>Defaults to <code>127.0.0.1:8080</code>; Compose overrides it inside the container</td>
+</tr>
+<tr>
+<td><code>POLL_INTERVAL</code></td>
+<td style="text-align: right;">No</td>
+<td>Go duration from <code>5s</code> through <code>24h</code>; defaults to <code>30s</code></td>
+</tr>
+<tr>
+<td><code>SERVICE_METADATA_FILE</code></td>
+<td style="text-align: right;">No</td>
+<td>Strict version-1-or-2 read-only JSON file keyed by existing NPM proxy-host IDs; v1 supports display-name/browser-URL overrides and v2 also supports presentation-only category/order; blank disables it</td>
+</tr>
+<tr>
+<td><code>SERVICE_HEALTH_FILE</code></td>
+<td style="text-align: right;">No</td>
+<td>Strict version-1 read-only JSON file for explicit proxy-host health probes, scheduling bounds, accepted HTTP statuses, and mandatory topology allowlists; blank disables probes</td>
+</tr>
+<tr>
+<td><code>TRUSTED_PROXY_CIDR</code></td>
+<td style="text-align: right;">Yes</td>
+<td>Exact source <code>/32</code>, <code>/128</code>, or the smallest intentionally trusted proxy subnet</td>
+</tr>
+<tr>
+<td><code>PORTAL_LOGO_DEFAULT</code></td>
+<td style="text-align: right;">No</td>
+<td><code>visible</code> (default) or <code>hidden</code>; supplies only the initial browser-local built-in-logo state when no valid per-identity browser preference exists yet. The preference itself lives only in that browser's <code>localStorage</code>, scoped by an opaque SHA-256 digest of the exact login, and is never sent to or stored by Velociportal</td>
+</tr>
+</tbody>
+</table>
+<p>Tailscale production configuration has no <code>TAILSCALE_API_URL</code>, <code>TAILSCALE_API_KEY</code>, <code>TAILSCALE_ACCESS_TOKEN</code>, or <code>TAILSCALE_TAILNET</code>. It always uses <code>https://api.tailscale.com/api/v2</code> and the OAuth credential's <code>-</code> tailnet alias. Inactive known provider variables are ignored at runtime with key-name-only warnings.</p>
+<p>The container listener and host publication serve different roles:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="c1"># Inside the bridged container</span>
+<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="nt">environment</span><span class="p">:</span>
+<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="w">  </span><span class="nt">LISTEN_ADDR</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.0.0.0:8080</span>
+<a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a>
+<a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a><span class="c1"># On the Docker host</span>
+<a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a><span class="nt">ports</span><span class="p">:</span>
+<a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="s">"127.0.0.1:8080:8080"</span>
+</code></pre></div>
+<p><code>0.0.0.0</code> inside the container accepts bridged traffic. On Docker Engine 28 or newer, the loopback-only host publication prevents direct LAN and same-L2 access; older engines are not safe for this topology.</p>
+<h2 id="health-endpoint">Health endpoint<a class="headerlink" href="#health-endpoint" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Response</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>200</code></td>
+<td>A complete snapshot exists and is newer than three poll intervals</td>
+</tr>
+<tr>
+<td><code>503</code></td>
+<td>The snapshot is missing or stale</td>
+</tr>
+</tbody>
+</table>
+<p>The scratch image has no shell or separate HTTP utility. Its static binary contains the health client, and Docker runs it directly as <code>CMD ["/velociportal", "healthcheck"]</code>. Host-side <code>/healthz</code> probing remains useful as an independent monitor.</p>
+<h2 id="interpreting-common-failures">Interpreting common failures<a class="headerlink" href="#interpreting-common-failures" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Symptom</th>
+<th>Check first</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Startup rejects configuration</td>
+<td>Missing required values, malformed URL/CIDR, or a non-positive poll interval</td>
+</tr>
+<tr>
+<td><code>403 untrusted source</code></td>
+<td>Actual immediate peer seen inside the container versus <code>TRUSTED_PROXY_CIDR</code></td>
+</tr>
+<tr>
+<td><code>401 no identity</code></td>
+<td>Whether the trusted proxy injected <code>Tailscale-User-Login</code></td>
+</tr>
+<tr>
+<td><code>503</code> from health</td>
+<td>Configured service metadata, the selected control plane, and NPM must all load before a complete snapshot is published; <code>serve</code> keeps running and retries after refresh failures</td>
+</tr>
+<tr>
+<td>Empty portal with healthy snapshot</td>
+<td>Identity/group spelling, accepted ACL/Grant sources, Grant TCP/backend-port capability, NPM <code>forward_host</code>, and documented matcher limits</td>
+</tr>
+<tr>
+<td>Visible <code>link needed</code> card</td>
+<td>Add a concrete hostname to the same NPM proxy host when possible, or supply an exact-ID URL through the service-metadata overlay</td>
+</tr>
+</tbody>
+</table>
+<p>See <a href="../known-limitations/">Known Limitations</a> before interpreting a healthy process as proof of policy parity.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+  <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+    
+      
+      <nav class="md-footer__inner md-grid" aria-label="Footer" >
+        
+          
+          <a href="../../concept/alternatives/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Alternatives">
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+            </div>
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Previous
+              </span>
+              <div class="md-ellipsis">
+                Alternatives
+              </div>
+            </div>
+          </a>
+        
+        
+          
+          <a href="../known-limitations/" class="md-footer__link md-footer__link--next" aria-label="Next: Known limitations">
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Next
+              </span>
+              <div class="md-ellipsis">
+                Known limitations
+              </div>
+            </div>
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 11v2h12l-5.5 5.5 1.42 1.42L19.84 12l-7.92-7.92L10.5 5.5 16 11z"/></svg>
+            </div>
+          </a>
+        
+      </nav>
+    
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Velociportal is a visibility layer, not an authentication or enforcement layer.
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["content.code.copy", "content.tabs.link", "content.tooltips", "navigation.footer", "navigation.indexes", "navigation.sections", "navigation.tabs", "navigation.top", "search.highlight", "search.share", "toc.follow"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>
