@@ -158,6 +158,11 @@ func renderPortalWithOptions(w io.Writer, id *Identity, cards []ServiceCard, opt
 		)
 	}
 
+	servicesHealthHelp := ""
+	if health != nil {
+		servicesHealthHelp = renderServiceHealthHelp()
+	}
+
 	displayName := strings.TrimSpace(id.Name)
 	if displayName == "" {
 		displayName = id.Login
@@ -175,6 +180,7 @@ func renderPortalWithOptions(w io.Writer, id *Identity, cards []ServiceCard, opt
 		"{{USER_LOGIN}}", html.EscapeString(id.Login),
 		"{{SERVICES_CLASS}}", servicesClass,
 		"{{SERVICES_BODY}}", servicesBody.String(),
+		"{{SERVICES_HEALTH_HELP}}", servicesHealthHelp,
 		"{{MACHINES_SECTION}}", machinesSection.String(),
 		"{{BOTTOM_NAV}}", renderBottomNav(machinesAvailable),
 		"{{LOGO_PREF_SCOPE}}", logoPreferenceScope(id.Login),
@@ -187,15 +193,31 @@ func renderPortalWithOptions(w io.Writer, id *Identity, cards []ServiceCard, opt
 	return nil
 }
 
+// Bottom-nav icons are small embedded SVG line icons (no icon library, no
+// remote fonts). They are decorative only: aria-hidden and non-focusable
+// (focusable="false" covers legacy browsers that otherwise tab into SVG).
+// The visible, screen-reader-exposed label is always the adjacent text span.
+const (
+	bottomNavIconServices = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect></svg>`
+	bottomNavIconMachines = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="3" y="4" width="18" height="12" rx="2"></rect><line x1="8" y1="20" x2="16" y2="20"></line><line x1="12" y1="16" x2="12" y2="20"></line></svg>`
+	bottomNavIconSearch   = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="11" cy="11" r="7"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>`
+	bottomNavIconMore     = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="5" cy="12" r="1.5"></circle><circle cx="12" cy="12" r="1.5"></circle><circle cx="19" cy="12" r="1.5"></circle></svg>`
+)
+
 func renderBottomNav(machinesAvailable bool) string {
 	machinesHidden := ""
 	if !machinesAvailable {
 		machinesHidden = " hidden"
 	}
+	// Services starts as the current location: the page always loads scrolled
+	// to the top, so Services is the section in view before any JS section
+	// tracking runs. JS updates aria-current on scroll/click; Search and More
+	// are actions, not section links, so they never carry aria-current.
 	return `<nav class="bottom-nav" id="bottom-nav" aria-label="Portal navigation">` +
-		`<a class="bottom-nav-item" id="bottom-nav-services" href="#services-heading" data-bottom-nav-scroll="services-heading"><span class="bottom-nav-icon" aria-hidden="true">&#9638;</span><span class="bottom-nav-label">Services</span></a>` +
-		`<a class="bottom-nav-item" id="bottom-nav-machines" href="#machines-heading" data-bottom-nav-scroll="machines-heading"` + machinesHidden + `><span class="bottom-nav-icon" aria-hidden="true">&#9673;</span><span class="bottom-nav-label">Machines</span></a>` +
-		`<button type="button" class="bottom-nav-item" id="bottom-nav-more" aria-haspopup="dialog" aria-controls="account-panel" aria-expanded="false"><span class="bottom-nav-icon" aria-hidden="true">&#8943;</span><span class="bottom-nav-label">More</span></button>` +
+		`<a class="bottom-nav-item" id="bottom-nav-services" href="#services-heading" data-bottom-nav-scroll="services-heading" aria-current="location"><span class="bottom-nav-icon" aria-hidden="true">` + bottomNavIconServices + `</span><span class="bottom-nav-label">Services</span></a>` +
+		`<a class="bottom-nav-item" id="bottom-nav-machines" href="#machines-heading" data-bottom-nav-scroll="machines-heading"` + machinesHidden + `><span class="bottom-nav-icon" aria-hidden="true">` + bottomNavIconMachines + `</span><span class="bottom-nav-label">Machines</span></a>` +
+		`<button type="button" class="bottom-nav-item" id="bottom-nav-search"><span class="bottom-nav-icon" aria-hidden="true">` + bottomNavIconSearch + `</span><span class="bottom-nav-label">Search</span></button>` +
+		`<button type="button" class="bottom-nav-item" id="bottom-nav-more" aria-haspopup="dialog" aria-controls="account-panel" aria-expanded="false"><span class="bottom-nav-icon" aria-hidden="true">` + bottomNavIconMore + `</span><span class="bottom-nav-label">More</span></button>` +
 		`</nav>`
 }
 
@@ -468,36 +490,56 @@ func renderServiceHealthStatus(store *ServiceHealthStore, proxyHostID int) strin
 		return ""
 	}
 
-	label := "unknown"
-	displayLabel := "unknown"
+	// Labels describe the scope of the configured backend probe only -- never
+	// a claim about what a real browser session will see. renderServiceHealthHelp
+	// spells out TCP-vs-HTTP and 401/403 semantics for viewers who want detail.
+	// The enum, its ServiceHealthState* constants, and the CSS class names below
+	// are unchanged; only the human-facing wording changed.
+	label := "check unknown"
 	className := "unknown"
 	switch result.State {
 	case ServiceHealthStateReachable:
-		label = "reachable"
+		label = "backend check passed"
 		className = "reachable"
 	case ServiceHealthStateAuthRequired:
-		label = "authentication required"
+		label = "backend denied"
 		className = "auth-required"
 	case ServiceHealthStateResponseError:
-		label = "response error"
+		label = "unexpected response"
 		className = "response-error"
 	case ServiceHealthStateUnreachable:
-		label = "unreachable"
+		label = "check failed"
 		className = "unreachable"
 	case ServiceHealthStateStale:
-		label = "stale"
+		label = "check stale"
 		className = "stale"
 	}
-	displayLabel = label
-	if result.State == ServiceHealthStateAuthRequired {
-		displayLabel = "auth required"
-	}
 	return fmt.Sprintf(
-		`<span class="health-status health-%s" aria-label="Service health: %s">%s</span>`,
+		`<span class="health-status health-%s" aria-label="Backend service check: %s">%s</span>`,
 		className,
 		html.EscapeString(label),
-		html.EscapeString(displayLabel),
+		html.EscapeString(label),
 	)
+}
+
+// renderServiceHealthHelp renders a single, touch/keyboard-accessible native
+// disclosure explaining what a backend check does and does not establish. It
+// is rendered once for the Services section (not per card) and reuses no new
+// probe data -- it only clarifies the existing ServiceHealthState contract
+// already exposed by renderServiceHealthStatus.
+func renderServiceHealthHelp() string {
+	return `<details class="service-health-help">` +
+		`<summary>What does a service check mean?</summary>` +
+		`<div class="service-health-help-body">` +
+		`<p>Each label describes a backend check run from this server, not what your browser will see. ` +
+		`A TCP check only confirms a connection could be opened; it says nothing about the page behind it. ` +
+		`An HTTP check accepts a configured range of status codes as a pass, but an accepted status does not prove a usable page, ` +
+		`and a denial (401/403) is always treated as a denial regardless of that range.</p>` +
+		`<p>Browser DNS, proxy rules, application logins, and existing sessions can still block access even after a passed check, ` +
+		`and a denial is not assurance that signing in will resolve it. "Check unknown" means no usable recent observation exists, ` +
+		`not necessarily that a check was never attempted.</p>` +
+		`</div>` +
+		`</details>`
 }
 
 func cardURLScheme(raw string) (string, bool) {
@@ -537,7 +579,7 @@ const portalPage = `<!doctype html>
   --accent: #3b82f6;
   --badge-bg: #1f2733;
   --badge-text: #9aa4b2;
-  --health-reachable: #3fb950;
+  --health-reachable: #3b82f6;
   --health-auth: #d29922;
   --health-response: #f0883e;
   --health-unreachable: #f85149;
@@ -555,7 +597,7 @@ const portalPage = `<!doctype html>
     --accent: #3b82f6;
     --badge-bg: #eef1f6;
     --badge-text: #5a6472;
-    --health-reachable: #1a7f37;
+    --health-reachable: #3b82f6;
     --health-auth: #9a6700;
     --health-response: #bc4c00;
     --health-unreachable: #cf222e;
@@ -573,7 +615,7 @@ const portalPage = `<!doctype html>
   --accent: #3b82f6;
   --badge-bg: #eef1f6;
   --badge-text: #5a6472;
-  --health-reachable: #1a7f37;
+  --health-reachable: #3b82f6;
   --health-auth: #9a6700;
   --health-response: #bc4c00;
   --health-unreachable: #cf222e;
@@ -590,7 +632,7 @@ const portalPage = `<!doctype html>
   --accent: #3b82f6;
   --badge-bg: #1f2733;
   --badge-text: #9aa4b2;
-  --health-reachable: #3fb950;
+  --health-reachable: #3b82f6;
   --health-auth: #d29922;
   --health-response: #f0883e;
   --health-unreachable: #f85149;
@@ -639,6 +681,26 @@ a.card:hover, a.card:focus-visible { border-color: var(--accent); background: va
 .health-unreachable { color: var(--health-unreachable); }
 .health-stale { color: var(--health-stale); }
 .health-unknown { color: var(--health-unknown); }
+.service-health-help { margin: -.35rem 0 1rem; color: var(--muted); font-size: .82rem; }
+.service-health-help summary { width: fit-content; cursor: pointer; color: var(--muted); font-weight: 600; }
+.service-health-help summary:hover, .service-health-help summary:focus-visible { color: var(--text); }
+.service-health-help-body { display: grid; gap: .5rem; margin-top: .5rem; max-width: 68ch; }
+.service-health-help-body p { margin: 0; }
+.card[hidden], .card-unlinked[hidden], .machine-row[hidden], .service-category[hidden] { display: none; }
+.portal-search { margin: 0; }
+.portal-search-label { display: block; margin-bottom: .35rem; font-size: .85rem; font-weight: 600; color: var(--muted); }
+.portal-search-field { position: relative; display: flex; align-items: center; }
+.portal-search-icon { position: absolute; left: .85rem; width: 1.1rem; height: 1.1rem; color: var(--muted); pointer-events: none; }
+.portal-search-input { width: 100%; min-height: 2.9rem; padding: .6rem 3.35rem .6rem 2.6rem; border: 1px solid var(--border); border-radius: 12px; background: var(--card-bg); color: var(--text); font: inherit; font-size: 1rem; }
+.portal-search-input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.portal-search-input::-webkit-search-cancel-button { display: none; }
+.portal-search-clear { position: absolute; right: .15rem; display: inline-flex; align-items: center; justify-content: center; width: 2.75rem; height: 2.75rem; border: 0; border-radius: 8px; background: transparent; color: var(--muted); cursor: pointer; }
+.portal-search-clear[hidden] { display: none; }
+.portal-search-clear:hover, .portal-search-clear:focus-visible { color: var(--text); background: var(--card-hover-bg); }
+.portal-search-clear svg { width: 1rem; height: 1rem; }
+.portal-search-status { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+.portal-search-no-results { margin: .6rem 0 0; color: var(--muted); font-size: .85rem; }
+.portal-search-no-results[hidden] { display: none; }
 .machines-help { margin: 0 0 1rem; max-width: 76ch; color: var(--muted); font-size: .85rem; }
 .machine-list { display: grid; gap: .55rem; }
 .machine-row { display: grid; grid-template-columns: minmax(14rem, .7fr) minmax(18rem, 1.3fr) 20rem; grid-template-areas: "identity connect actions" "details details details"; gap: .4rem 1rem; align-items: center; min-width: 0; padding: .7rem 1rem; border: 1px solid var(--border); border-radius: 12px; background: var(--card-bg); }
@@ -680,11 +742,12 @@ a.card:hover, a.card:focus-visible { border-color: var(--accent); background: va
   .machine-feedback { text-align: left; }
 }
 @media (max-width: 600px) {
-  header { padding: 1.5rem 1rem .75rem; align-items: flex-start; }
-  main { padding: 1rem 1rem 2rem; }
-  .header-side { width: 100%; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; }
-  .user { text-align: left; max-width: 100%; }
-  .user-name, .user .login { white-space: normal; overflow-wrap: anywhere; }
+  header { padding: 1rem 1rem .6rem; align-items: center; }
+  main { padding: .75rem 1rem 2rem; }
+  .portal-content { gap: 1.5rem; }
+  .portal-search { margin-bottom: .6rem; }
+  .header-side { flex: 1 1 auto; min-width: 0; justify-content: flex-end; }
+  .user { text-align: right; max-width: 100%; }
   .grid { grid-template-columns: minmax(0, 1fr); }
   .card-meta { align-items: flex-start; }
   .health-status { margin-left: 0; text-align: left; }
@@ -693,16 +756,31 @@ a.card:hover, a.card:focus-visible { border-color: var(--accent); background: va
   .machine-actions:not(.machine-actions-with-console) { grid-template-columns: minmax(0, 1fr); }
   .machine-policy-accounts { grid-template-columns: minmax(0, 1fr); }
   body { padding-bottom: calc(4.75rem + env(safe-area-inset-bottom)); }
-  .account { width: 100%; }
-  .account-trigger { width: 100%; text-align: left; }
+  .account { min-width: 0; max-width: 100%; }
+  .account-trigger { max-width: 100%; text-align: right; }
   .account-panel { position: fixed; top: auto; left: 1rem; right: 1rem; bottom: calc(4.5rem + env(safe-area-inset-bottom)); width: auto; max-width: none; max-height: min(70vh, 32rem); overflow-y: auto; z-index: 40; }
-  .bottom-nav { display: flex; position: fixed; left: 0; right: 0; bottom: 0; z-index: 30; justify-content: space-around; gap: .25rem; padding: .35rem max(.5rem, env(safe-area-inset-right)) calc(.35rem + env(safe-area-inset-bottom)) max(.5rem, env(safe-area-inset-left)); border-top: 1px solid var(--border); background: var(--card-bg); box-shadow: 0 -8px 24px rgba(0, 0, 0, .2); }
-  .bottom-nav-item { display: flex; flex: 1 1 0; min-width: 0; min-height: 44px; flex-direction: column; align-items: center; justify-content: center; gap: .12rem; padding: .3rem .2rem; border: 0; border-radius: 9px; background: transparent; color: var(--muted); text-decoration: none; font: inherit; cursor: pointer; }
+  .bottom-nav { display: flex; position: fixed; left: .6rem; right: .6rem; bottom: calc(.6rem + env(safe-area-inset-bottom)); z-index: 30; justify-content: space-around; align-items: center; gap: .2rem; padding: .3rem max(.4rem, env(safe-area-inset-right)) .3rem max(.4rem, env(safe-area-inset-left)); border: 1px solid var(--border); border-radius: 20px; background: var(--card-bg); box-shadow: 0 12px 28px rgba(0, 0, 0, .22); transition: transform .18s ease, opacity .18s ease; }
+  body.portal-typing .bottom-nav { transform: translateY(140%); opacity: 0; pointer-events: none; }
+  .bottom-nav-item { display: flex; flex: 1 1 0; min-width: 0; min-height: 44px; flex-direction: column; align-items: center; justify-content: center; gap: .12rem; padding: .3rem .2rem; border: 0; border-radius: 14px; background: transparent; color: var(--muted); text-decoration: none; font: inherit; cursor: pointer; }
+  .bottom-nav-item[hidden] { display: none; }
   .bottom-nav-item:hover, .bottom-nav-item:focus-visible { color: var(--text); background: var(--card-hover-bg); }
-  .bottom-nav-icon { font-size: 1rem; line-height: 1; }
+  .bottom-nav-item[aria-current="location"] { color: var(--text); background: var(--badge-bg); font-weight: 700; }
+  .bottom-nav-icon { display: flex; }
+  .bottom-nav-icon svg { width: 1.15rem; height: 1.15rem; }
   .bottom-nav-label { font-size: .7rem; font-weight: 650; line-height: 1.15; }
 }
+@media (prefers-reduced-motion: reduce) {
+  .bottom-nav { transition: none; }
+  a.card:hover, a.card:focus-visible { transform: none; }
+}
 </style>
+<noscript><style>
+  /* Search is a JS-only convenience filter over content that is already fully
+     usable without it. Hide the search field and the bottom-nav Search action
+     entirely when JS is unavailable so no nonfunctional control is shown;
+     Services/Machines links and the settings sheet remain plain HTML. */
+  .portal-search, #bottom-nav-search { display: none; }
+</style></noscript>
 <script>
 (function () {
   "use strict";
@@ -773,9 +851,20 @@ Show Velociportal logo
 </div>
 </header>
 <main>
+<div class="portal-search">
+<label class="portal-search-label" for="portal-search-input">Search services and machines</label>
+<div class="portal-search-field">
+<svg class="portal-search-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+<input type="search" id="portal-search-input" class="portal-search-input" placeholder="Search services and machines" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" enterkeyhint="done">
+<button type="button" class="portal-search-clear" id="portal-search-clear" aria-label="Clear search" hidden><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg></button>
+</div>
+<span class="portal-search-status" id="portal-search-status" role="status" aria-live="polite"></span>
+</div>
+<p class="portal-search-no-results" id="portal-search-no-results" hidden>No results for this search.</p>
 <div class="portal-content" id="portal-content" hx-get="/portal" hx-trigger="every 60s" hx-target="#portal-content" hx-select="#portal-content" hx-swap="outerHTML">
 <section class="portal-section" aria-labelledby="services-heading">
 <h2 class="section-title" id="services-heading">Services</h2>
+{{SERVICES_HEALTH_HELP}}
 <div class="{{SERVICES_CLASS}}" id="services">
 {{SERVICES_BODY}}
 </div>
@@ -868,9 +957,58 @@ Show Velociportal logo
 (function () {
   "use strict";
 
+  // Lightweight active-section tracking: a feature-detected IntersectionObserver
+  // drives aria-current="location" on the Services/Machines section links, with
+  // a click fallback for browsers without it. The observer is disconnected and
+  // rebuilt after every htmx swap so it never watches stale nodes, and Machines'
+  // current-location state is cleared the moment the projection disappears.
+  var observer = null;
+
+  function machinesLinkEl() { return document.getElementById("bottom-nav-machines"); }
+  function servicesLinkEl() { return document.getElementById("bottom-nav-services"); }
+
+  function setCurrentNavLink(link) {
+    [servicesLinkEl(), machinesLinkEl()].forEach(function (candidate) {
+      if (!candidate) return;
+      if (candidate === link) candidate.setAttribute("aria-current", "location");
+      else candidate.removeAttribute("aria-current");
+    });
+  }
+
+  function observeSections() {
+    if (observer) {
+      observer.disconnect();
+      observer = null;
+    }
+    var servicesHeading = document.getElementById("services-heading");
+    var machinesLink = machinesLinkEl();
+    var machinesHeading = machinesLink && !machinesLink.hidden ? document.getElementById("machines-heading") : null;
+    var targets = [];
+    if (servicesHeading) targets.push([servicesHeading, servicesLinkEl()]);
+    if (machinesHeading) targets.push([machinesHeading, machinesLink]);
+
+    if (!("IntersectionObserver" in window) || targets.length === 0) {
+      setCurrentNavLink(servicesLinkEl());
+      return;
+    }
+    observer = new IntersectionObserver(function (entries) {
+      var visible = entries.filter(function (entry) { return entry.isIntersecting; });
+      if (visible.length === 0) return;
+      var match = targets.filter(function (pair) { return pair[0] === visible[0].target; })[0];
+      if (match) setCurrentNavLink(match[1]);
+    }, { rootMargin: "-40% 0px -55% 0px", threshold: 0 });
+    targets.forEach(function (pair) { observer.observe(pair[0]); });
+    setCurrentNavLink(servicesLinkEl());
+  }
+
   function syncBottomNavMachines() {
-    var machinesLink = document.getElementById("bottom-nav-machines");
-    if (machinesLink) machinesLink.hidden = !document.getElementById("machines-heading");
+    var machinesLink = machinesLinkEl();
+    var available = !!document.getElementById("machines-heading");
+    if (machinesLink) {
+      machinesLink.hidden = !available;
+      if (!available) machinesLink.removeAttribute("aria-current");
+    }
+    observeSections();
   }
 
   document.addEventListener("click", function (event) {
@@ -884,10 +1022,179 @@ Show Velociportal logo
     target.setAttribute("tabindex", "-1");
     target.focus({ preventScroll: true });
     target.addEventListener("blur", function () { target.removeAttribute("tabindex"); }, { once: true });
+    setCurrentNavLink(link);
   });
 
   document.body.addEventListener("htmx:afterSwap", syncBottomNavMachines);
   syncBottomNavMachines();
+}());
+
+(function () {
+  "use strict";
+
+  // Suppress the bottom dock while a mobile text field has focus so it never
+  // competes with the on-screen keyboard, then restore it on exit. This only
+  // toggles a body class the dock's own CSS transition responds to -- no
+  // visualViewport reads, no keyboard-height measurement, no repositioning of
+  // any element. The settings sheet (a checkbox/button dialog, not a text
+  // field) never triggers this class, so it is never obstructed.
+  //
+  // The CSS transform/opacity used to hide the dock does not remove it from
+  // the keyboard tab order, so suppression also marks the dock inert (with a
+  // tabindex fallback for browsers without inert support) so its links and
+  // buttons are not reachable via Tab while visually/pointer hidden. A
+  // control that currently has focus is never hidden: suppression only ever
+  // runs when focus is moving into a text field elsewhere on the page, and
+  // the dock is left alone if it somehow already contains the active
+  // element. Focusability is restored as soon as focus leaves every text
+  // field, including moves into the settings sheet.
+  var TYPING_CLASS = "portal-typing";
+  var dock = document.getElementById("bottom-nav");
+
+  function isTextEntry(el) {
+    if (!el) return false;
+    if (el.tagName === "TEXTAREA") return true;
+    if (el.tagName !== "INPUT") return false;
+    var type = (el.getAttribute("type") || "text").toLowerCase();
+    return type === "text" || type === "search";
+  }
+
+  function dockContainsFocus() {
+    var node = dock && document.activeElement;
+    while (node) {
+      if (node === dock) return true;
+      node = node.parentNode;
+    }
+    return false;
+  }
+
+  function setDockInert(state) {
+    if (!dock) return;
+    if ("inert" in dock) {
+      dock.inert = state;
+      return;
+    }
+    var items = dock.querySelectorAll(".bottom-nav-item");
+    for (var i = 0; i < items.length; i++) {
+      if (state) items[i].setAttribute("tabindex", "-1");
+      else items[i].removeAttribute("tabindex");
+    }
+  }
+
+  document.addEventListener("focusin", function (event) {
+    if (!isTextEntry(event.target)) return;
+    document.body.classList.add(TYPING_CLASS);
+    if (!dockContainsFocus()) setDockInert(true);
+  });
+  document.addEventListener("focusout", function (event) {
+    if (!isTextEntry(event.target)) return;
+    window.setTimeout(function () {
+      if (!isTextEntry(document.activeElement)) {
+        document.body.classList.remove(TYPING_CLASS);
+        setDockInert(false);
+      }
+    }, 0);
+  });
+}());
+
+(function () {
+  "use strict";
+
+  // Prominent, persistent, browser-only search over already-rendered,
+  // already-authorized service cards and machine rows. The input lives
+  // outside the #portal-content htmx swap boundary, so the query and focus
+  // both survive the 60-second refresh untouched; this controller only
+  // re-applies the existing query to the freshly swapped DOM afterward. The
+  // query is never written to storage, the URL, logs, or any network call.
+  var input = document.getElementById("portal-search-input");
+  var clearButton = document.getElementById("portal-search-clear");
+  var status = document.getElementById("portal-search-status");
+  var noResults = document.getElementById("portal-search-no-results");
+  var searchNavButton = document.getElementById("bottom-nav-search");
+  if (!input) return;
+
+  function cardHaystack(card) {
+    var nameEl = card.querySelector(".card-name");
+    var text = nameEl ? nameEl.textContent : "";
+    if (card.tagName === "A" && card.href) {
+      try {
+        text += " " + new URL(card.href, window.location.href).hostname;
+      } catch (_) {}
+    }
+    return text.toLowerCase();
+  }
+
+  function machineHaystack(row) {
+    var nameEl = row.querySelector(".machine-name");
+    var targetEl = row.querySelector(".machine-target");
+    var text = (nameEl ? nameEl.textContent : "") + " " +
+      (targetEl ? targetEl.textContent : "") + " " +
+      (row.getAttribute("data-machine") || "");
+    return text.toLowerCase();
+  }
+
+  function applyPortalSearch() {
+    var raw = input.value || "";
+    var query = raw.trim().toLowerCase();
+    if (clearButton) clearButton.hidden = raw.length === 0;
+
+    var cards = document.querySelectorAll("#services .card, #services .card-unlinked");
+    var rows = document.querySelectorAll(".machine-row");
+    var visible = 0;
+
+    cards.forEach(function (card) {
+      var match = query === "" || cardHaystack(card).indexOf(query) !== -1;
+      card.hidden = !match;
+      if (match) visible++;
+    });
+    rows.forEach(function (row) {
+      var match = query === "" || machineHaystack(row).indexOf(query) !== -1;
+      row.hidden = !match;
+      if (match) visible++;
+    });
+
+    document.querySelectorAll(".service-category").forEach(function (section) {
+      if (query === "") {
+        section.hidden = false;
+        return;
+      }
+      var anyVisible = false;
+      section.querySelectorAll(".card, .card-unlinked").forEach(function (card) {
+        if (!card.hidden) anyVisible = true;
+      });
+      section.hidden = !anyVisible;
+    });
+
+    var searchable = cards.length + rows.length;
+    var showNoResults = query !== "" && searchable > 0 && visible === 0;
+    if (noResults) noResults.hidden = !showNoResults;
+    if (status) status.textContent = showNoResults ? "No results for this search." : "";
+  }
+
+  input.addEventListener("input", applyPortalSearch);
+  input.addEventListener("keydown", function (event) {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      input.blur();
+    }
+  });
+  if (clearButton) {
+    clearButton.addEventListener("click", function () {
+      input.value = "";
+      applyPortalSearch();
+      input.focus();
+    });
+  }
+  if (searchNavButton) {
+    searchNavButton.addEventListener("click", function () {
+      var reduced = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      input.scrollIntoView({ behavior: reduced ? "auto" : "smooth", block: "start" });
+      input.focus();
+    });
+  }
+  document.body.addEventListener("htmx:afterSwap", applyPortalSearch);
+  applyPortalSearch();
+  window.__velociportalApplyPortalSearch = applyPortalSearch;
 }());
 
 (function () {

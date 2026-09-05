@@ -263,6 +263,81 @@ func TestServiceProbeHTTPGETHostPathAndStatusStates(t *testing.T) {
 	}
 }
 
+// TestServiceProbeHTTPAuthStatusOverridesAcceptedRange guards against a
+// regression where a broadly (mis)configured accepted-status range could
+// mask a 401/403 as a passing check. probeHTTP must classify 401/403 as
+// ServiceHealthStateAuthRequired unconditionally, even when the configured
+// AcceptedStatuses range would otherwise cover that exact status code.
+func TestServiceProbeHTTPAuthStatusOverridesAcceptedRange(t *testing.T) {
+	for _, code := range []int{http.StatusUnauthorized, http.StatusForbidden} {
+		t.Run(http.StatusText(code), func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+				writer.WriteHeader(code)
+			}))
+			defer server.Close()
+			engine := testServiceProbeEngineDialingServer(t, server, nil)
+			service := ServiceHealthService{
+				ProxyHostID: 7,
+				Type:        ServiceHealthProbeHTTP,
+				Path:        "/health/live%20check",
+				// Deliberately broad enough to include 401/403, mirroring an
+				// operator misconfiguration -- the override must still win.
+				AcceptedStatuses: []ServiceHealthStatusRange{{Min: 200, Max: 499}},
+			}
+			result := engine.Probe(context.Background(), testProxyHost(), service)
+			if result.State != ServiceHealthStateAuthRequired || result.HTTPStatusClass != 4 {
+				t.Fatalf("Probe() = %#v, want AuthRequired regardless of accepted range", result)
+			}
+		})
+	}
+}
+
+// TestServiceProbeHTTPAcceptedStatusIgnoresResponseBodyContent guards
+// against ever introducing a response-body keyword heuristic. An accepted
+// status code with a body that looks like a denial (e.g. containing the
+// word "Unauthorized") must still classify as Reachable -- the probe only
+// looks at the status code, never the body, and closes it without reading
+// past what net/http needs to determine the code.
+func TestServiceProbeHTTPAcceptedStatusIgnoresResponseBodyContent(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.WriteHeader(http.StatusOK)
+		_, _ = writer.Write([]byte("Unauthorized: please sign in"))
+	}))
+	defer server.Close()
+	engine := testServiceProbeEngineDialingServer(t, server, nil)
+	result := engine.Probe(context.Background(), testProxyHost(), testHTTPService())
+	if result.State != ServiceHealthStateReachable || result.HTTPStatusClass != 2 {
+		t.Fatalf("Probe() = %#v, want Reachable from status code alone regardless of body text", result)
+	}
+}
+
+// TestServiceProbeTCPRejectsHTTPEvidenceFields guards against TCP probes
+// ever carrying HTTP-only evidence. A TCP-type service definition that also
+// sets an HTTP Path or AcceptedStatuses is rejected outright (Unknown, no
+// probe attempted) rather than silently ignoring those fields -- a bare TCP
+// connect-and-close can never be reinterpreted as HTTP status evidence.
+func TestServiceProbeTCPRejectsHTTPEvidenceFields(t *testing.T) {
+	engine, err := newServiceProbeEngine(testServiceProbeConfig(), nil, serviceProbeDependencies{
+		resolver: staticServiceProbeResolver(map[string][]netip.Addr{"app.internal": {netip.MustParseAddr("10.1.2.3")}}),
+		dialer: serviceProbeDialerFunc(func(context.Context, string, string) (net.Conn, error) {
+			t.Fatal("Probe() must not dial when the TCP service carries HTTP-only fields")
+			return nil, errors.New("unreachable")
+		}),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := ServiceHealthService{
+		ProxyHostID:      7,
+		Type:             ServiceHealthProbeTCP,
+		AcceptedStatuses: []ServiceHealthStatusRange{{Min: 200, Max: 299}},
+	}
+	result := engine.Probe(context.Background(), testProxyHost(), service)
+	if result.State != ServiceHealthStateUnknown || result.HTTPStatusClass != 0 {
+		t.Fatalf("Probe() = %#v, want Unknown with no dial attempted", result)
+	}
+}
+
 func TestServiceProbeHTTPDoesNotFollowRedirectsOrUseEnvironmentProxy(t *testing.T) {
 	var redirected atomic.Int32
 	redirectTarget := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {

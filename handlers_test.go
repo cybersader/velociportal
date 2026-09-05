@@ -468,14 +468,14 @@ func TestPortalHandler_HealthJoinsOnlyAuthorizedCards(t *testing.T) {
 	}
 	body := rec.Body.String()
 	for _, expected := range []string{
-		`aria-label="Service health: reachable"`,
-		`aria-label="Service health: stale"`,
+		`aria-label="Backend service check: backend check passed"`,
+		`aria-label="Backend service check: check stale"`,
 	} {
 		if !strings.Contains(body, expected) {
 			t.Fatalf("authorized health status %q was not rendered", expected)
 		}
 	}
-	if strings.Contains(body, `aria-label="Service health: authentication required"`) {
+	if strings.Contains(body, `aria-label="Backend service check: backend denied"`) {
 		t.Fatal("health for an unauthorized card was rendered")
 	}
 	if strings.Contains(body, "jenkins.example.com") {
@@ -483,19 +483,24 @@ func TestPortalHandler_HealthJoinsOnlyAuthorizedCards(t *testing.T) {
 	}
 }
 
+// TestRenderServiceHealthStatusLabels pins the exact backend-check-scoped
+// wording per state. Labels intentionally describe what the configured
+// backend probe observed, never a claim about what a real browser session
+// will see (see renderServiceHealthHelp for the full explanation surfaced
+// next to the Services heading). CSS class names are unchanged so existing
+// theme rules keep applying without edits.
 func TestRenderServiceHealthStatusLabels(t *testing.T) {
 	tests := []struct {
-		state      ServiceHealthState
-		accessible string
-		display    string
-		class      string
+		state ServiceHealthState
+		label string
+		class string
 	}{
-		{ServiceHealthStateUnknown, "unknown", "unknown", "health-unknown"},
-		{ServiceHealthStateReachable, "reachable", "reachable", "health-reachable"},
-		{ServiceHealthStateAuthRequired, "authentication required", "auth required", "health-auth-required"},
-		{ServiceHealthStateResponseError, "response error", "response error", "health-response-error"},
-		{ServiceHealthStateUnreachable, "unreachable", "unreachable", "health-unreachable"},
-		{ServiceHealthStateStale, "stale", "stale", "health-stale"},
+		{ServiceHealthStateUnknown, "check unknown", "unknown"},
+		{ServiceHealthStateReachable, "backend check passed", "reachable"},
+		{ServiceHealthStateAuthRequired, "backend denied", "auth-required"},
+		{ServiceHealthStateResponseError, "unexpected response", "response-error"},
+		{ServiceHealthStateUnreachable, "check failed", "unreachable"},
+		{ServiceHealthStateStale, "check stale", "stale"},
 	}
 	for _, test := range tests {
 		t.Run(string(test.state), func(t *testing.T) {
@@ -503,7 +508,7 @@ func TestRenderServiceHealthStatusLabels(t *testing.T) {
 			store.publish(map[int]ServiceHealthResult{
 				1: {ProxyHostID: 1, State: test.state, CheckedAt: time.Now()},
 			}, time.Hour)
-			want := `<span class="health-status ` + test.class + `" aria-label="Service health: ` + test.accessible + `">` + test.display + `</span>`
+			want := `<span class="health-status health-` + test.class + `" aria-label="Backend service check: ` + test.label + `">` + test.label + `</span>`
 			if markup := renderServiceHealthStatus(store, 1); markup != want {
 				t.Fatalf("markup = %q, want %q", markup, want)
 			}
@@ -511,6 +516,31 @@ func TestRenderServiceHealthStatusLabels(t *testing.T) {
 	}
 	if markup := renderServiceHealthStatus(NewServiceHealthStore(), 1); markup != "" {
 		t.Fatalf("unconfigured health markup = %q", markup)
+	}
+}
+
+// TestRenderServiceHealthHelpDescribesBackendScopeOnly guards against the
+// disclosure drifting into claims this project cannot make: it must not
+// invent HTTP status codes/reasons, must not promise browser-path success,
+// and must not name qbit.home or assert any specific root cause.
+func TestRenderServiceHealthHelpDescribesBackendScopeOnly(t *testing.T) {
+	help := renderServiceHealthHelp()
+	if !strings.Contains(help, "<details class=\"service-health-help\">") {
+		t.Fatalf("help disclosure is not a native details element: %s", help)
+	}
+	for _, want := range []string{
+		"backend check",
+		"TCP check only confirms a connection",
+		"denial is not assurance that signing in will resolve it",
+	} {
+		if !strings.Contains(help, want) {
+			t.Fatalf("help disclosure missing %q: %s", want, help)
+		}
+	}
+	for _, forbidden := range []string{"qbit", "reachable", "unreachable"} {
+		if strings.Contains(strings.ToLower(help), strings.ToLower(forbidden)) {
+			t.Fatalf("help disclosure must not contain %q: %s", forbidden, help)
+		}
 	}
 }
 
@@ -525,7 +555,7 @@ func TestRenderServiceCardKeepsNameSeparateFromHealth(t *testing.T) {
 	markup := body.String()
 	for _, expected := range []string{
 		`<span class="card-head"><span class="card-name">very-long-service-name.example.com</span></span>`,
-		`<span class="card-meta"><span class="badge">https</span><span class="health-status health-auth-required" aria-label="Service health: authentication required">auth required</span></span>`,
+		`<span class="card-meta"><span class="badge">https</span><span class="health-status health-auth-required" aria-label="Backend service check: backend denied">backend denied</span></span>`,
 	} {
 		if !strings.Contains(markup, expected) {
 			t.Fatalf("service card omitted %q: %s", expected, markup)
@@ -534,6 +564,29 @@ func TestRenderServiceCardKeepsNameSeparateFromHealth(t *testing.T) {
 	if strings.Contains(markup, `card-name">very-long-service-name.example.com</span><span class="health-status`) {
 		t.Fatal("service health must not share the service-name row")
 	}
+}
+
+func TestPortalHandler_ServiceHealthHelpOnlyWhenHealthConfigured(t *testing.T) {
+	t.Run("nil health store omits the disclosure", func(t *testing.T) {
+		rec := doPortalRequest(newTestHandlerWithHealth(standardTestData(), nil), "127.0.0.1:12345", "alice@example.com")
+		body := rec.Body.String()
+		// The static stylesheet always defines .service-health-help rules (dead
+		// CSS when unused), so assert on the actual <details> element rather than
+		// the bare class-name substring, which would always match the CSS block.
+		if strings.Contains(body, `<details class="service-health-help">`) {
+			t.Fatal("service health help disclosure must not render without a configured health store")
+		}
+	})
+
+	t.Run("configured health store includes the disclosure", func(t *testing.T) {
+		store := NewServiceHealthStore()
+		store.publish(map[int]ServiceHealthResult{}, time.Hour)
+		rec := doPortalRequest(newTestHandlerWithHealth(standardTestData(), store), "127.0.0.1:12345", "alice@example.com")
+		body := rec.Body.String()
+		if !strings.Contains(body, `<details class="service-health-help">`) {
+			t.Fatal("service health help disclosure must render once a health store is configured")
+		}
+	})
 }
 
 func TestPortalHandler_MachinesRenderAsAccessibleNonLinkablePolicyCards(t *testing.T) {
@@ -1203,6 +1256,106 @@ func TestPortalHandler_MobileBottomNavigationTracksMachineProjection(t *testing.
 	navStart := strings.Index(body, `<nav class="bottom-nav"`)
 	if contentEnd < 0 || navStart < contentEnd {
 		t.Fatal("bottom navigation must remain outside the htmx swap boundary")
+	}
+}
+
+func TestPortalHandler_SearchFieldRendersOutsideSwapBoundary(t *testing.T) {
+	rec := doPortalRequest(newTestHandler(standardTestData()), "127.0.0.1:12345", "alice@example.com")
+	body := rec.Body.String()
+
+	for _, expected := range []string{
+		`<label class="portal-search-label" for="portal-search-input">Search services and machines</label>`,
+		`<input type="search" id="portal-search-input" class="portal-search-input" placeholder="Search services and machines"`,
+		`<button type="button" class="portal-search-clear" id="portal-search-clear" aria-label="Clear search" hidden>`,
+		`<span class="portal-search-status" id="portal-search-status" role="status" aria-live="polite">`,
+		`<p class="portal-search-no-results" id="portal-search-no-results" hidden>No results for this search.</p>`,
+	} {
+		if !strings.Contains(body, expected) {
+			t.Fatalf("portal search markup omitted %q", expected)
+		}
+	}
+
+	mainStart := strings.Index(body, "<main>")
+	searchStart := strings.Index(body, `id="portal-search-input"`)
+	contentStart := strings.Index(body, `id="portal-content"`)
+	mainEnd := strings.Index(body, "</main>")
+	if mainStart < 0 || searchStart < 0 || contentStart < 0 || mainEnd < 0 {
+		t.Fatal("could not locate main/search/content boundaries")
+	}
+	if !(mainStart < searchStart && searchStart < contentStart && contentStart < mainEnd) {
+		t.Fatal("search field must render inside <main> but before the htmx swap boundary (#portal-content)")
+	}
+
+	// The search field is not part of the hx-select="#portal-content" swap target,
+	// so it (and any query/focus state) survives the 60s refresh untouched.
+	if !strings.Contains(body, `hx-select="#portal-content" hx-swap="outerHTML"`) {
+		t.Fatal("expected #portal-content to remain the sole htmx swap target")
+	}
+}
+
+func TestPortalHandler_BottomNavRendersFourLabeledSVGActions(t *testing.T) {
+	rec := doPortalRequest(newTestHandler(machineMatcherFixture(t)), "127.0.0.1:12345", "alice@example.com")
+	body := rec.Body.String()
+
+	navStart := strings.Index(body, `<nav class="bottom-nav" id="bottom-nav"`)
+	navEnd := strings.Index(body, `</nav>`)
+	if navStart < 0 || navEnd < 0 || navEnd < navStart {
+		t.Fatal("could not locate bottom navigation markup")
+	}
+	nav := body[navStart:navEnd]
+
+	for _, expected := range []string{
+		`id="bottom-nav-services"`,
+		`id="bottom-nav-machines"`,
+		`id="bottom-nav-search"`,
+		`id="bottom-nav-more"`,
+		`<span class="bottom-nav-label">Services</span>`,
+		`<span class="bottom-nav-label">Machines</span>`,
+		`<span class="bottom-nav-label">Search</span>`,
+		`<span class="bottom-nav-label">More</span>`,
+	} {
+		if !strings.Contains(nav, expected) {
+			t.Fatalf("bottom navigation missing %q", expected)
+		}
+	}
+
+	// Every item carries a decorative, non-focusable SVG icon: exactly four
+	// icon wrappers, one per action, each marked aria-hidden and focusable="false".
+	iconWrapperCount := strings.Count(nav, `<span class="bottom-nav-icon" aria-hidden="true">`)
+	if iconWrapperCount != 4 {
+		t.Fatalf("expected 4 bottom-nav icon wrappers, got %d", iconWrapperCount)
+	}
+	svgCount := strings.Count(nav, `<svg viewBox="0 0 24 24"`)
+	if svgCount != 4 {
+		t.Fatalf("expected 4 embedded SVG icons, got %d", svgCount)
+	}
+	if strings.Count(nav, `focusable="false"`) != 4 || strings.Count(nav, `aria-hidden="true"`) < 4 {
+		t.Fatal("bottom-nav icons must be decorative and excluded from the tab order")
+	}
+
+	// Search and More are actions, not section links: they render as buttons,
+	// never carry an href, and never claim aria-current="location".
+	searchStart := strings.Index(nav, `id="bottom-nav-search"`)
+	moreStart := strings.Index(nav, `id="bottom-nav-more"`)
+	if searchStart < 0 || moreStart < 0 {
+		t.Fatal("could not locate Search/More items")
+	}
+	searchTagStart := strings.LastIndex(nav[:searchStart], "<button")
+	moreTagStart := strings.LastIndex(nav[:moreStart], "<button")
+	if searchTagStart < 0 || moreTagStart < 0 {
+		t.Fatal("Search and More must render as buttons, not links")
+	}
+	if strings.Contains(nav[searchTagStart:searchStart], "href=") || strings.Contains(nav[moreTagStart:moreStart], "href=") {
+		t.Fatal("Search and More must not carry an href")
+	}
+	searchTagEnd := strings.Index(nav[searchTagStart:], ">")
+	moreTagEnd := strings.Index(nav[moreTagStart:], ">")
+	if searchTagEnd < 0 || moreTagEnd < 0 {
+		t.Fatal("could not locate end of Search/More opening tag")
+	}
+	if strings.Contains(nav[searchTagStart:searchTagStart+searchTagEnd], `aria-current`) ||
+		strings.Contains(nav[moreTagStart:moreTagStart+moreTagEnd], `aria-current`) {
+		t.Fatal("Search and More are actions, not locations, and must never carry aria-current")
 	}
 }
 
