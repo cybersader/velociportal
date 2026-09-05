@@ -437,10 +437,20 @@ func TestPortalHandler_WildcardDomainNeverBecomesLink(t *testing.T) {
 		`href="https://%2A.rader.wiki/"`,
 		`href="https://*.rader.wiki/"`,
 		`<a class="card"`,
+		`class="card-note"`,
 	} {
 		if strings.Contains(body, forbidden) {
 			t.Fatalf("wildcard card emitted forbidden link markup %q", forbidden)
 		}
+	}
+	if !strings.Contains(body, `<details class="service-health-help">`) {
+		t.Fatal("unlinked wildcard card should still surface link guidance via the shared disclosure, even with no health store configured")
+	}
+	if !strings.Contains(body, `What does "link needed" mean?`) {
+		t.Fatal("link-only disclosure title should be used when no health store is configured")
+	}
+	if strings.Contains(body, "TCP check only confirms") {
+		t.Fatal("link-only disclosure must not include health-scoped wording when health is unconfigured")
 	}
 }
 
@@ -524,7 +534,7 @@ func TestRenderServiceHealthStatusLabels(t *testing.T) {
 // invent HTTP status codes/reasons, must not promise browser-path success,
 // and must not name qbit.home or assert any specific root cause.
 func TestRenderServiceHealthHelpDescribesBackendScopeOnly(t *testing.T) {
-	help := renderServiceHealthHelp()
+	help := renderServiceHealthHelp(true, false)
 	if !strings.Contains(help, "<details class=\"service-health-help\">") {
 		t.Fatalf("help disclosure is not a native details element: %s", help)
 	}
@@ -541,6 +551,36 @@ func TestRenderServiceHealthHelpDescribesBackendScopeOnly(t *testing.T) {
 		if strings.Contains(strings.ToLower(help), strings.ToLower(forbidden)) {
 			t.Fatalf("help disclosure must not contain %q: %s", forbidden, help)
 		}
+	}
+}
+
+// TestRenderServiceHealthHelpTitleAndBodyVaryByApplicability pins the
+// disclosure's gating: it must render independently of health being
+// configured whenever either health or an unlinked ("link needed") card
+// applies, must omit itself entirely when neither applies, and must use the
+// combined title only when both apply.
+func TestRenderServiceHealthHelpTitleAndBodyVaryByApplicability(t *testing.T) {
+	if help := renderServiceHealthHelp(false, false); help != "" {
+		t.Fatalf("disclosure should be empty when neither health nor unlinked cards apply, got %q", help)
+	}
+
+	linkOnly := renderServiceHealthHelp(false, true)
+	if !strings.Contains(linkOnly, `<summary>What does "link needed" mean?</summary>`) {
+		t.Fatalf("link-only disclosure has wrong title: %s", linkOnly)
+	}
+	if !strings.Contains(linkOnly, "wildcard hostname") {
+		t.Fatalf("link-only disclosure missing link guidance: %s", linkOnly)
+	}
+	if strings.Contains(linkOnly, "TCP check only confirms") {
+		t.Fatalf("link-only disclosure must not include health-scoped wording: %s", linkOnly)
+	}
+
+	both := renderServiceHealthHelp(true, true)
+	if !strings.Contains(both, "<summary>About links and backend checks</summary>") {
+		t.Fatalf("combined disclosure has wrong title: %s", both)
+	}
+	if !strings.Contains(both, "wildcard hostname") || !strings.Contains(both, "TCP check only confirms") {
+		t.Fatalf("combined disclosure must include both link and health guidance: %s", both)
 	}
 }
 
