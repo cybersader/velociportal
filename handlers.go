@@ -158,10 +158,7 @@ func renderPortalWithOptions(w io.Writer, id *Identity, cards []ServiceCard, opt
 		)
 	}
 
-	servicesHealthHelp := ""
-	if health != nil {
-		servicesHealthHelp = renderServiceHealthHelp()
-	}
+	servicesHealthHelp := renderServiceHealthHelp(health != nil, anyCardUnlinked(cards))
 
 	displayName := strings.TrimSpace(id.Name)
 	if displayName == "" {
@@ -296,7 +293,6 @@ func renderServiceCard(body *strings.Builder, card ServiceCard, health *ServiceH
 		`<article class="card card-unlinked" data-service="%s">`+
 			`<span class="card-head"><span class="card-name">%s</span></span>`+
 			`<span class="card-meta"><span class="badge">link needed</span>%s</span>`+
-			`<span class="card-note">Add a concrete service URL in Velociportal metadata.</span>`+
 			`</article>`,
 		html.EscapeString(card.Name),
 		html.EscapeString(card.Name),
@@ -522,22 +518,68 @@ func renderServiceHealthStatus(store *ServiceHealthStore, proxyHostID int) strin
 	)
 }
 
+// anyCardUnlinked reports whether at least one card would render in the
+// unlinked ("link needed") state -- mirroring the same linkability check
+// renderServiceCard applies -- so the shared help disclosure can include
+// link/wildcard guidance independently of whether health is configured.
+func anyCardUnlinked(cards []ServiceCard) bool {
+	for _, card := range cards {
+		_, linkable := cardURLScheme(card.URL)
+		if card.LinkState != serviceLinkReady {
+			linkable = false
+		}
+		if !linkable {
+			return true
+		}
+	}
+	return false
+}
+
 // renderServiceHealthHelp renders a single, touch/keyboard-accessible native
-// disclosure explaining what a backend check does and does not establish. It
-// is rendered once for the Services section (not per card) and reuses no new
-// probe data -- it only clarifies the existing ServiceHealthState contract
-// already exposed by renderServiceHealthStatus.
-func renderServiceHealthHelp() string {
+// disclosure explaining what a backend check does and does not establish and,
+// independently, what an unlinked ("link needed") card means. It is rendered
+// once for the Services section (not per card) and reuses no new probe data
+// -- it only clarifies the existing ServiceHealthState contract already
+// exposed by renderServiceHealthStatus and the existing card-linking
+// behavior already exposed by cardURLScheme/LinkState. It renders whenever
+// either applies, independently of health being configured, so a portal with
+// health checks disabled -- or with JavaScript disabled -- never loses the
+// link/wildcard explanation.
+func renderServiceHealthHelp(hasHealth, hasUnlinkedCards bool) string {
+	if !hasHealth && !hasUnlinkedCards {
+		return ""
+	}
+
+	var title string
+	switch {
+	case hasHealth && hasUnlinkedCards:
+		title = "About links and backend checks"
+	case hasHealth:
+		title = "What does a service check mean?"
+	default:
+		title = `What does "link needed" mean?`
+	}
+
+	var body strings.Builder
+	if hasHealth {
+		body.WriteString(`<p>Each label describes a backend check run from this server, not what your browser will see. ` +
+			`A TCP check only confirms a connection could be opened; it says nothing about the page behind it. ` +
+			`An HTTP check accepts a configured range of status codes as a pass, but an accepted status does not prove a usable page, ` +
+			`and a denial (401/403) is always treated as a denial regardless of that range.</p>` +
+			`<p>Browser DNS, proxy rules, application logins, and existing sessions can still block access even after a passed check, ` +
+			`and a denial is not assurance that signing in will resolve it. "Check unknown" means no usable recent observation exists, ` +
+			`not necessarily that a check was never attempted.</p>`)
+	}
+	if hasUnlinkedCards {
+		body.WriteString(`<p>A card marked "link needed" has no concrete browser URL Velociportal can open directly -- often because ` +
+			`the matched destination is a wildcard hostname. It still confirms the destination is authorized; adding a concrete ` +
+			`service URL in Velociportal metadata is what turns it into a clickable link.</p>`)
+	}
+
 	return `<details class="service-health-help">` +
-		`<summary>What does a service check mean?</summary>` +
+		`<summary>` + title + `</summary>` +
 		`<div class="service-health-help-body">` +
-		`<p>Each label describes a backend check run from this server, not what your browser will see. ` +
-		`A TCP check only confirms a connection could be opened; it says nothing about the page behind it. ` +
-		`An HTTP check accepts a configured range of status codes as a pass, but an accepted status does not prove a usable page, ` +
-		`and a denial (401/403) is always treated as a denial regardless of that range.</p>` +
-		`<p>Browser DNS, proxy rules, application logins, and existing sessions can still block access even after a passed check, ` +
-		`and a denial is not assurance that signing in will resolve it. "Check unknown" means no usable recent observation exists, ` +
-		`not necessarily that a check was never attempted.</p>` +
+		body.String() +
 		`</div>` +
 		`</details>`
 }
@@ -672,7 +714,6 @@ a.card:hover, a.card:focus-visible { border-color: var(--accent); background: va
 .card-head { display: block; min-width: 0; }
 .card-name { display: block; color: var(--text); font-weight: 600; line-height: 1.3; overflow-wrap: anywhere; }
 .card-meta { display: flex; align-items: center; gap: .5rem; min-width: 0; margin-top: auto; flex-wrap: wrap; }
-.card-note { font-size: .82rem; line-height: 1.35; }
 .badge { align-self: flex-start; padding: .1rem .5rem; border-radius: 999px; font-size: .72rem; font-weight: 600; letter-spacing: .02em; text-transform: uppercase; background: var(--badge-bg); color: var(--badge-text); }
 .health-status { margin-left: auto; flex-shrink: 0; font-size: .72rem; font-weight: 650; line-height: 1.2; text-align: right; }
 .health-reachable { color: var(--health-reachable); }
@@ -737,6 +778,11 @@ a.card:hover, a.card:focus-visible { border-color: var(--accent); background: va
 .empty-icon { font-size: 2.5rem; line-height: 1; margin-bottom: .5rem; opacity: .5; }
 .empty p { margin: 0; }
 .bottom-nav { display: none; }
+@media (min-width: 601px) {
+  .portal-content { padding-top: 1.25rem; }
+  .card-meta { flex-direction: column; align-items: flex-start; flex-wrap: nowrap; }
+  .health-status { margin-left: 0; text-align: left; }
+}
 @media (max-width: 900px) {
   .machine-row { grid-template-columns: minmax(11rem, .75fr) minmax(18rem, 1.25fr); grid-template-areas: "identity connect" "details actions"; align-items: start; }
   .machine-feedback { text-align: left; }
