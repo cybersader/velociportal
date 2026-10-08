@@ -103,6 +103,8 @@ Doctor reports stable `PASS`, `WARN`, and `FAIL` stages for:
 - Headscale policy/node API progress or Tailscale OAuth/policy/users/devices progress;
 - NPM authentication and proxy-host retrieval;
 - complete snapshot construction;
+- a count-only diagnostic of enabled, structurally matched wildcard-only NPM hosts without metadata URL overrides, reusing hostname-proposal eligibility; this is not a per-viewer unlinked-card count, available suggestion count, or promise of a candidate;
+- a count-only warning when metadata URL overrides take precedence over valid concrete domains on current positive NPM proxy-host IDs; intentional overrides remain unchanged;
 - supported access-rule-to-`forward_host` join coverage, including exact Grant TCP/backend-port checks;
 - coarse SSH state/reason/rule diagnostics;
 - optional matcher-backed identity service previews plus machine counts only when Tailscale SSH projection availability is supported; Headscale, absent SSH, and unsupported SSH suppress per-identity machine previews; and
@@ -111,6 +113,16 @@ Doctor reports stable `PASS`, `WARN`, and `FAIL` stages for:
 `--stack-env FILE` by itself runs only local Compose interpolation checks and exits; it needs no provider credentials or network access. Same-name process-environment values take Compose precedence over the file, are reported by key, and become the values Doctor checks. It never resolves image tags, contacts a registry, inspects Docker, or changes the file. Digest pins pass, explicit non-`latest` tags warn, and missing, untagged, `latest`, malformed-digest, invalid-network, surrounding-whitespace, or missing trusted-proxy values fail. When `--env-file` and `--stack-env` are combined, Doctor continues through normal configuration and upstream diagnostics using `VELOCIPORTAL_TRUSTED_PROXY_CIDR` as the effective runtime `TRUSTED_PROXY_CIDR`, matching `deploy/compose.yaml`; if the provider file also sets that key, Doctor warns that production Compose overrides it.
 
 Doctor sanitizes and bounds upstream errors. It does not print Headscale keys, OAuth client IDs/secrets, current or rejected OAuth tokens, NPM credentials/JWTs, machine IDs/names/addresses/accounts/commands, health paths, backend hostnames/IPs, response bodies, raw network errors, or complete configuration structs. Service probe failures are warnings rather than snapshot failures; malformed service-health configuration fails Doctor after safe upstream diagnostics continue. A passing run is a preflight result, not proof that rendered cards equal real network authorization.
+
+### Operator link-setup workflow
+
+1. Run `velociportal doctor --env-file .env` from a trusted operator environment with access to the configured provider/NPM APIs and, when enabled, the active metadata file. The new service-link diagnostics print only counts or a coarse warning, never hostnames, URLs, IDs, credentials, or identities. If bounded eligibility cannot be assessed safely, Doctor warns instead of claiming zero or success; these warnings do not change snapshot construction or Doctor's existing exit semantics.
+2. Prefer a separately approved manual correction of the **existing NPM proxy host**: add the real concrete browser hostname alongside its wildcard. Avoid a duplicate host/card. Check metadata first: a nonempty URL override still wins over a concrete NPM domain, which can be intentional when the browser scheme/path differs from the automatic URL. The precedence warning does not mark that override invalid or remove it.
+3. If a concrete NPM name is unsuitable, optionally run the existing private [`suggest-hostnames`](#suggest-hostnames) command below with an explicit browser scheme. Eligibility alone does not establish a hostname association: there may be no usable candidate, or ambiguity may suppress all proposals. Independently verify the intended browser destination.
+4. Review any proposal as a **fragment**, not a replacement for the complete active file. Manually reconcile by existing positive `proxy_host_id`, preserving unrelated entries and each existing `name`, intentional `url`, `category`, and `order`. A strict v1 proposal does not carry v2 organization fields: keep a v2 active document at version 2, and never replace it wholesale or downgrade it to version 1 while retaining v2 fields.
+5. Apply only the reviewed changes through a separately approved operator path, then verify the resulting link in the actual viewer's browser. Proposal confirmation authorizes only proposal emission, not NPM/DNS changes, active-file application, deployment, or browser access. Metadata does not configure NPM or DNS and cannot fix access.
+
+Keep three problems separate: **`link needed`** means no usable browser URL was supplied for an otherwise visible card; **`backend denied`** means an explicitly configured credential-free backend check received HTTP 401/403, not that signing in will necessarily fix it; **browser/proxy/application failures** concern the actual frontend route, identity/session, or application behavior and require separate investigation. A page returned by a browser-URL GET is not a direct backend probe, proof of login, or a diagnosis of an earlier `Unauthorized` response. Doctor and metadata cannot establish browser reachability or remedy these failures.
 
 ## Validate
 
@@ -129,11 +141,7 @@ Validation is still a visibility prediction. An implicit Headscale selector emit
 ## Suggest hostnames
 
 ```bash
-velociportal suggest-hostnames \
-  --env-file .env \
-  --privacy private \
-  --browser-scheme https \
-  --output hostname-proposal.json
+velociportal suggest-hostnames --env-file .env --privacy private --browser-scheme https --output hostname-proposal.json
 ```
 
 This one-shot operator command loads the normal selected-control-plane policy/nodes or policy/users/devices data plus NPM proxy hosts. Headscale contributes node names; Tailscale contributes both device `name` and `hostname`. Those names are untrusted suggestions—not evidence that a device is associated with the NPM backend—so verify every browser destination independently before merging. Optional `--stdin-hostnames` accepts only a bounded newline-delimited hostname feed. It does not scan DNS, read resolver or proxy logs, query new APIs, or retain candidates after exit.

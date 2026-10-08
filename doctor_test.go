@@ -161,6 +161,180 @@ func runDoctorForTest(args []string, fixtures ...*doctorHTTPFixture) (int, strin
 	return code, stdout.String(), stderr.String()
 }
 
+func TestReportDoctorServiceLinkEligibility(t *testing.T) {
+	host := ProxyHost{ID: 8412, Enabled: true, DomainNames: []string{"*.example.com"}, ForwardHost: "192.0.2.1", ForwardPort: 443}
+	newSnapshot := func() *CacheData {
+		return &CacheData{
+			Policy:     &Policy{ACLs: []ACLRule{{Action: "accept", Src: []string{"alice@example.com"}, Dst: []string{"192.0.2.1:*"}}}},
+			ProxyHosts: []ProxyHost{host},
+		}
+	}
+	tcp443, err := parseGrantIPCapability("tcp:443")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name      string
+		configure func(*CacheData)
+		want      string
+	}{
+		{name: "structural match not viewer access", want: "WARN service link eligibility: 1 structurally matched"},
+		{name: "zero hosts", configure: func(s *CacheData) { s.ProxyHosts = nil }, want: "PASS service link eligibility: 0 structurally matched"},
+		{name: "concrete exclusion", configure: func(s *CacheData) { s.ProxyHosts[0].DomainNames = []string{"*.example.com", " concrete.example.com "} }, want: "PASS service link eligibility: 0 structurally matched"},
+		{name: "URL override exclusion", configure: func(s *CacheData) {
+			s.ServiceMetadata = &ServiceMetadata{Overrides: map[int]ServiceOverride{8412: {URL: "https://override.example.com"}}}
+		}, want: "PASS service link eligibility: 0 structurally matched"},
+		{name: "name only still eligible", configure: func(s *CacheData) {
+			s.ServiceMetadata = &ServiceMetadata{Overrides: map[int]ServiceOverride{8412: {Name: "Fixture name"}}}
+		}, want: "WARN service link eligibility: 1 structurally matched"},
+		{name: "unmatched destination", configure: func(s *CacheData) { s.ProxyHosts[0].ForwardHost = "192.0.2.2" }, want: "PASS service link eligibility: 0 structurally matched"},
+		{name: "disabled host", configure: func(s *CacheData) { s.ProxyHosts[0].Enabled = false }, want: "PASS service link eligibility: 0 structurally matched"},
+		{name: "nonpositive ID", configure: func(s *CacheData) { s.ProxyHosts[0].ID = 0 }, want: "PASS service link eligibility: 0 structurally matched"},
+		{name: "Grant matching port", configure: func(s *CacheData) {
+			s.Policy = &Policy{Grants: []GrantRule{{Src: []string{"tag:client"}, Dst: []string{"192.0.2.1"}, IPCapabilities: []grantIPCapability{tcp443}}}}
+		}, want: "WARN service link eligibility: 1 structurally matched"},
+		{name: "Grant different port", configure: func(s *CacheData) {
+			s.Policy = &Policy{Grants: []GrantRule{{Src: []string{"*"}, Dst: []string{"192.0.2.1"}, IPCapabilities: []grantIPCapability{tcp443}}}}
+			s.ProxyHosts[0].ForwardPort = 8443
+		}, want: "PASS service link eligibility: 0 structurally matched"},
+		{name: "duplicate IDs unassessable", configure: func(s *CacheData) { s.ProxyHosts = append(s.ProxyHosts, host) }, want: "WARN service link eligibility: could not assess safely"},
+		{name: "host limit unassessable", configure: func(s *CacheData) { s.ProxyHosts = make([]ProxyHost, maxHostnameSuggestionProxyHosts+1) }, want: "WARN service link eligibility: could not assess safely"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			snapshot := newSnapshot()
+			if test.configure != nil {
+				test.configure(snapshot)
+			}
+			var output bytes.Buffer
+			reportDoctorServiceLinks(&output, snapshot)
+			text := output.String()
+			if !strings.Contains(text, test.want) {
+				t.Fatalf("missing %q: %s", test.want, text)
+			}
+			if strings.Contains(test.want, "could not assess") && (strings.Contains(text, "PASS service link") || strings.Contains(text, "0 structurally matched")) {
+				t.Fatalf("unassessable eligibility reported success or zero: %s", text)
+			}
+			for _, forbidden := range []string{"8412", "example.com", "192.0.2.", "Fixture name", "tag:client", doctorTestAPIKey, doctorTestPassword, doctorTestToken} {
+				if strings.Contains(text, forbidden) {
+					t.Fatalf("diagnostic exposed %q: %s", forbidden, text)
+				}
+			}
+		})
+	}
+	var output bytes.Buffer
+	reportDoctorServiceLinks(&output, nil)
+	if !strings.Contains(output.String(), "could not assess safely") {
+		t.Fatalf("nil snapshot diagnostic = %q", output.String())
+	}
+}
+
+func TestReportDoctorServiceLinkEligibilityDoesNotCountCandidates(t *testing.T) {
+	for _, ambiguous := range []bool{false, true} {
+		snapshot := &CacheData{
+			Policy:     &Policy{ACLs: []ACLRule{{Action: "accept", Src: []string{"alice@example.com"}, Dst: []string{"192.0.2.1:*"}}}},
+			ProxyHosts: []ProxyHost{{ID: 8412, Enabled: true, DomainNames: []string{"*.example.com"}, ForwardHost: "192.0.2.1", ForwardPort: 443}},
+		}
+		var candidates []hostnameSuggestionCandidate
+		want := "1 structurally matched"
+		if ambiguous {
+			second := snapshot.ProxyHosts[0]
+			second.ID = 8413
+			snapshot.ProxyHosts = append(snapshot.ProxyHosts, second)
+			candidates = []hostnameSuggestionCandidate{{Hostname: "candidate.example.com", Source: hostnameSuggestionSourceControlPlane}}
+			want = "2 structurally matched"
+		}
+		eligible, err := eligibleHostnameSuggestionHosts(snapshot, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		suggestions, ambiguities, err := buildHostnameSuggestions(candidates, eligible)
+		if err != nil || len(suggestions) != 0 || (ambiguous && len(ambiguities) != 1) {
+			t.Fatalf("candidate setup = %v / %v / %v", suggestions, ambiguities, err)
+		}
+		if cards := MatchServices(&Identity{Login: "bob@example.com"}, snapshot); len(cards) != 0 {
+			t.Fatalf("unmatched viewer received %d cards", len(cards))
+		}
+		var output bytes.Buffer
+		reportDoctorServiceLinks(&output, snapshot)
+		if !strings.Contains(output.String(), want) || !strings.Contains(output.String(), "not a per-viewer card or candidate count") || !strings.Contains(output.String(), "privately review suggest-hostnames") {
+			t.Fatalf("eligibility confused with candidate/viewer result: %s", output.String())
+		}
+	}
+}
+
+func TestReportDoctorServiceLinksKeepsURLPrecedencePrivate(t *testing.T) {
+	metadata := &ServiceMetadata{Overrides: map[int]ServiceOverride{
+		8412: {Name: "Fixture name", URL: "https://override.example.com/path"},
+	}}
+	snapshot := &CacheData{
+		Policy:          &Policy{},
+		ServiceMetadata: metadata,
+		ProxyHosts: []ProxyHost{
+			{ID: 8412, DomainNames: []string{" concrete.example.com "}, ForwardHost: "192.0.2.1"},
+			{ID: 8412, DomainNames: []string{"second.example.com"}},
+		},
+	}
+	var output bytes.Buffer
+	reportDoctorServiceLinks(&output, snapshot)
+	text := output.String()
+	if !strings.Contains(text, "could not assess safely") || !strings.Contains(text, "WARN service metadata URL precedence: 1 URL override(s)") || !strings.Contains(text, "preserve intentional overrides") {
+		t.Fatalf("coarse precedence diagnostic missing: %s", text)
+	}
+	for _, forbidden := range []string{"8412", "example.com", "192.0.2.1", "Fixture name", "/path"} {
+		if strings.Contains(text, forbidden) {
+			t.Fatalf("precedence diagnostic exposed %q: %s", forbidden, text)
+		}
+	}
+	if snapshot.ServiceMetadata != metadata || metadata.Overrides[8412].URL != "https://override.example.com/path" || len(snapshot.ProxyHosts) != 2 {
+		t.Fatal("link diagnostics changed the snapshot or intentional override")
+	}
+}
+
+func TestRunDoctorCommandServiceLinkDiagnosticsPreserveExitSemantics(t *testing.T) {
+	tests := []struct {
+		name      string
+		proxyBody string
+		metadata  string
+		status    int
+		want      string
+		code      int
+	}{
+		{name: "wildcard warning", proxyBody: `[{"id":8412,"domain_names":["*.example.com"],"forward_host":"10.0.0.1","forward_port":443,"enabled":true}]`, want: "WARN service link eligibility: 1 structurally matched"},
+		{name: "precedence warning", proxyBody: `[{"id":8412,"domain_names":["concrete.example.com"],"forward_host":"10.0.0.1","forward_port":443,"enabled":true}]`, metadata: `{"version":2,"services":[{"proxy_host_id":8412,"url":"https://override.example.com/path","category":"Tools","order":4}]}`, want: "WARN service metadata URL precedence: 1 URL override(s) take precedence over concrete NPM domains; preserve intentional overrides"},
+		{name: "unassessable warning", proxyBody: `[{"id":8412},{"id":8412}]`, want: "WARN service link eligibility: could not assess safely"},
+		{name: "required failure", status: http.StatusInternalServerError, proxyBody: `{}`, want: "FAIL snapshot: not created because NPM proxy hosts failed", code: 1},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newDoctorHTTPFixture(t)
+			fixture.proxyBody = test.proxyBody
+			if test.status != 0 {
+				fixture.proxyStatus = test.status
+			}
+			values := doctorFixtureConfig(fixture)
+			if test.metadata != "" {
+				path := filepath.Join(t.TempDir(), "services.json")
+				if err := os.WriteFile(path, []byte(test.metadata), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				values["SERVICE_METADATA_FILE"] = path
+			}
+			setDoctorProcessConfig(t, values)
+			code, stdout, stderr := runDoctorForTest(nil, fixture)
+			if code != test.code || stderr != "" || !strings.Contains(stdout, test.want) {
+				t.Fatalf("code=%d want=%d stdout=%q stderr=%q", code, test.code, stdout, stderr)
+			}
+			if code == 0 && !strings.Contains(stdout, "PASS doctor: required diagnostics completed") {
+				t.Fatalf("warning blocked diagnostics: %s", stdout)
+			}
+			if code != 0 && strings.Contains(stdout, "service link eligibility:") {
+				t.Fatalf("link diagnostics ran before complete snapshot: %s", stdout)
+			}
+		})
+	}
+}
+
 func TestRunDoctorCommandWarningsAndIdentityPreviews(t *testing.T) {
 	fixture := newDoctorHTTPFixture(t)
 	values := doctorFixtureConfig(fixture)
