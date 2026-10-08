@@ -387,7 +387,9 @@ The canonical base stack mounts no CA, service metadata, or service health file.
 
 ### Optional service presentation metadata
 
-Prefer adding the real concrete hostname alongside the wildcard on the **same NPM proxy host**. Velociportal selects the first valid concrete NPM name even when a wildcard appears earlier. Do not create a duplicate NPM proxy host solely for the dashboard because it can create a duplicate card.
+Start with `velociportal doctor --env-file velociportal.env` from a trusted operator environment that can reach the configured APIs and read the active metadata when enabled. After a complete snapshot, its count-only service-link diagnostic identifies structurally matched wildcard-only NPM hosts without metadata URL overrides; it is not a per-viewer unlinked-card count or an available suggestion count, and promises no candidate. A safe coarse warning replaces the count if eligibility cannot be assessed. These warnings do not change Doctor's exit semantics.
+
+Prefer a separately approved manual correction: add the real concrete hostname alongside the wildcard on the **same NPM proxy host**. Velociportal selects the first valid concrete NPM name even when a wildcard appears earlier. Do not create a duplicate NPM proxy host solely for the dashboard because it can create a duplicate card. A nonempty metadata URL takes precedence even after a concrete name is added; Doctor reports that precedence only as a count. Preserve intentional overrides, including a deliberately different frontend scheme/path.
 
 If NPM cannot or should not contain the desired browser target, or the portal needs explicit categories/order, copy `service-metadata.example.json`, key each entry by an existing NPM proxy-host ID, and add `compose.service-metadata.yaml` to the imported Compose files. Version 1 remains compatible for name/URL overrides. Version 2 adds optional canonical `category` strings and integer `order` values from `0` through `1000000`; category/order fields are invalid in a version-1 document. Set these stack variables through the Compose UI:
 
@@ -408,17 +410,17 @@ On mobile, the fixed Services/Machines/More bar stays outside the htmx refresh r
 
 #### Optional one-shot hostname proposal
 
-From a trusted administration environment that can reach the same provider and NPM APIs, the static binary can privately propose metadata for eligible wildcard-only hosts:
+If the preferred NPM correction is unsuitable, the static binary can optionally propose metadata from a trusted administration environment that can reach the same provider and NPM APIs:
 
 ```bash
-velociportal suggest-hostnames \
-  --env-file velociportal.env \
-  --privacy private \
-  --browser-scheme https \
-  --output hostname-proposal.json
+velociportal suggest-hostnames --env-file velociportal.env --privacy private --browser-scheme https --output hostname-proposal.json
 ```
 
-The command uses selected-control-plane node/device names and, only when requested, bounded hostname-only stdin. Provider-visible names are untrusted suggestions and do not prove association with the NPM backend; verify each intended browser destination independently. The command does not scan DNS or logs, retain history, change NPM, update the active metadata file, or alter runtime card matching. Review the private hostname/ID list locally, type literal `yes`, then manually merge approved entries into the existing service-metadata file through the authenticated transfer/UI path.
+The command uses selected-control-plane node/device names and, only when requested with `--stdin-hostnames`, bounded hostname-only stdin. Provider-visible names are untrusted suggestions and do not prove association with the NPM backend; verify each intended browser destination independently. Doctor's eligibility count does not mean a usable suggestion exists: absent candidates or ambiguous associations can produce no proposal. The command does not scan DNS or logs, retain history, change NPM, update the active metadata file, or alter runtime card matching. Review the private hostname/ID list locally and type literal `yes` only to emit the proposal.
+
+Treat the strict v1 proposal as a **fragment**, never as a replacement for the complete active metadata file. Manually reconcile approved entries by existing positive `proxy_host_id`, preserving unrelated entries plus existing names, intentional URLs, categories, and order. If the active file is v2, retain version 2 and its organization fields; the proposal does not serialize them. Application through the authenticated transfer/UI path needs separate approval, followed by verification of the resulting link in the actual viewer's browser. Metadata does not configure NPM or DNS, grant access, or fix a failing frontend route.
+
+Distinguish a missing browser link (`link needed`) from a credential-free backend check returning HTTP 401/403 (`backend denied`) and from browser/proxy/application failures. A backend denial does not promise that signing in will fix it, and a successful browser-URL GET is neither a direct backend probe nor login proof. See the [operator link-setup workflow](../reference/cli.md#operator-link-setup-workflow) for the complete boundary.
 
 Keep the proposal owner-only and remove it after review. Do not add a recurring NAS shell task, new production mount, updater, or automatic merge. Preserve the existing TrueNAS dataset ownership, modes, and ACLs; if the manually merged metadata file already uses `950:950`/`0640`, keep those values unchanged.
 

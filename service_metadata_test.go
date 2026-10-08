@@ -159,6 +159,51 @@ func TestServiceMetadataLoaderForBlankPath(t *testing.T) {
 	}
 }
 
+func TestConcreteDomainServiceMetadataURLOverrideCount(t *testing.T) {
+	order := 4
+	metadata := &ServiceMetadata{Overrides: map[int]ServiceOverride{
+		1:  {Name: "Intentional", URL: "https://override.example.com/path", Category: "Tools", Order: &order},
+		2:  {URL: "https://wildcard.example.com"},
+		3:  {Name: "Name only"},
+		4:  {Category: "Tools", Order: &order},
+		5:  {URL: "https://missing.example.com"},
+		0:  {URL: "https://zero.example.com"},
+		-1: {URL: "https://negative.example.com"},
+	}}
+	host := ProxyHost{ID: 1, DomainNames: []string{"*.example.com", " concrete.example.com "}, ForwardScheme: "http"}
+	tests := []struct {
+		name     string
+		metadata *ServiceMetadata
+		hosts    []ProxyHost
+		want     int
+	}{
+		{name: "nil metadata", hosts: []ProxyHost{host}},
+		{name: "empty metadata", metadata: emptyServiceMetadata(), hosts: []ProxyHost{host}},
+		{name: "concrete domain", metadata: metadata, hosts: []ProxyHost{host}, want: 1},
+		{name: "wildcard only", metadata: metadata, hosts: []ProxyHost{{ID: 2, DomainNames: []string{"*.example.com"}}}},
+		{name: "invalid domain", metadata: metadata, hosts: []ProxyHost{{ID: 1, DomainNames: []string{"https://invalid.example.com", "bad domain"}}}},
+		{name: "name category order only", metadata: metadata, hosts: []ProxyHost{{ID: 3, DomainNames: []string{"name.example.com"}}, {ID: 4, DomainNames: []string{"category.example.com"}}}},
+		{name: "missing and nonpositive IDs", metadata: metadata, hosts: []ProxyHost{{ID: 0, DomainNames: []string{"zero.example.com"}}, {ID: -1, DomainNames: []string{"negative.example.com"}}, {ID: 6, DomainNames: []string{"absent.example.com"}}}},
+		{name: "duplicate ID counted once", metadata: metadata, hosts: []ProxyHost{host, host}, want: 1},
+		{name: "later duplicate has concrete domain", metadata: metadata, hosts: []ProxyHost{{ID: 1, DomainNames: []string{"*.example.com"}}, host}, want: 1},
+	}
+	before, ok := resolveServiceCard(host, metadata)
+	if !ok {
+		t.Fatal("intentional override card missing")
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := concreteDomainServiceMetadataURLOverrideCount(test.metadata, test.hosts); got != test.want {
+				t.Fatalf("count = %d, want %d", got, test.want)
+			}
+		})
+	}
+	after, ok := resolveServiceCard(host, metadata)
+	if !ok || after.URL != before.URL || after.URL != "https://override.example.com/path" || after.Name != "Intentional" || after.Category != "Tools" || after.Order == nil || *after.Order != order {
+		t.Fatalf("count changed intentional override: before=%#v after=%#v", before, after)
+	}
+}
+
 func TestUnmatchedServiceMetadataCount(t *testing.T) {
 	metadata := &ServiceMetadata{Overrides: map[int]ServiceOverride{1: {}, 2: {}, 3: {}}}
 	if got := unmatchedServiceMetadataCount(metadata, []ProxyHost{{ID: 1}, {ID: 3}}); got != 1 {

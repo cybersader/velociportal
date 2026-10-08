@@ -278,6 +278,7 @@ func runDoctorCommandWithDependencies(args []string, stdout, stderr io.Writer, d
 	if unmatched := unmatchedServiceMetadataCount(metadata, snapshot.ProxyHosts); unmatched > 0 {
 		fmt.Fprintf(stdout, "WARN service metadata targets: %d override(s) do not match a current NPM proxy host ID\n", unmatched)
 	}
+	reportDoctorServiceLinks(stdout, snapshot)
 	fmt.Fprintf(
 		stdout,
 		"PASS control plane metadata: provider=%s policy_mode=%s support_level=%s\n",
@@ -304,6 +305,28 @@ func runDoctorCommandWithDependencies(args []string, stdout, stderr io.Writer, d
 	}
 	fmt.Fprintln(stdout, "PASS doctor: required diagnostics completed")
 	return 0
+}
+
+// reportDoctorServiceLinks reports structural eligibility, not viewer access or
+// candidate availability. Keep both diagnostics count-only, including failures.
+func reportDoctorServiceLinks(stdout io.Writer, snapshot *CacheData) {
+	var metadata *ServiceMetadata
+	if snapshot != nil {
+		metadata = snapshot.ServiceMetadata
+	}
+	eligible, err := eligibleHostnameSuggestionHosts(snapshot, metadata)
+	if err != nil {
+		fmt.Fprintln(stdout, "WARN service link eligibility: could not assess safely; no wildcard-only host count available; review NPM configuration privately before suggest-hostnames")
+	} else if len(eligible) > 0 {
+		fmt.Fprintf(stdout, "WARN service link eligibility: %d structurally matched wildcard-only host(s) without metadata URL overrides; not a per-viewer card or candidate count; prefer a concrete domain on the existing NPM host, or privately review suggest-hostnames\n", len(eligible))
+	} else {
+		fmt.Fprintln(stdout, "PASS service link eligibility: 0 structurally matched wildcard-only host(s) without metadata URL overrides; not a per-viewer card or candidate count")
+	}
+	if snapshot != nil {
+		if count := concreteDomainServiceMetadataURLOverrideCount(metadata, snapshot.ProxyHosts); count > 0 {
+			fmt.Fprintf(stdout, "WARN service metadata URL precedence: %d URL override(s) take precedence over concrete NPM domains; preserve intentional overrides and review privately\n", count)
+		}
+	}
 }
 
 func reportDoctorServiceHealth(

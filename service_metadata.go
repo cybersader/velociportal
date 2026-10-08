@@ -392,6 +392,27 @@ func walkJSONValue(decoder *json.Decoder) error {
 	return nil
 }
 
+// concreteDomainServiceMetadataURLOverrideCount counts current positive IDs whose
+// metadata URL takes precedence over a concrete NPM domain, without changing it.
+func concreteDomainServiceMetadataURLOverrideCount(metadata *ServiceMetadata, proxyHosts []ProxyHost) int {
+	if metadata == nil || len(metadata.Overrides) == 0 {
+		return 0
+	}
+	counted := make(map[int]bool)
+	for _, proxyHost := range proxyHosts {
+		if proxyHost.ID <= 0 || counted[proxyHost.ID] || metadata.Overrides[proxyHost.ID].URL == "" {
+			continue
+		}
+		for _, domain := range proxyHost.DomainNames {
+			if validConcreteCardDomain(strings.TrimSpace(domain)) {
+				counted[proxyHost.ID] = true
+				break
+			}
+		}
+	}
+	return len(counted)
+}
+
 func unmatchedServiceMetadataCount(metadata *ServiceMetadata, proxyHosts []ProxyHost) int {
 	if metadata == nil || len(metadata.Overrides) == 0 {
 		return 0
