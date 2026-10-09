@@ -45,6 +45,7 @@ type Config struct {
 	NPMEmail                    string
 	NPMPassword                 string
 	ServiceMetadataFile         string
+	ServiceMetadataEditor       *ServiceMetadataEditorConfig
 	ServiceHealthFile           string
 	ListenAddr                  string
 	PollInterval                time.Duration
@@ -200,6 +201,10 @@ func loadConfigFrom(lookup configLookup) (*Config, error) {
 		return nil, fmt.Errorf("loadConfig: %w", err)
 	}
 	serviceMetadataFile = strings.TrimSpace(serviceMetadataFile)
+	serviceMetadataEditor, err := loadServiceMetadataEditorConfig(lookup, serviceMetadataFile)
+	if err != nil {
+		return nil, fmt.Errorf("loadConfig: %w", err)
+	}
 
 	serviceHealthFile, err := lookupOr(lookup, "SERVICE_HEALTH_FILE", "")
 	if err != nil {
@@ -237,6 +242,7 @@ func loadConfigFrom(lookup configLookup) (*Config, error) {
 		NPMEmail:                    strings.TrimSpace(values["NPM_EMAIL"]),
 		NPMPassword:                 values["NPM_PASSWORD"],
 		ServiceMetadataFile:         serviceMetadataFile,
+		ServiceMetadataEditor:       serviceMetadataEditor,
 		ServiceHealthFile:           serviceHealthFile,
 		ListenAddr:                  listenAddr,
 		PollInterval:                interval,
@@ -502,12 +508,23 @@ func runServer(cfg *Config) error {
 	if len(cfg.InactiveControlPlaneKeys) > 0 {
 		slog.Warn("inactive control-plane configuration is ignored", "keys", strings.Join(cfg.InactiveControlPlaneKeys, ","))
 	}
+	editor, err := newServiceMetadataEditor(cfg.ServiceMetadataFile, cfg.ServiceMetadataEditor)
+	if err != nil {
+		return fmt.Errorf("run: %w", err)
+	}
+	defer editor.Close()
 	controlPlane, npm := newUpstreamClients(cfg)
+	metadataLoader := serviceMetadataLoaderForPath(cfg.ServiceMetadataFile)
+	if editor != nil {
+		// Editing owns the single file. Polling reads the confirmed immutable view;
+		// request-local substitution also defeats an in-flight older poll pointer.
+		metadataLoader = func() (*ServiceMetadata, error) { return editor.view.Load().metadata, nil }
+	}
 
 	cache := NewCacheWithServiceMetadata(
 		controlPlane,
 		npm,
-		serviceMetadataLoaderForPath(cfg.ServiceMetadataFile),
+		metadataLoader,
 		cfg.PollInterval,
 		slog.Default(),
 	)
@@ -537,7 +554,12 @@ func runServer(cfg *Config) error {
 	pollStale := cfg.PollInterval * 3
 
 	mux := http.NewServeMux()
-	portalHandler := IdentityMiddleware(cfg.TrustedProxyCIDR, NewPortalHandlerWithOptions(cache, healthPoller.Store(), cfg.PortalLogoDefaultVisible))
+	portal := NewPortalHandlerWithOptions(cache, healthPoller.Store(), cfg.PortalLogoDefaultVisible)
+	portal.editor = editor
+	portalHandler := IdentityMiddleware(cfg.TrustedProxyCIDR, portal)
+	if editor != nil {
+		mux.Handle(serviceMetadataEditorRoute, newServiceMetadataEditorHandler(editor, cache, cfg.TrustedProxyCIDR, cfg.PollInterval))
+	}
 	mux.Handle("GET /", portalHandler)
 	mux.Handle("GET /portal", portalHandler)
 	mux.Handle("GET /static/", staticAssetHandler(static))

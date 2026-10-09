@@ -55,7 +55,7 @@ func TestParseServiceMetadataRejectsInvalidDocumentsWithoutLeakingValues(t *test
 	}{
 		{name: "empty", document: ``, contains: "empty"},
 		{name: "null", document: `null`, contains: "version"},
-		{name: "wrong version", document: `{"version":3,"services":[]}`, contains: "version"},
+		{name: "wrong version", document: `{"version":4,"services":[]}`, contains: "version"},
 		{name: "v1 category", document: `{"version":1,"services":[{"proxy_host_id":1,"category":"secret-name"}]}`, contains: "invalid"},
 		{name: "v1 order", document: `{"version":1,"services":[{"proxy_host_id":1,"order":0}]}`, contains: "invalid"},
 		{name: "v2 unknown field", document: `{"version":2,"services":[{"proxy_host_id":1,"category":"safe","other":true}]}`, contains: "invalid"},

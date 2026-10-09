@@ -1,0 +1,14 @@
+# UNRELEASED opt-in alternative to compose.service-metadata.yaml, never both.
+# Requires separately provisioned runtime-owned storage and editor settings in
+# the provider env file. No source path is created or permission repaired.
+services:
+  velociportal:
+    environment:
+      SERVICE_METADATA_FILE: /service-metadata/services.json
+    volumes:
+      - type: bind
+        source: ${VELOCIPORTAL_SERVICE_METADATA_DIRECTORY:?set VELOCIPORTAL_SERVICE_METADATA_DIRECTORY to a preprovisioned runtime-owned metadata directory}
+        target: /service-metadata
+        read_only: false
+        bind:
+          create_host_path: false

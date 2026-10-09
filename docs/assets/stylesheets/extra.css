@@ -48,20 +48,62 @@ input {
   font-family: var(--vp-font-sans);
 }
 
+/* Material uses a 20px rem at the browser's default font size. Keep that
+   baseline on wide screens rather than scaling every component at 100/125em.
+   A percentage preserves browser font preferences; print keeps theme sizing. */
+@media screen {
+  html {
+    font-size: 125%;
+  }
+}
+
 .md-header__button.md-logo img,
 .md-header__button.md-logo svg {
   border-radius: 0.45rem;
 }
 
+/* Read surface: 16px body, 28/22/18px headings at default browser settings.
+   Bound prose, not the article: tables, code and diagrams retain their space. */
+.md-typeset > p,
+.md-typeset > ul,
+.md-typeset > ol,
+.md-typeset > blockquote {
+  max-width: 75ch;
+}
+
 .md-typeset h1,
 .md-typeset h2,
 .md-typeset h3 {
-  font-weight: 720;
-  letter-spacing: -0.02em;
+  font-weight: 700;
+  letter-spacing: -0.015em;
+  line-height: 1.35;
 }
 
 .md-typeset h1 {
+  margin-bottom: 0.85em;
   color: var(--md-default-fg-color);
+  font-size: 1.75em;
+}
+
+.md-typeset h2 {
+  font-size: 1.375em;
+}
+
+.md-typeset h3 {
+  font-size: 1.125em;
+}
+
+/* These dense theme roles would otherwise fall to 12.8px. Keep warnings,
+   table data and content-tab labels legible alongside the 14px navigation. */
+.md-typeset .admonition,
+.md-typeset details,
+.md-typeset table:not([class]),
+.md-typeset .tabbed-labels > label {
+  font-size: 0.7rem;
+}
+
+.md-typeset code {
+  font-size: 0.875em;
 }
 
 .md-typeset :target {
@@ -79,11 +121,11 @@ input {
 .md-typeset .vp-hero {
   position: relative;
   display: grid;
-  grid-template-columns: minmax(0, 1.7fr) minmax(12rem, 0.7fr);
-  gap: clamp(1.5rem, 5vw, 4rem);
+  grid-template-columns: minmax(0, 1fr) minmax(5rem, 7rem);
+  gap: 1.25rem;
   align-items: center;
-  margin: 0 0 2.4rem;
-  padding: clamp(1.5rem, 4vw, 3.2rem);
+  margin: 0 0 1.6rem;
+  padding: 1.4rem;
   overflow: hidden;
   border: 1px solid color-mix(in srgb, var(--vp-brand) 25%, transparent);
   border-radius: 1.1rem;
@@ -111,17 +153,17 @@ input {
 }
 
 .md-typeset .vp-hero h1 {
-  max-width: 14ch;
+  max-width: 24ch;
   margin: 0.45rem 0 0.85rem;
-  font-size: clamp(2.15rem, 6vw, 4.1rem);
-  line-height: 0.98;
+  font-size: 1.6rem;
+  line-height: 1.2;
 }
 
 .md-typeset .vp-hero__lede {
   max-width: 58ch;
   margin-bottom: 1.15rem;
   color: var(--md-default-fg-color--light);
-  font-size: clamp(0.95rem, 2vw, 1.16rem);
+  font-size: 0.85rem;
 }
 
 .md-typeset .vp-kicker {
@@ -145,7 +187,7 @@ input {
 }
 
 .md-typeset .vp-hero__art img {
-  width: min(100%, 15rem);
+  width: min(100%, 7rem);
   border-radius: 22%;
   box-shadow: 0 1.4rem 3rem rgba(16, 15, 26, 0.28);
 }
@@ -455,7 +497,7 @@ input {
   }
 
   .md-typeset .vp-hero__art img {
-    width: 8rem;
+    width: 5rem;
   }
 
   .md-typeset .vp-command-path,

@@ -1,0 +1,15 @@
+Dashboard Icons, https://github.com/homarr-labs/dashboard-icons
+Pinned revision: 57e939e504eda0ea764098015da93aa666ad6f31
+Copyright (c) 2024 Bjorn Lammers, Meier Lukas, Thomas Camlong and Homarr Labs
+Repository license: Apache License 2.0; complete license included in LICENSE.
+The twelve PNG files are unmodified upstream files. Exact source paths, byte
+sizes and SHA256 digests are recorded in provenance.json. Each input was bounded,
+decoded as a non-animated PNG and visually reviewed before embedding. No upstream
+NOTICE file was present in the reviewed root index at this revision.
+
+generic.svg is an original inert Velociportal asset, under the project license.
+
+Brand names and logos remain trademarks of their respective owners. Repository
+licensing does not grant trademark rights, endorsement or affiliation. Choose
+an icon explicitly; no private hostname is sent to an icon service or inferred
+into a brand. All displayed assets are embedded and served locally.

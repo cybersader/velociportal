@@ -23,6 +23,7 @@ type ServiceCard struct {
 	Domain    string           `json:"domain"`
 	Category  string           `json:"category,omitempty"`
 	Order     *int             `json:"order,omitempty"`
+	Icon      string           `json:"icon,omitempty"`
 	LinkState serviceLinkState `json:"link_state"`
 }
 
@@ -402,6 +403,7 @@ func resolveServiceCard(proxyHost ProxyHost, metadata *ServiceMetadata) (Service
 				card.Name = override.Name
 			}
 			card.Category = override.Category
+			card.Icon = override.Icon
 			if override.Order != nil {
 				order := *override.Order
 				card.Order = &order

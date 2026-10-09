@@ -219,6 +219,16 @@ func runDoctorCommandWithDependencies(args []string, stdout, stderr io.Writer, d
 		fmt.Fprintf(stdout, "PASS service metadata: loaded %d override(s)\n", len(metadata.Overrides))
 	}
 
+	if cfg.ServiceMetadataEditor == nil {
+		fmt.Fprintln(stdout, "PASS service editor: disabled (read-only mode)")
+	} else if inspectServiceMetadataEditorStorage(cfg.ServiceMetadataFile) != nil {
+		fmt.Fprintln(stdout, "FAIL service editor: configured, storage prerequisites unavailable; no probe writes performed")
+		return 1
+	} else {
+		fmt.Fprintln(stdout, "PASS service editor: configured, read-only storage prerequisites checked")
+		fmt.Fprintln(stdout, "WARN service editor: write durability and lifetime lock availability are not tested by Doctor")
+	}
+
 	healthConfig, healthConfigErr := serviceHealthConfigLoaderForPath(cfg.ServiceHealthFile)()
 	healthConfigFailed := healthConfigErr != nil || healthConfig == nil
 	if healthConfigErr != nil {

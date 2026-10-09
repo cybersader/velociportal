@@ -9,6 +9,8 @@ velociportal
 velociportal serve [--env-file FILE] [--listen ADDR]
 velociportal setup [--env-file FILE]
 velociportal setup observe-proxy [options]
+velociportal setup service-editor --env-file FILE --editors JSON --origin ORIGIN
+velociportal setup service-editor --env-file FILE --disable
 velociportal doctor [options]
 velociportal validate [options]
 velociportal suggest-hostnames --privacy private --browser-scheme http|https [options]
@@ -67,6 +69,10 @@ The lock closes the check/replace race between Velociportal commands. Unrelated 
 
 Secret values are not accepted through command-line flags and are never printed.
 
+### Optional shared editor setup (unreleased)
+
+`setup service-editor` updates only `PORTAL_EDITORS` and `PORTAL_PUBLIC_ORIGIN` in an existing env file, or removes both with `--disable`. `SERVICE_METADATA_FILE` must already be set. It preserves other keys, validates exact-login/origin syntax, and does not create, migrate, lock or probe metadata storage. Unlike credentials, editor logins may be arguments and can appear in trusted same-host process listings/history; private env editing is an alternative. A separately provisioned runtime-owned directory and compatible binary are still required. See [metadata/editor configuration and recovery](service-metadata.md).
+
 ### Observe the trusted proxy source
 
 ```bash
@@ -95,6 +101,7 @@ velociportal doctor --env-file .env \
 Doctor reports stable `PASS`, `WARN`, and `FAIL` stages for:
 
 - configuration and owner-only environment-file permissions;
+- coarse editor enablement and readonly storage prerequisites, without editor identity/origin/URL output, lock creation or probe writes; this does not establish lock availability or write durability;
 - optional production `stack.env` checks for immutable image pinning, subnet/gateway containment, trusted-proxy narrowness and gateway alignment, and the production Compose trusted-proxy override;
 - explicit or implicit provider selection, plus variable-name-only warnings for inactive known credentials;
 - selected provider, `legacy_acl_visibility_v1` or `network_access_visibility_v1` policy mode, and `supported` or `preview` support level;
@@ -119,7 +126,7 @@ Doctor sanitizes and bounds upstream errors. It does not print Headscale keys, O
 1. Run `velociportal doctor --env-file .env` from a trusted operator environment with access to the configured provider/NPM APIs and, when enabled, the active metadata file. The new service-link diagnostics print only counts or a coarse warning, never hostnames, URLs, IDs, credentials, or identities. If bounded eligibility cannot be assessed safely, Doctor warns instead of claiming zero or success; these warnings do not change snapshot construction or Doctor's existing exit semantics.
 2. Prefer a separately approved manual correction of the **existing NPM proxy host**: add the real concrete browser hostname alongside its wildcard. Avoid a duplicate host/card. Check metadata first: a nonempty URL override still wins over a concrete NPM domain, which can be intentional when the browser scheme/path differs from the automatic URL. The precedence warning does not mark that override invalid or remove it.
 3. If a concrete NPM name is unsuitable, optionally run the existing private [`suggest-hostnames`](#suggest-hostnames) command below with an explicit browser scheme. Eligibility alone does not establish a hostname association: there may be no usable candidate, or ambiguity may suppress all proposals. Independently verify the intended browser destination.
-4. Review any proposal as a **fragment**, not a replacement for the complete active file. Manually reconcile by existing positive `proxy_host_id`, preserving unrelated entries and each existing `name`, intentional `url`, `category`, and `order`. A strict v1 proposal does not carry v2 organization fields: keep a v2 active document at version 2, and never replace it wholesale or downgrade it to version 1 while retaining v2 fields.
+4. Review any proposal as a **fragment**, not a replacement for the complete active file. Manually reconcile by existing positive `proxy_host_id`, preserving unrelated entries and each existing `name`, intentional `url`, `category`, and `order`. A strict v1 proposal does not carry v2 organization fields: keep a v2/v3 active document at its compatible version, preserve local icons too, and never replace it wholesale or downgrade it while retaining newer fields. Stop a dashboard writer before an operator merge and restart afterward.
 5. Apply only the reviewed changes through a separately approved operator path, then verify the resulting link in the actual viewer's browser. Proposal confirmation authorizes only proposal emission, not NPM/DNS changes, active-file application, deployment, or browser access. Metadata does not configure NPM or DNS and cannot fix access.
 
 Keep three problems separate: **`link needed`** means no usable browser URL was supplied for an otherwise visible card; **`backend denied`** means an explicitly configured credential-free backend check received HTTP 401/403, not that signing in will necessarily fix it; **browser/proxy/application failures** concern the actual frontend route, identity/session, or application behavior and require separate investigation. A page returned by a browser-URL GET is not a direct backend probe, proof of login, or a diagnosis of an earlier `Unauthorized` response. Doctor and metadata cannot establish browser reachability or remedy these failures.
@@ -209,7 +216,7 @@ Use the full [local-source and diagnostic workflow](../getting-started/setup.md)
 | `make run` | Run from source with `serve --env-file`; requires Go |
 | `make docker` | Build the local production-shaped scratch image |
 | `make docker-run` | Run the local image read-only with loopback-only publication |
-| `make production-compose-check` | Render Headscale and Tailscale provider examples, short-form includes, and all base/CA/service-metadata/service-health overlay combinations while asserting the unchanged one-service/two-network, always-pull, no-build, loopback, raw-env, gateway-priority, healthcheck, and hardening shape |
+| `make production-compose-check` | Render Headscale and Tailscale provider examples, short-form includes, and all base/CA/readonly-metadata-or-editor-directory/service-health overlay combinations and mixed-metadata rejection while asserting the unchanged one-service/two-network, always-pull, no-build, loopback, raw-env, gateway-priority, healthcheck, and hardening shape |
 | `make logs` | Follow repository Compose logs |
 | `make down` | Stop the repository Compose deployment |
 | `make verify` | Run Go, contributor and production Compose, image metadata, and in-image CLI checks; requires Go, Python 3, and Docker Compose |
@@ -238,7 +245,7 @@ For validation, populate `VP_USER_A` and `VP_USER_B` with hidden `read -s` promp
 | `ENV_FILE` | `.env` | Project-relative environment-file path used by guided and runtime commands; absolute paths and `..` components are rejected by Make wrappers so host and container cannot address different files |
 | `STACK_ENV_FILE` | empty | Optional project-relative production `stack.env` path checked by `make doctor`; it is mounted through the existing read-only workspace bind and receives the same path-safety checks as `ENV_FILE` |
 | `PRIVATE_CA_FILE` | empty | Opts into `docker-compose.private-ca.yml` and mounts only the public private-CA root read-only into runtime and tools containers |
-| `SERVICE_METADATA_FILE` | empty | Opts into `docker-compose.service-metadata.yml` and mounts one strict v1-or-v2 presentation-metadata JSON file read-only into runtime and tools containers |
+| `SERVICE_METADATA_FILE` | empty | Opts into `docker-compose.service-metadata.yml` and mounts one strict v1/v2/v3 presentation-metadata JSON file read-only into runtime and tools containers |
 | `SERVICE_METADATA_GID` | empty | Numeric supplemental group that can read `SERVICE_METADATA_FILE`; required when the metadata overlay is selected |
 | `SERVICE_HEALTH_FILE` | empty | Opts into `docker-compose.service-health.yml` and mounts one strict health JSON file read-only into runtime and tools containers |
 | `SERVICE_HEALTH_GID` | empty | Numeric supplemental group that can read `SERVICE_HEALTH_FILE`; required when the health overlay is selected |
@@ -269,7 +276,9 @@ Do not commit a populated environment file, private service-name mapping, or ser
 | `NPM_PASSWORD` | Yes | NPM account password |
 | `LISTEN_ADDR` | No | Defaults to `127.0.0.1:8080`; Compose overrides it inside the container |
 | `POLL_INTERVAL` | No | Go duration from `5s` through `24h`; defaults to `30s` |
-| `SERVICE_METADATA_FILE` | No | Strict version-1-or-2 read-only JSON file keyed by existing NPM proxy-host IDs; v1 supports display-name/browser-URL overrides and v2 also supports presentation-only category/order; blank disables it |
+| `SERVICE_METADATA_FILE` | No | Strict v1/v2/v3 JSON keyed by existing NPM IDs; v1 name/URL, v2 category/order, unreleased v3 finite local icons. Read-only by default; opt-in editing owns the same file in a safe writable directory. Blank disables metadata |
+| `PORTAL_EDITORS` | Editing only | Strict exact full-login JSON array, <=32 entries, <=254 bytes each; no inferred membership; requires origin and existing metadata |
+| `PORTAL_PUBLIC_ORIGIN` | Editing only | Canonical external HTTP(S) origin, no path/trailing slash; both settings absent leave readonly mode |
 | `SERVICE_HEALTH_FILE` | No | Strict version-1 read-only JSON file for explicit proxy-host health probes, scheduling bounds, accepted HTTP statuses, and mandatory topology allowlists; blank disables probes |
 | `TRUSTED_PROXY_CIDR` | Yes | Exact source `/32`, `/128`, or the smallest intentionally trusted proxy subnet |
 | `PORTAL_LOGO_DEFAULT` | No | `visible` (default) or `hidden`; supplies only the initial browser-local built-in-logo state when no valid per-identity browser preference exists yet. The preference itself lives only in that browser's `localStorage`, scoped by an opaque SHA-256 digest of the exact login, and is never sent to or stored by Velociportal |

@@ -2,10 +2,10 @@
 
 This is the canonical, UI-managed TrueNAS SCALE path for one Velociportal container plus Nginx Proxy Manager (NPM) and one selected control plane. **Headscale is the supported implementation path. Tailscale SaaS is an implemented preview until live acceptance passes.** There is no source build on the NAS and no recurring NAS shell.
 
-Velociportal remains one read-only container. The selected control plane, NPM, and the existing Tailscale app remain separate security boundaries. Headscale mode retains the one-time first API-key bootstrap and HTTPS-only workstation `headscale-ops`; Tailscale mode uses a dedicated externally managed OAuth client and needs neither Headscale nor `headscale-ops`.
+Velociportal remains one non-root container with a read-only root filesystem and read-only upstream APIs. Unreleased optional shared editing adds only a separately approved writable metadata directory, not an upstream administration path. The selected control plane, NPM, and the existing Tailscale app remain separate security boundaries. Headscale mode retains the one-time first API-key bootstrap and HTTPS-only workstation `headscale-ops`; Tailscale mode uses a dedicated externally managed OAuth client and needs neither Headscale nor `headscale-ops`.
 
 !!! warning "Release-candidate path"
-    The architecture and templates are implemented, but the real TrueNAS acceptance matrix has not passed. No public image, `headscale-ops` release, or support claim is implied until immutable artifacts are published and verified and the full two-identity, NPM-control, restart, reachability, and LAN-negative worksheet succeeds.
+    Published release-candidate artifacts exist, but publication is not deployment acceptance or a public support claim. Select and independently verify an immutable image before deploying. The selected provider still must pass the full two-identity, NPM-control where applicable, restart, reachability and LAN-negative worksheet. The shared editor described below is unreleased, not RC.16 behavior.
 
 ## Choose the control plane
 
@@ -400,7 +400,7 @@ VELOCIPORTAL_SERVICE_METADATA_GID=950
 
 Keep the existing dataset permissions unchanged: directory `950:950`/`0750`, file `950:950`/`0640`. The overlay adds group `950` only to the Velociportal container, mounts the one file read-only at `/velociportal-services.json`, and refuses to create a missing host path. Do not `chmod`, `chown`, or alter dataset ACLs for this feature. A malformed configured file blocks a cold snapshot and a failed reload preserves the prior complete snapshot.
 
-Metadata changes only display names, browser URLs, categories, and order after policy matching. Once any category/order field is present, categories sort deterministically with uncategorized cards last; explicit order sorts cards only within a category, before name and proxy-host-ID fallbacks. Metadata cannot create, hide, or enable a card, change `forward_host`/`forward_port`, alter health, or grant access. Wildcard-only services without metadata remain visible with `link needed`; they never produce `%2A` links. NPM `nginx_online` is not backend health.
+Metadata changes only display names, browser URLs, categories, order and, in unreleased v3, finite local icons after policy matching. Once any category/order field is present, categories sort deterministically with uncategorized cards last; explicit order sorts cards only within a category, before name and proxy-host-ID fallbacks. Metadata cannot create, hide, or enable a card, change `forward_host`/`forward_port`, alter health, or grant access. Wildcard-only services without metadata remain visible with `link needed`; they never produce `%2A` links. NPM `nginx_online` is not backend health.
 
 Each user's display name and login also open an accessible settings panel that lets that one browser hide or show the fixed built-in Velociportal logo. That preference lives per exact identity in one browser only, scoped by an opaque SHA-256 digest of the login, and is never sent to or stored by the server; a legacy unscoped key migrates once. The optional `PORTAL_LOGO_DEFAULT=visible|hidden` environment value supplies only the initial deployment default used when no valid browser preference exists yet for that identity. Arbitrary per-service logos, access history, and server-side or account-synchronized personalization remain deferred.
 
@@ -418,11 +418,25 @@ velociportal suggest-hostnames --env-file velociportal.env --privacy private --b
 
 The command uses selected-control-plane node/device names and, only when requested with `--stdin-hostnames`, bounded hostname-only stdin. Provider-visible names are untrusted suggestions and do not prove association with the NPM backend; verify each intended browser destination independently. Doctor's eligibility count does not mean a usable suggestion exists: absent candidates or ambiguous associations can produce no proposal. The command does not scan DNS or logs, retain history, change NPM, update the active metadata file, or alter runtime card matching. Review the private hostname/ID list locally and type literal `yes` only to emit the proposal.
 
-Treat the strict v1 proposal as a **fragment**, never as a replacement for the complete active metadata file. Manually reconcile approved entries by existing positive `proxy_host_id`, preserving unrelated entries plus existing names, intentional URLs, categories, and order. If the active file is v2, retain version 2 and its organization fields; the proposal does not serialize them. Application through the authenticated transfer/UI path needs separate approval, followed by verification of the resulting link in the actual viewer's browser. Metadata does not configure NPM or DNS, grant access, or fix a failing frontend route.
+Treat the strict v1 proposal as a **fragment**, never as a replacement for the complete active metadata file. Manually reconcile approved entries by existing positive `proxy_host_id`, preserving unrelated entries plus existing names, intentional URLs, categories, and order. If the active file is v2/v3, retain its version and all category/order/icon fields; the proposal does not serialize them. In editing mode stop the writer before any operator merge, then restart. Application through the authenticated transfer/UI path needs separate approval, followed by verification of the resulting link in the actual viewer's browser. Metadata does not configure NPM or DNS, grant access, or fix a failing frontend route.
 
 Distinguish a missing browser link (`link needed`) from a credential-free backend check returning HTTP 401/403 (`backend denied`) and from browser/proxy/application failures. A backend denial does not promise that signing in will fix it, and a successful browser-URL GET is neither a direct backend probe nor login proof. See the [operator link-setup workflow](../reference/cli.md#operator-link-setup-workflow) for the complete boundary.
 
 Keep the proposal owner-only and remove it after review. Do not add a recurring NAS shell task, new production mount, updater, or automatic merge. Preserve the existing TrueNAS dataset ownership, modes, and ACLs; if the manually merged metadata file already uses `950:950`/`0640`, keep those values unchanged.
+
+### Optional shared service editing (unreleased)
+
+This is an **alternative** to the readonly single-file metadata overlay, never an additional authoritative file. Keep the base one-service/two-network, non-root `65534:65534`, read-only-root and loopback-only port contract unchanged. No dataset or live configuration change is performed by this implementation.
+
+Before enabling it, obtain separate approval for the exact dedicated directory and authenticated private transfer/initialization of its one `services.json`. The directory and file must already be runtime-owned and pass safe-storage validation; restrictive directory `0700` and file `0600` are appropriate newly provisioned values, not instructions to chmod/chown existing protected storage. Current `950:950`/`0750`/`0640` configuration is **not** the editor directory. Do not change its ownership, ACLs or modes, run as root or create storage automatically.
+
+Use `compose.service-editor.yaml` **instead of** `compose.service-metadata.yaml`. Set `VELOCIPORTAL_SERVICE_METADATA_DIRECTORY` to the separately preprovisioned host directory. The overlay mounts that directory writable at `/service-metadata`, refuses missing host-path creation, and sets the sole `SERVICE_METADATA_FILE=/service-metadata/services.json`; the existing file may start as reviewed v1/v2 or a deliberately provisioned minimal valid document. Directory mounting is necessary for adjacent temporary files and atomic rename; a single-file bind cannot support it. Either metadata mode can combine with CA/health overlays, but never combine both metadata modes. The repository verifier rejects mixed modes; raw Compose does not enforce this by itself. Inspect the rendered mount list before approval.
+
+In the selected provider env file, set both exact-login JSON `PORTAL_EDITORS` (at most 32, no aliases/padding/role inference) and canonical browser-facing `PORTAL_PUBLIC_ORIGIN` (including `:8081` for current HTTP Serve, no path or trailing slash). Both absent keep readonly mode; partial settings fail. Setup can configure those settings without provisioning; Doctor checks only coarse readonly prerequisites and does no editor write probe.
+
+Editors receive Edit service on already-visible cards. Name/link/icon blanks restore defaults; reset preserves category/order. First confirmed explicit save preserves the complete document and writes deterministic v3. No metadata field creates access or changes NPM/backend/SSH evidence. Whole-file or current-target changes conflict and require reload/review, never field merging. Drafts survive harmless polling/search, but clear on identity/access loss. No drafts/tokens/search are stored.
+
+**Before first v3 save**, privately review and approve metadata backup/restore and a compatibility rollback path. RC.16 requires compatible v1/v2 metadata and both editor settings removed; image-only rollback is insufficient. For operator edits stop the writer, merge all fields including icons privately, then restart. For an uncertain post-rename directory-sync failure, stop, reconcile actual disk against the reviewed backup/intended save, and restart with a valid known document; old memory is not proof of disk rollback. Never unlink a live lock or blindly retry. See [metadata/editor reference](../reference/service-metadata.md) for ID reuse, optimistic-write and final-freshness limitations.
 
 ### Optional bounded service health
 
@@ -555,18 +569,19 @@ Never deploy `latest`.
 
 The RC.1-to-RC.2 correction is not an ordinary image update: remove only the stopped stateless RC.1 Custom App, verify the old `velociportal-upstreams` network disappeared, and then install RC.2 so Docker creates it with `Internal=false`. Do not attach Headscale or NPM while the old `Internal=true` network exists.
 
-For later updates that do not change immutable Docker-network properties, change only the immutable image reference, redeploy through the same UI, and repeat acceptance. Velociportal has no database or persistent application volume.
+For later updates, first review configuration/schema compatibility as well as immutable Docker-network properties, then select the immutable image and repeat acceptance. Velociportal has no database or persisted authorization cache, but optional shared editing persists its one metadata file. Preserve/review that file and storage mode as part of update/rollback.
 
 Before entering a new image reference in TrueNAS, run `velociportal doctor --stack-env stack.env` from the private deployment workspace. This read-only offline preflight rejects `latest`, missing or malformed image pins, subnet/gateway mismatches, and invalid trusted-proxy values without contacting TrueNAS, Docker, the registry, or either upstream. If the provider file is also available from a network context that resolves the private aliases, combine `--env-file velociportal.env --stack-env stack.env` for the normal upstream diagnostics using the exact effective production trusted-proxy value. This does not prove publication, immutability, or live acceptance.
 
-To roll back, restore the prior image reference, rerun the same preflight, and redeploy. Preserve:
+To roll back, reconcile metadata and configuration compatibility **before** restoring the prior image reference, rerunning preflight and redeploying. After any editor v3 save, RC.16 needs reviewed compatible v1/v2 metadata and both editor settings removed; do not merely change the image or the JSON version number. Use a separately approved private backup/restore procedure established before first save. Preserve:
 
 - `stack.env` and the matching provider-specific `velociportal.env`;
 - Headscale database/configuration/policy in Headscale mode, or externally managed OAuth-client records in Tailscale mode;
 - NPM database/configuration/certificates;
 - TrueNAS network aliases and app settings;
 - Tailscale Serve configuration;
-- prior image digest and acceptance record.
+- prior image digest and acceptance record;
+- the complete private metadata document, schema-compatible backup/restore procedure and matching readonly/editor mount mode.
 
 Router replacement restores ordinary DNS and routing only. No CA or application state should be recovered from the router.
 
