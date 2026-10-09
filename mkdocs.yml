@@ -1,5 +1,5 @@
 site_name: Velociportal
-site_description: Identity-aware service visibility derived from Headscale or Tailscale legacy ACLs and Nginx Proxy Manager
+site_description: Identity-aware service visibility from Headscale or Tailscale policy and Nginx Proxy Manager, with a bounded Tailscale SSH Machines preview
 site_url: https://cybersader.github.io/velociportal
 repo_url: https://github.com/cybersader/velociportal
 repo_name: cybersader/velociportal
@@ -96,6 +96,7 @@ nav:
   - Reference:
       - CLI and Make targets: reference/cli.md
       - Known limitations: reference/known-limitations.md
+      - Service metadata and editing: reference/service-metadata.md
       - Headscale API: reference/headscale-api.md
       - Tailscale API: reference/tailscale-api.md
       - NPM API: reference/npm-api.md

@@ -15,6 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 COMPOSE_FILE = Path("deploy/compose.yaml")
 PRIVATE_CA_COMPOSE_FILE = Path("deploy/compose.private-ca.yaml")
 SERVICE_METADATA_COMPOSE_FILE = Path("deploy/compose.service-metadata.yaml")
+SERVICE_EDITOR_COMPOSE_FILE = Path("deploy/compose.service-editor.yaml")
 SERVICE_HEALTH_COMPOSE_FILE = Path("deploy/compose.service-health.yaml")
 RUNTIME_ENV_EXAMPLES = {
     "headscale": Path("deploy/velociportal.env.example"),
@@ -25,6 +26,7 @@ VERIFY_IMAGE = "ghcr.io/cybersader/velociportal:v0.0.0-verify"
 VERIFY_CA_FILE = ROOT / ".env.example"
 VERIFY_SERVICE_METADATA_FILE = ROOT / "deploy/service-metadata.example.json"
 VERIFY_SERVICE_METADATA_GID = "950"
+VERIFY_SERVICE_METADATA_DIRECTORY = ROOT / "deploy"
 VERIFY_SERVICE_HEALTH_FILE = ROOT / "deploy/service-health.example.json"
 VERIFY_SERVICE_HEALTH_GID = "951"
 
@@ -168,14 +170,14 @@ def mount_by_target(service: dict, target: str) -> dict:
     return matches[0]
 
 
-def validate_bind_mount(mount: dict, *, source: str | Path, target: str, rendered: bool) -> None:
+def validate_bind_mount(mount: dict, *, source: str | Path, target: str, rendered: bool, read_only: bool = True) -> None:
     require(mount.get("type") == "bind", f"{target} must use a bind mount")
     if rendered:
         require(Path(str(mount.get("source", ""))) == source, f"rendered source for {target} changed unexpectedly")
     else:
         require(mount.get("source") == source, f"raw source for {target} changed unexpectedly")
     require(mount.get("target") == target, f"mount target {target} changed unexpectedly")
-    require(mount.get("read_only") is True, f"mount {target} must be read-only")
+    require(mount.get("read_only", False) is read_only, f"mount {target} read-only mode changed unexpectedly")
     allowed_create = (None, False) if rendered else (False,)
     require(
         mount.get("bind", {}).get("create_host_path") in allowed_create,
@@ -190,8 +192,12 @@ def validate_optional_mounts(
     expect_service_metadata: bool,
     expect_service_health: bool,
     rendered: bool,
+    expect_service_editor: bool = False,
 ) -> None:
-    expected_count = int(expect_private_ca) + int(expect_service_metadata) + int(expect_service_health)
+    require(not (expect_service_metadata and expect_service_editor), "readonly metadata and editor directory overlays are mutually exclusive")
+    if expect_service_editor:
+        require(not any(mount.get("target") == "/velociportal-services.json" for mount in service.get("volumes", [])), "do not combine both metadata mount modes")
+    expected_count = int(expect_private_ca) + int(expect_service_metadata) + int(expect_service_health) + int(expect_service_editor)
     volumes = service.get("volumes", [])
     require(isinstance(volumes, list) and len(volumes) == expected_count, "optional overlays added unexpected mounts")
 
@@ -223,6 +229,10 @@ def validate_optional_mounts(
             if rendered
             else "${VELOCIPORTAL_SERVICE_METADATA_GID:?set VELOCIPORTAL_SERVICE_METADATA_GID to the numeric group that can read the metadata file}"
         )
+    elif expect_service_editor:
+        source = VERIFY_SERVICE_METADATA_DIRECTORY if rendered else "${VELOCIPORTAL_SERVICE_METADATA_DIRECTORY:?set VELOCIPORTAL_SERVICE_METADATA_DIRECTORY to a preprovisioned runtime-owned metadata directory}"
+        validate_bind_mount(mount_by_target(service, "/service-metadata"), source=source, target="/service-metadata", rendered=rendered, read_only=False)
+        require(environment.get("SERVICE_METADATA_FILE") == "/service-metadata/services.json", "editor directory must contain the one configured metadata file")
     else:
         require("SERVICE_METADATA_FILE" not in environment, "service must not enable metadata without its overlay")
 
@@ -263,6 +273,7 @@ def validate_raw_model(
     expect_private_ca: bool,
     expect_service_metadata: bool = False,
     expect_service_health: bool = False,
+    expect_service_editor: bool = False,
 ) -> None:
     require(model.get("name") == "velociportal-production", "production project name must not collide with repository Compose")
     service = only_service(model)
@@ -319,6 +330,7 @@ def validate_raw_model(
         expect_private_ca=expect_private_ca,
         expect_service_metadata=expect_service_metadata,
         expect_service_health=expect_service_health,
+        expect_service_editor=expect_service_editor,
         rendered=False,
     )
 
@@ -337,6 +349,7 @@ def validate_rendered_model(
     expect_private_ca: bool,
     expect_service_metadata: bool = False,
     expect_service_health: bool = False,
+    expect_service_editor: bool = False,
 ) -> None:
     require(model.get("name") == "velociportal-production", "rendered production project name changed unexpectedly")
     service = only_service(model)
@@ -406,6 +419,7 @@ def validate_rendered_model(
         expect_private_ca=expect_private_ca,
         expect_service_metadata=expect_service_metadata,
         expect_service_health=expect_service_health,
+        expect_service_editor=expect_service_editor,
         rendered=True,
     )
 
@@ -441,6 +455,7 @@ def verification_environment(runtime_env_example: Path) -> dict[str, str]:
     environment.pop("VELOCIPORTAL_CA_FILE", None)
     environment.pop("VELOCIPORTAL_SERVICE_METADATA_FILE", None)
     environment.pop("VELOCIPORTAL_SERVICE_METADATA_GID", None)
+    environment.pop("VELOCIPORTAL_SERVICE_METADATA_DIRECTORY", None)
     environment.pop("VELOCIPORTAL_SERVICE_HEALTH_FILE", None)
     environment.pop("VELOCIPORTAL_SERVICE_HEALTH_GID", None)
     environment.update(
@@ -510,16 +525,18 @@ def short_include_model(runtime_env_example: Path) -> dict:
 
 def main() -> int:
     overlay_combinations = [
-        (expect_private_ca, expect_service_metadata, expect_service_health)
+        (expect_private_ca, metadata_mode, expect_service_health)
         for expect_private_ca in (False, True)
-        for expect_service_metadata in (False, True)
+        for metadata_mode in ("off", "readonly", "editor")
         for expect_service_health in (False, True)
     ]
 
     for provider, runtime_env_example in RUNTIME_ENV_EXAMPLES.items():
         base_environment = verification_environment(runtime_env_example)
 
-        for expect_private_ca, expect_service_metadata, expect_service_health in overlay_combinations:
+        for expect_private_ca, metadata_mode, expect_service_health in overlay_combinations:
+            expect_service_metadata = metadata_mode == "readonly"
+            expect_service_editor = metadata_mode == "editor"
             compose_files = [COMPOSE_FILE]
             rendered_environment = base_environment.copy()
             if expect_private_ca:
@@ -533,6 +550,9 @@ def main() -> int:
                         "VELOCIPORTAL_SERVICE_METADATA_GID": VERIFY_SERVICE_METADATA_GID,
                     }
                 )
+            if expect_service_editor:
+                compose_files.append(SERVICE_EDITOR_COMPOSE_FILE)
+                rendered_environment["VELOCIPORTAL_SERVICE_METADATA_DIRECTORY"] = str(VERIFY_SERVICE_METADATA_DIRECTORY)
             if expect_service_health:
                 compose_files.append(SERVICE_HEALTH_COMPOSE_FILE)
                 rendered_environment.update(
@@ -548,6 +568,7 @@ def main() -> int:
                 expect_private_ca=expect_private_ca,
                 expect_service_metadata=expect_service_metadata,
                 expect_service_health=expect_service_health,
+                expect_service_editor=expect_service_editor,
             )
 
             rendered_model = compose_json(
@@ -560,7 +581,18 @@ def main() -> int:
                 expect_private_ca=expect_private_ca,
                 expect_service_metadata=expect_service_metadata,
                 expect_service_health=expect_service_health,
+                expect_service_editor=expect_service_editor,
             )
+
+        # Negative rendering: raw Compose can stack overlays, so explicitly reject
+        # the mixed mode instead of silently accepting two metadata mount points.
+        mixed = compose_json(raw_config_arguments(COMPOSE_FILE, SERVICE_METADATA_COMPOSE_FILE, SERVICE_EDITOR_COMPOSE_FILE), base_environment)
+        try:
+            validate_raw_model(mixed, expect_private_ca=False, expect_service_editor=True)
+        except AssertionError:
+            pass
+        else:
+            fail("mixed metadata overlays must be rejected")
 
         included_base = short_include_model(runtime_env_example)
         validate_rendered_model(included_base, provider=provider, expect_private_ca=False)

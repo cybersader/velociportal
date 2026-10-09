@@ -18,6 +18,8 @@ const headscaleHTTPSetupWarning = "WARNING: Headscale HTTP is allowed only for t
 const setupUsage = `Usage:
   velociportal setup [--env-file FILE]
   velociportal setup observe-proxy [options]
+  velociportal setup service-editor --env-file FILE --editors JSON --origin ORIGIN
+  velociportal setup service-editor --env-file FILE --disable
 
 Options:
   --env-file FILE  Read and atomically update FILE (default ".env")
@@ -43,6 +45,9 @@ func runSetupCommand(args []string, stdin io.Reader, stdout, stderr io.Writer) i
 func runSetupCommandWithDependencies(args []string, stdin io.Reader, stdout, stderr io.Writer, dependencies setupCommandDependencies) int {
 	stdin, stdout, stderr = normalizeSetupIO(stdin, stdout, stderr)
 
+	if len(args) > 0 && args[0] == "service-editor" {
+		return runSetupServiceEditorCommand(args[1:], stdout, stderr)
+	}
 	if len(args) > 0 && args[0] == "observe-proxy" {
 		return runObserveProxyCommandWithDependencies(args[1:], stdin, stdout, stderr, dependencies.proxyObserver)
 	}

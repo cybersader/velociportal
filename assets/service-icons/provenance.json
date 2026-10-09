@@ -1,0 +1,71 @@
+{
+  "repository": "homarr-labs/dashboard-icons",
+  "revision": "57e939e504eda0ea764098015da93aa666ad6f31",
+  "files": [
+    {
+      "path": "LICENSE",
+      "sha256": "e58a8fa57781d1dc7158b333b68c99461031fd2c25dfbd23eac15a8e984cae56",
+      "bytes": 11392
+    },
+    {
+      "path": "png/adguard-home.png",
+      "sha256": "20544244de6032a2c47aad16acdc34bd33958c2e79eec173a2c5b90e4165c298",
+      "bytes": 20385
+    },
+    {
+      "path": "png/gitea.png",
+      "sha256": "25eeae6e20f78b4c25231c1d76f03ea818cb5a5a88261f1e4c7ea95b1af699da",
+      "bytes": 34939
+    },
+    {
+      "path": "png/grafana.png",
+      "sha256": "e352637972078c6b2ed7395992a08b002f20b2fba522f3c34bc52946b27475d8",
+      "bytes": 26391
+    },
+    {
+      "path": "png/home-assistant.png",
+      "sha256": "6582fff08db75b5fb11d5133145a1c009d5fa1d6940789330a638f234e852cbe",
+      "bytes": 12821
+    },
+    {
+      "path": "png/immich.png",
+      "sha256": "3ab52ec3b143932f52492fc7bf60ce7f56b0247bb5707f5d3d7a4f3a6417f2c9",
+      "bytes": 26240
+    },
+    {
+      "path": "png/jellyfin.png",
+      "sha256": "2e45c7bb04b1fdbc70737be1676c73bcfbe98dcd9f72dcd063196c7075c65b37",
+      "bytes": 45631
+    },
+    {
+      "path": "png/nextcloud.png",
+      "sha256": "76255228d7ad2eb781b509a868fe054e32f18afc875ed80c3e986da2c9366e11",
+      "bytes": 37178
+    },
+    {
+      "path": "png/nginx-proxy-manager.png",
+      "sha256": "d7cfc92b0146ad4186bd7ed1abd19158a08b0bf708b30d8a5dd469ce8c397334",
+      "bytes": 48840
+    },
+    {
+      "path": "png/paperless-ngx.png",
+      "sha256": "4aca0e3745c3f630ac5e877974d433c283da9fdc4a404c85b0bc8441c8b904b2",
+      "bytes": 17783
+    },
+    {
+      "path": "png/portainer.png",
+      "sha256": "1646de351d273d17208db16f573835cf659d65a991583d5a2b3a14fe83856899",
+      "bytes": 5723
+    },
+    {
+      "path": "png/qbittorrent.png",
+      "sha256": "3d03a2c91440a85ab6879207f90e17a8ff9c9580ae5a26ec3a64b2c2418f7019",
+      "bytes": 59717
+    },
+    {
+      "path": "png/uptime-kuma.png",
+      "sha256": "4ee9ec4274e02d63092ddb71da2e71c950abe40dc6be8a88042b566464c0b70c",
+      "bytes": 28995
+    }
+  ]
+}

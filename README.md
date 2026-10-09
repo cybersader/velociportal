@@ -37,7 +37,7 @@ The production bundle lives under [`deploy/`](./deploy/). It requires Docker Com
 > Published release-candidate images and `headscale-ops` artifacts exist, but they do not imply a public support claim. The selected provider's full TrueNAS acceptance matrix must still pass.
 
 > [!NOTE]
-> `main` includes the merged RC.13 SSH-capability/layout fixes, RC.14 mobile/search and backend-check wording, and RC.15 desktop card-rhythm polish. RC.15 interface-specific CSS and a healthy `/healthz` were verified live on 2026-10-07, but no running-container engine digest was read; those checks do not independently prove the running image digest or end-to-end acceptance. Published RCs remain immutable, and Tailscale SaaS remains preview.
+> Published immutable **v0.2.0-rc.16** adds privacy-safe operator link-setup guidance. Recorded 2026-10-08 live checks confirmed a healthy portal, but the exact running-container digest remains unverified; these are not end-to-end acceptance. Shared service editing is **unreleased**. Published RCs remain immutable and Tailscale SaaS remains preview. See [handoff context](knowledgebase/04-handoff-context.md) for the exact image and evidence boundary.
 
 > [!WARNING]
 > The canonical browser route is tailnet-only HTTP Serve over WireGuard: `:8081 -> http://127.0.0.1:18080`. NPM is not portal identity. Official Tailscale can automate `*.ts.net` certificates, but Headscale automatic HTTPS Serve remains future upstream work tracked by [issue #2527](https://github.com/juanfont/headscale/issues/2527) and [PR #3300](https://github.com/juanfont/headscale/pull/3300). Tailnet HTTP Serve is not a release blocker.
@@ -93,6 +93,10 @@ Each user's display name and login open an accessible settings panel with the on
 
 The page includes an install manifest and committed mobile icons. Identity-derived portal responses are `no-store`, and the service worker has install/activate lifecycle handling only: it has no fetch handler, Cache Storage use, offline fallback, or cached service/machine data. Full service-worker control and normal install prompts require HTTPS or localhost. The canonical plain-HTTP Tailscale Serve route may still be saved as a browser shortcut where supported, but enabling HTTPS is a separate infrastructure decision. Arbitrary per-service logos, access history, broader personalization, account-synchronized profiles, and delegated administration remain deferred.
 
+## Unreleased shared service editing
+
+Optional exact-login editors can change shared service names, links and finite embedded icons in the **one existing `SERVICE_METADATA_FILE`**. The first explicit successful save preserves the complete v1/v2 document and writes deterministic v3; reset preserves category/order. Editing is off by default and requires separately provisioned runtime-owned directory storage, exact editor logins and a canonical public origin. Upstream APIs remain read-only; no database, second presentation store, sessions or policy mutation is added. See [metadata/editor reference](docs/reference/service-metadata.md) and the [TrueNAS opt-in prerequisites](docs/guides/truenas-scale.md#optional-shared-service-editing-unreleased). Before a first v3 save, review private backup/restore: rollback to RC.16 needs compatible v1/v2 metadata and editing-disabled config, not just the old image. No live migration or deployment is complete.
+
 ## What it is — and is not
 
 | Velociportal is | Velociportal is not |
@@ -123,7 +127,7 @@ The page includes an install manifest and committed mobile icons. Identity-deriv
 - A role-gated Tailscale Machines navigation action on already SSH-capable machine rows that uses a validated short name/IP plus `property:tailscale-ssh` and remains navigation only because Tailscale exposes no standalone browser-session URL
 - Privacy-safe PWA metadata and icons, `no-store` identity responses, and a lifecycle-only service worker with no fetch interception, offline mode, or authorization-data cache; full install/service-worker behavior requires HTTPS or localhost
 - Truthful plain-language SSH action labels, a short display/search machine name alongside the full canonical target, a safe client-validated custom non-root account input, and a browser-local, per-identity, 10-entry SSH account suggestion list with a clear control
-- Strict optional name/URL/category/order service metadata applied only after policy matching; version 1 remains name/URL compatible and version 2 adds presentation-only organization
+- Strict optional service metadata applied only after policy matching: v1 name/URL and v2 category/order remain compatible; unreleased v3 adds finite local icon IDs and optional one-file shared editing
 - One-shot private hostname suggestions from selected-control-plane names plus optional bounded hostname-only stdin, with whole-component ambiguity rejection and manual metadata merge only
 - Explicit opt-in HTTP GET or connect-only TCP backend probes with topology allowlists, direct validated-IP dialing, verified TLS, fixed worker bounds, no credentials/proxies/redirects, and identity-filtered presentation
 - Non-root `FROM scratch` image and Engine-28+-gated loopback-only publication
@@ -219,7 +223,8 @@ No CA state lives on pfSense/the router. Router replacement restores ordinary DN
 - [x] Add a bounded Tailscale-preview SSH Machines view with dual SSH-policy plus Grant TCP/22 evidence and safe copy commands
 - [x] Add a role-gated Tailscale Machines navigation action and a username-triggered accessible settings panel with a per-identity browser-local logo preference plus optional `PORTAL_LOGO_DEFAULT` deployment default
 - [x] Narrow the navigation action by explicit per-device SSH capability, add mobile bottom navigation, and add a non-caching PWA shell
-- [ ] Add arbitrary per-service logos, access history, and server-side/account-synchronized personalization
+- [ ] Verify and publish the unreleased one-file shared name/link/local-icon editor; separately approve storage and live acceptance
+- [ ] Add arbitrary logo uploads/external logos, access history, and account-synchronized personalization
 - [ ] Add Caddy and Traefik service-discovery adapters
 
 ## License

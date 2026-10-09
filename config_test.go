@@ -321,6 +321,8 @@ func TestLoadConfigFromUsesDeterministicLookupOrder(t *testing.T) {
 		"LISTEN_ADDR",
 		"POLL_INTERVAL",
 		"SERVICE_METADATA_FILE",
+		"PORTAL_EDITORS",
+		"PORTAL_PUBLIC_ORIGIN",
 		"SERVICE_HEALTH_FILE",
 		"PORTAL_LOGO_DEFAULT",
 	}

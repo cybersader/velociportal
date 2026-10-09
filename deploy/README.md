@@ -22,6 +22,7 @@ Files:
 - `compose.yaml` — portable one-service base stack with no bind mounts.
 - `compose.private-ca.yaml` — optional bind-mount overlay for the public root certificate of a private certificate authority.
 - `compose.service-metadata.yaml` — optional read-only presentation-metadata overlay with a fixed in-container path and supplemental read group.
+- `compose.service-editor.yaml` — unreleased alternative runtime-owned writable directory mount for the same one metadata file; never combine both metadata modes.
 - `service-metadata.example.json` — strict version-2 name/URL/category/order example keyed by an existing NPM proxy-host ID; version 1 remains compatible for name/URL-only files.
 - `compose.service-health.yaml` — optional read-only explicit health-probe overlay with a fixed in-container path and supplemental read group.
 - `service-health.example.json` — strict version-1 health example with bounded scheduling and topology allowlists.
@@ -119,7 +120,9 @@ VELOCIPORTAL_SERVICE_HEALTH_FILE=/absolute/host/path/velociportal-health.json VE
 
 The overlay mounts the file read-only at `/velociportal-health.json`, sets `SERVICE_HEALTH_FILE` to that fixed target, refuses to create a missing source, and adds only the supplied numeric supplemental group. Probes derive targets only from current NPM backend fields; metadata/browser URLs are never probed. HTTP uses credential-free `GET`, TCP connects and closes without payload, DNS answers are validated before direct-IP dialing, TLS remains verified, and NPM/selected-control-plane API sockets are protected. Health never changes authorization, cards, the discovery snapshot, or `/healthz`. Preserve the same `950:950`/`0750`/`0640` ownership and modes rather than loosening permissions.
 
-The private-CA, metadata, and health overlays can be stacked in any combination by including the selected files.
+Private-CA and health can combine with either metadata mode. **Never combine readonly `compose.service-metadata.yaml` and writable-directory `compose.service-editor.yaml`.** Raw Compose can stack them; the production verifier explicitly rejects mixed modes rather than accepting two mount points.
+
+For the unreleased editor directory overlay, separately approve/provision a dedicated runtime-owned directory containing reviewed `services.json`; set `VELOCIPORTAL_SERVICE_METADATA_DIRECTORY` to it and both exact-login `PORTAL_EDITORS`/canonical `PORTAL_PUBLIC_ORIGIN` in the provider env. The sole runtime file is `/service-metadata/services.json`; no automatic source-directory creation or permission repair occurs. Do not repurpose protected `950:950` storage. Before first explicit v3 save establish private compatible backup/restore: RC.16 rollback needs v1/v2 metadata and editing disabled. See the [metadata/editor reference](../docs/reference/service-metadata.md) and [TrueNAS prerequisites](../docs/guides/truenas-scale.md#optional-shared-service-editing-unreleased).
 
 ## Portal appearance, mobile navigation, and Tailscale Machines action
 

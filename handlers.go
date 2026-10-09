@@ -17,6 +17,7 @@ type PortalHandler struct {
 	cache              *Cache
 	health             *ServiceHealthStore
 	logoDefaultVisible bool
+	editor             *ServiceMetadataEditor
 }
 
 func NewPortalHandler(cache *Cache) *PortalHandler {
@@ -37,13 +38,17 @@ func NewPortalHandlerWithOptions(cache *Cache, health *ServiceHealthStore, logoD
 
 func (h *PortalHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	setIdentityResponseCacheHeaders(w.Header())
+	if h.editor != nil {
+		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("Content-Security-Policy", "frame-ancestors 'none'")
+	}
 	identity := IdentityFromContext(r.Context())
 	if identity == nil {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 
-	data := h.cache.Get()
+	data := h.editor.requestData(h.cache.Get())
 	if data == nil {
 		http.Error(w, "portal unavailable", http.StatusServiceUnavailable)
 		return
@@ -73,6 +78,8 @@ func (h *PortalHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		Organized:                 serviceMetadataHasOrganization(data.ServiceMetadata),
 		LogoDefaultVisible:        h.logoDefaultVisible,
 		Health:                    h.health,
+		ServiceEditing:            h.editor != nil && h.editor.editingIdentity(r),
+		ServiceEditorAvailable:    h.editor != nil,
 	}
 	if err := renderPortalWithOptions(w, identity, cards, opts); err != nil {
 		slog.Error("render portal", "err", err)
@@ -93,6 +100,8 @@ type portalRenderOptions struct {
 	Organized                 bool
 	LogoDefaultVisible        bool
 	Health                    *ServiceHealthStore
+	ServiceEditing            bool
+	ServiceEditorAvailable    bool
 }
 
 func renderPortal(w io.Writer, id *Identity, cards []ServiceCard, healthStores ...*ServiceHealthStore) error {
@@ -121,10 +130,10 @@ func renderPortalWithOptions(w io.Writer, id *Identity, cards []ServiceCard, opt
 	servicesClass := "grid"
 	if organized {
 		servicesClass = "services-organized"
-		renderServiceSections(&servicesBody, cards, health)
+		renderServiceSections(&servicesBody, cards, health, opts.ServiceEditing, opts.ServiceEditorAvailable)
 	} else {
 		for _, card := range cards {
-			renderServiceCard(&servicesBody, card, health)
+			renderServiceCard(&servicesBody, card, health, opts.ServiceEditing, opts.ServiceEditorAvailable)
 		}
 	}
 
@@ -172,6 +181,10 @@ func renderPortalWithOptions(w io.Writer, id *Identity, cards []ServiceCard, opt
 		logoDefaultLiteral = "false"
 	}
 
+	refreshTrigger := "every 60s"
+	if opts.ServiceEditing {
+		refreshTrigger += ", service-metadata-saved from:body"
+	}
 	page := strings.NewReplacer(
 		"{{USER_NAME}}", html.EscapeString(displayName),
 		"{{USER_LOGIN}}", html.EscapeString(id.Login),
@@ -182,6 +195,10 @@ func renderPortalWithOptions(w io.Writer, id *Identity, cards []ServiceCard, opt
 		"{{BOTTOM_NAV}}", renderBottomNav(machinesAvailable),
 		"{{LOGO_PREF_SCOPE}}", logoPreferenceScope(id.Login),
 		"{{LOGO_DEFAULT_VISIBLE}}", logoDefaultLiteral,
+		"{{SERVICE_EDITING}}", fmt.Sprint(opts.ServiceEditing),
+		"{{SERVICE_EDITOR}}", renderServiceEditor(opts.ServiceEditorAvailable || opts.ServiceEditing),
+		"{{SERVICE_EDITOR_CSS}}", serviceEditorCSS,
+		"{{PORTAL_REFRESH_TRIGGER}}", refreshTrigger,
 	).Replace(portalPage)
 
 	if _, err := io.WriteString(w, page); err != nil {
@@ -236,7 +253,7 @@ func serviceCardsHaveOrganizationMetadata(cards []ServiceCard) bool {
 	return false
 }
 
-func renderServiceSections(body *strings.Builder, cards []ServiceCard, health *ServiceHealthStore) {
+func renderServiceSections(body *strings.Builder, cards []ServiceCard, health *ServiceHealthStore, editing ...bool) {
 	for sectionIndex, start := 0, 0; start < len(cards); sectionIndex++ {
 		category := cards[start].Category
 		end := start + 1
@@ -258,46 +275,53 @@ func renderServiceSections(body *strings.Builder, cards []ServiceCard, health *S
 			html.EscapeString(label),
 		)
 		for _, card := range cards[start:end] {
-			renderServiceCard(body, card, health)
+			renderServiceCard(body, card, health, editing...)
 		}
 		body.WriteString(`</div></section>`)
 		start = end
 	}
 }
 
-func renderServiceCard(body *strings.Builder, card ServiceCard, health *ServiceHealthStore) {
+// Optional flags enable editor controls and the generic icon default, respectively.
+// Legacy read-only v1/v2 cards without an icon retain their established rendering.
+func renderServiceCard(body *strings.Builder, card ServiceCard, health *ServiceHealthStore, editing ...bool) {
 	healthMarkup := renderServiceHealthStatus(health, card.ID)
 	scheme, linkable := cardURLScheme(card.URL)
-	if card.LinkState != serviceLinkReady {
-		linkable = false
-	}
+	linkable = linkable && card.LinkState == serviceLinkReady
+	hostname := ""
 	if linkable {
-		fmt.Fprintf(body,
-			`<a class="card" href="%s" data-service="%s">`+
-				`<span class="card-head"><span class="card-name">%s</span></span>`+
-				`<span class="card-meta"><span class="badge">%s</span>%s</span>`+
-				`</a>`,
-			html.EscapeString(card.URL),
-			html.EscapeString(card.Name),
-			html.EscapeString(card.Name),
-			html.EscapeString(scheme),
-			healthMarkup,
-		)
+		parsed, _ := url.Parse(card.URL)
+		hostname = parsed.Hostname()
+	}
+	attrs := fmt.Sprintf(`data-service="%s" data-service-id="%d" data-service-hostname="%s"`, html.EscapeString(card.Name), card.ID, html.EscapeString(hostname))
+	iconMarkup := ""
+	if card.Icon != "" || (len(editing) > 0 && editing[0]) || (len(editing) > 1 && editing[1]) {
+		icon := serviceIconForID(card.Icon)
+		iconMarkup = fmt.Sprintf(`<img class="service-icon" src="%s" width="32" height="32" alt="">`, icon.Path)
+	}
+	badge := "link needed"
+	if linkable {
+		badge = scheme
+	}
+	content := fmt.Sprintf(`%s<span class="card-head"><span class="card-name">%s</span></span><span class="card-meta"><span class="badge">%s</span>%s</span>`, iconMarkup, html.EscapeString(card.Name), badge, healthMarkup)
+	if len(editing) > 0 && editing[0] {
+		fmt.Fprintf(body, `<article class="card card-editable" %s>`, attrs)
+		if linkable {
+			fmt.Fprintf(body, `<a class="service-main" href="%s">%s</a>`, html.EscapeString(card.URL), content)
+		} else {
+			fmt.Fprintf(body, `<div class="service-main card-unlinked">%s</div>`, content)
+		}
+		fmt.Fprintf(body, `<button type="button" class="service-edit-button" data-edit-service="%d" aria-label="Edit service: %s" aria-haspopup="dialog" aria-controls="service-editor">Edit service</button></article>`, card.ID, html.EscapeString(card.Name))
 		return
 	}
-
-	if card.LinkState == serviceLinkReady {
-		slog.Warn("rendering card with invalid browser URL as unlinked", "proxy_host_id", card.ID)
+	if linkable {
+		fmt.Fprintf(body, `<a class="card" href="%s" %s>%s</a>`, html.EscapeString(card.URL), attrs, content)
+	} else {
+		if card.LinkState == serviceLinkReady {
+			slog.Warn("rendering card with invalid browser URL as unlinked", "proxy_host_id", card.ID)
+		}
+		fmt.Fprintf(body, `<article class="card card-unlinked" %s>%s</article>`, attrs, content)
 	}
-	fmt.Fprintf(body,
-		`<article class="card card-unlinked" data-service="%s">`+
-			`<span class="card-head"><span class="card-name">%s</span></span>`+
-			`<span class="card-meta"><span class="badge">link needed</span>%s</span>`+
-			`</article>`,
-		html.EscapeString(card.Name),
-		html.EscapeString(card.Name),
-		healthMarkup,
-	)
 }
 
 func renderMachineCard(body *strings.Builder, machine MachineCard, index int, consoleEligible bool) {
@@ -819,13 +843,14 @@ a.card:hover, a.card:focus-visible { border-color: var(--accent); background: va
   .bottom-nav { transition: none; }
   a.card:hover, a.card:focus-visible { transform: none; }
 }
+{{SERVICE_EDITOR_CSS}}
 </style>
 <noscript><style>
   /* Search is a JS-only convenience filter over content that is already fully
      usable without it. Hide the search field and the bottom-nav Search action
      entirely when JS is unavailable so no nonfunctional control is shown;
      Services/Machines links and the settings sheet remain plain HTML. */
-  .portal-search, #bottom-nav-search { display: none; }
+  .portal-search, #bottom-nav-search, .service-edit-button { display: none; }
 </style></noscript>
 <script>
 (function () {
@@ -907,7 +932,7 @@ Show Velociportal logo
 <span class="portal-search-status" id="portal-search-status" role="status" aria-live="polite"></span>
 </div>
 <p class="portal-search-no-results" id="portal-search-no-results" hidden>No results for this search.</p>
-<div class="portal-content" id="portal-content" hx-get="/portal" hx-trigger="every 60s" hx-target="#portal-content" hx-select="#portal-content" hx-swap="outerHTML">
+<div class="portal-content" id="portal-content" hx-get="/portal" hx-trigger="{{PORTAL_REFRESH_TRIGGER}}" hx-target="#portal-content" hx-select="#portal-content" hx-swap="outerHTML" data-identity-scope="{{LOGO_PREF_SCOPE}}" data-service-editing="{{SERVICE_EDITING}}">
 <section class="portal-section" aria-labelledby="services-heading">
 <h2 class="section-title" id="services-heading">Services</h2>
 {{SERVICES_HEALTH_HELP}}
@@ -919,6 +944,7 @@ Show Velociportal logo
 </div>
 </main>
 {{BOTTOM_NAV}}
+{{SERVICE_EDITOR}}
 <datalist id="ssh-account-suggestions"></datalist>
 <script src="/static/htmx.min.js"></script>
 <script>
@@ -1162,11 +1188,7 @@ Show Velociportal logo
   function cardHaystack(card) {
     var nameEl = card.querySelector(".card-name");
     var text = nameEl ? nameEl.textContent : "";
-    if (card.tagName === "A" && card.href) {
-      try {
-        text += " " + new URL(card.href, window.location.href).hostname;
-      } catch (_) {}
-    }
+    text += " " + (card.getAttribute("data-service-hostname") || "");
     return text.toLowerCase();
   }
 
