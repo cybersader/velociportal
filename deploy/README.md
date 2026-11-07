@@ -22,7 +22,7 @@ Files:
 - `compose.yaml` — portable one-service base stack with no bind mounts.
 - `compose.private-ca.yaml` — optional bind-mount overlay for the public root certificate of a private certificate authority.
 - `compose.service-metadata.yaml` — optional read-only presentation-metadata overlay with a fixed in-container path and supplemental read group.
-- `compose.service-editor.yaml` — unreleased alternative runtime-owned writable directory mount for the same one metadata file; never combine both metadata modes.
+- `compose.service-editor.yaml` — RC.17 alternative runtime-owned writable directory mount for the same one metadata file; never combine both metadata modes.
 - `service-metadata.example.json` — strict version-2 name/URL/category/order example keyed by an existing NPM proxy-host ID; version 1 remains compatible for name/URL-only files.
 - `compose.service-health.yaml` — optional read-only explicit health-probe overlay with a fixed in-container path and supplemental read group.
 - `service-health.example.json` — strict version-1 health example with bounded scheduling and topology allowlists.
@@ -122,7 +122,28 @@ The overlay mounts the file read-only at `/velociportal-health.json`, sets `SERV
 
 Private-CA and health can combine with either metadata mode. **Never combine readonly `compose.service-metadata.yaml` and writable-directory `compose.service-editor.yaml`.** Raw Compose can stack them; the production verifier explicitly rejects mixed modes rather than accepting two mount points.
 
-For the unreleased editor directory overlay, separately approve/provision a dedicated runtime-owned directory containing reviewed `services.json`; set `VELOCIPORTAL_SERVICE_METADATA_DIRECTORY` to it and both exact-login `PORTAL_EDITORS`/canonical `PORTAL_PUBLIC_ORIGIN` in the provider env. The sole runtime file is `/service-metadata/services.json`; no automatic source-directory creation or permission repair occurs. Do not repurpose protected `950:950` storage. Before first explicit v3 save establish private compatible backup/restore: RC.16 rollback needs v1/v2 metadata and editing disabled. See the [metadata/editor reference](../docs/reference/service-metadata.md) and [TrueNAS prerequisites](../docs/guides/truenas-scale.md#optional-shared-service-editing-unreleased).
+For the RC.17 shared editor directory overlay, separately approve/provision a dedicated runtime-owned directory containing reviewed `services.json`; set `VELOCIPORTAL_SERVICE_METADATA_DIRECTORY` to it and both exact-login `PORTAL_EDITORS`/canonical `PORTAL_PUBLIC_ORIGIN` in the provider env. The sole runtime file is `/service-metadata/services.json`; no automatic source-directory creation or permission repair occurs. Do not repurpose protected `950:950` storage. Before first explicit v3 save establish private compatible backup/restore: RC.16 rollback needs v1/v2 metadata and editing disabled. See the [metadata/editor reference](../docs/reference/service-metadata.md) and [TrueNAS prerequisites](../docs/guides/truenas-scale.md#optional-shared-service-editing).
+
+## Browser-local service editing (RC.18 candidate)
+
+With an independently verified RC.18 image and separate deployment approval, add the single line `PORTAL_EDIT_MODE: browser` to the existing service's `environment` mapping; existing env-file pass-through also supports `PORTAL_EDIT_MODE="browser"`. There is no new service/network or writable mount. Do not add the editor overlay. No metadata file, allowlist or origin is required; optional readonly metadata supplies defaults, and supplied `PORTAL_EDITORS`/`PORTAL_PUBLIC_ORIGIN` are contradictory even when empty.
+
+| Mode | Effective behavior |
+|---|---|
+| Absent | RC.17 shared-key inference/validation; both absent disables editing |
+| `off` | No editor/writer/API; retained shared keys inactive; readonly metadata loads |
+| `browser` | Per-identity+origin local name/link/finite-icon overrides only on current authorized cards |
+| `shared` | Existing exact-login/origin/runtime-owned-directory protections |
+
+Browser blank/reset restores current server defaults including metadata; shared reset changes shared name/link/icon for everyone and preserves category/order. Browser choices never synchronize across devices/browsers and disappear with site-storage clearing; storage failures retain not-saved drafts. No browser edit API calls or shared file/lock are initialized. RC.17 does not include browser mode or `PORTAL_EDIT_MODE`; both belong to the RC.18 candidate. See the [metadata/editor boundary](../docs/reference/service-metadata.md).
+
+## Personal tailnet services (RC.18 candidate)
+
+This separate Tailscale-only opt-in uses `PORTAL_PERSONAL_SERVICES_ORIGIN="http://portal.tailnet.ts.net:8081"` in the provider env file, or the equivalent service environment value. That is a **placeholder**, not a deployed endpoint: choose the exact canonical origin already used to open this portal, without a path or trailing slash. Absence disables the feature; empty/invalid values or Headscale fail configuration. RC.17 does not include it. An independently verified RC.18 image and separately approved deployment change are required; nothing here enables it on TrueNAS.
+
+It is independent of `PORTAL_EDIT_MODE` and needs no shared-editor allowlist, metadata file, writable mount, database or extra container. Existing NPM discovery, health, networks and `/healthz` remain unchanged. Add service and the account panel's Your services manage a private same-exact-login catalog in bounded process RAM. Active links require a current unique device hostname and positive TCP Grant for the HTTPS URL's ingress port, not legacy ACL evidence. A link is not a reachability or app-login guarantee; never save pairing links/codes.
+
+The latest server catalog is available to the same login's devices only during the process lifetime. Restart/redeploy loses it. A browser can explicitly restore its retained, potentially stale authored copy; there is no automatic overwrite/merge, offline queue or durable backup. Initialized-empty deletion remains authoritative. See [bounds, filtering and recovery](../docs/reference/service-metadata.md#personal-tailnet-services-unreleased); native-browser and real two-device acceptance remain pending.
 
 ## Portal appearance, mobile navigation, and Tailscale Machines action
 

@@ -597,7 +597,69 @@ def main() -> int:
         included_base = short_include_model(runtime_env_example)
         validate_rendered_model(included_base, provider=provider, expect_private_ca=False)
 
-    print("production Compose bundle verified for headscale and tailscale across all overlay combinations")
+        # The new mode needs only the exact service environment line documented
+        # for TrueNAS. No editor directory/credentials/origin are introduced.
+        # Optional readonly metadata may still supply browser defaults.
+        with tempfile.TemporaryDirectory(prefix="velociportal-browser-compose-") as temporary_directory:
+            browser_override = Path(temporary_directory) / "browser.yaml"
+            browser_override.write_text(
+                "services:\n  velociportal:\n    environment:\n      PORTAL_EDIT_MODE: browser\n",
+                encoding="utf-8",
+            )
+            for readonly_defaults in (False, True):
+                files = [COMPOSE_FILE]
+                environment = base_environment.copy()
+                if readonly_defaults:
+                    files.append(SERVICE_METADATA_COMPOSE_FILE)
+                    environment.update({
+                        "VELOCIPORTAL_SERVICE_METADATA_FILE": str(VERIFY_SERVICE_METADATA_FILE),
+                        "VELOCIPORTAL_SERVICE_METADATA_GID": VERIFY_SERVICE_METADATA_GID,
+                    })
+                files.append(browser_override)
+                browser_model = compose_json(rendered_config_arguments(*files), environment)
+                validate_rendered_model(
+                    browser_model,
+                    provider=provider,
+                    expect_private_ca=False,
+                    expect_service_metadata=readonly_defaults,
+                )
+                browser_service = only_service(browser_model)
+                browser_environment = service_environment(browser_service)
+                require(browser_environment.get("PORTAL_EDIT_MODE") == "browser", "browser mode environment line changed")
+                require("PORTAL_EDITORS" not in browser_environment and "PORTAL_PUBLIC_ORIGIN" not in browser_environment, "browser fixture must contain no contradictory shared keys")
+                require(not any(mount.get("target") == "/service-metadata" for mount in browser_service.get("volumes", [])), "browser mode must not require editor mount")
+
+        # Personal catalogs are an independent Tailscale-only runtime opt-in.
+        # Verify env-file pass-through (the documented production path) in both
+        # off/browser NPM modes, without adding storage or shared editor settings.
+        # Provider rejection and origin syntax belong to Go config tests, not Compose.
+        if provider == "tailscale":
+            with tempfile.TemporaryDirectory(prefix="velociportal-personal-compose-") as temporary_directory:
+                directory = Path(temporary_directory)
+                personal_origin = "http://portal.tailnet.ts.net:8081"
+                for edit_mode in ("off", "browser"):
+                    runtime_env = directory / f"personal-{edit_mode}.env"
+                    runtime_env.write_text(
+                        (ROOT / runtime_env_example).read_text(encoding="utf-8")
+                        + f'\nPORTAL_PERSONAL_SERVICES_ORIGIN="{personal_origin}"\n'
+                        + f'PORTAL_EDIT_MODE="{edit_mode}"\n',
+                        encoding="utf-8",
+                    )
+                    personal_environment_overrides = verification_environment(runtime_env)
+                    personal_environment_overrides["VELOCIPORTAL_ENV_FILE"] = str(runtime_env)
+                    personal_model = compose_json(
+                        rendered_config_arguments(COMPOSE_FILE),
+                        personal_environment_overrides,
+                    )
+                    validate_rendered_model(personal_model, provider=provider, expect_private_ca=False)
+                    personal_service = only_service(personal_model)
+                    personal_environment = service_environment(personal_service)
+                    require(personal_environment.get("PORTAL_PERSONAL_SERVICES_ORIGIN") == json.dumps(personal_origin), "raw env-file mode must preserve the quoted personal origin")
+                    require(personal_environment.get("PORTAL_EDIT_MODE") == json.dumps(edit_mode), "raw env-file mode must preserve the independent quoted NPM edit mode")
+                    require("PORTAL_EDITORS" not in personal_environment and "PORTAL_PUBLIC_ORIGIN" not in personal_environment, "personal fixture must not initialize shared editor settings")
+                    require(not personal_service.get("volumes"), "personal services must not add a mount")
+
+    print("production Compose bundle verified for headscale and tailscale across all overlay combinations, browser defaults and personal off/browser pass-through modes")
     return 0
 
 

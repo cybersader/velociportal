@@ -279,6 +279,12 @@ func evaluateMachineSSHAccess(node Node, rules []SSHRule, ids, roles map[string]
 }
 
 func machineGrantEvidence(node Node, grants []GrantRule, ids, roles map[string]bool, mc *matchContext) (int, string, destinationMatchEvidence, bool) {
+	return nodeTCPGrantEvidence(node, grants, ids, roles, mc, 22)
+}
+
+// nodeTCPGrantEvidence is positive network-Grant evidence for one node/port.
+// Legacy ACL ports remain unmodeled and must never enter this evaluation.
+func nodeTCPGrantEvidence(node Node, grants []GrantRule, ids, roles map[string]bool, mc *matchContext, port int) (int, string, destinationMatchEvidence, bool) {
 	for ruleIndex, grant := range grants {
 		rule := accessRule{
 			Kind:           accessRuleGrant,
@@ -287,7 +293,7 @@ func machineGrantEvidence(node Node, grants []GrantRule, ids, roles map[string]b
 			Dst:            grant.Dst,
 			IPCapabilities: grant.IPCapabilities,
 		}
-		if !rule.permitsTCP(22) {
+		if !rule.permitsTCP(port) {
 			continue
 		}
 		source, sourceMatched := sourceGrantForRule(rule, ids, roles)

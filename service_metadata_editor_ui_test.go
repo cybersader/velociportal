@@ -218,7 +218,7 @@ func TestServiceEditorSetupAndReadOnlyDiagnostics(t *testing.T) {
 		t.Fatal(err)
 	}
 	values, _ := readEnvFile(env)
-	if values["UNKNOWN"] != "preserve" || values["PORTAL_PUBLIC_ORIGIN"] != "http://portal.example:8081" {
+	if values["UNKNOWN"] != "preserve" || values["PORTAL_PUBLIC_ORIGIN"] != "http://portal.example:8081" || values["PORTAL_EDIT_MODE"] != "shared" {
 		t.Fatal("setup failed preservation")
 	}
 	good, _ := os.ReadFile(env)
@@ -235,6 +235,9 @@ func TestServiceEditorSetupAndReadOnlyDiagnostics(t *testing.T) {
 	values, _ = readEnvFile(env)
 	if _, present := values["PORTAL_EDITORS"]; present {
 		t.Fatal("disable retained editor")
+	}
+	if values["PORTAL_EDIT_MODE"] != "off" {
+		t.Fatal("disable did not explicitly select off")
 	}
 	after, _ = os.ReadFile(metadata)
 	if !bytes.Equal(before, after) {

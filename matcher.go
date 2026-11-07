@@ -17,14 +17,17 @@ const (
 )
 
 type ServiceCard struct {
-	ID        int              `json:"id"`
-	Name      string           `json:"name"`
-	URL       string           `json:"url"`
-	Domain    string           `json:"domain"`
-	Category  string           `json:"category,omitempty"`
-	Order     *int             `json:"order,omitempty"`
-	Icon      string           `json:"icon,omitempty"`
-	LinkState serviceLinkState `json:"link_state"`
+	// PersonalID identifies a personal card; its ID is zero, never a synthetic
+	// NPM integer. Existing metadata, health and NPM editing stay ID-only/NPM-only.
+	PersonalID string           `json:"personal_id,omitempty"`
+	ID         int              `json:"id"`
+	Name       string           `json:"name"`
+	URL        string           `json:"url"`
+	Domain     string           `json:"domain"`
+	Category   string           `json:"category,omitempty"`
+	Order      *int             `json:"order,omitempty"`
+	Icon       string           `json:"icon,omitempty"`
+	LinkState  serviceLinkState `json:"link_state"`
 }
 
 type destinationMatchKind string

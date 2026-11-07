@@ -46,6 +46,8 @@ type Config struct {
 	NPMPassword                 string
 	ServiceMetadataFile         string
 	ServiceMetadataEditor       *ServiceMetadataEditorConfig
+	PortalEditMode              serviceEditMode
+	PersonalServices            *PersonalServicesConfig
 	ServiceHealthFile           string
 	ListenAddr                  string
 	PollInterval                time.Duration
@@ -201,7 +203,12 @@ func loadConfigFrom(lookup configLookup) (*Config, error) {
 		return nil, fmt.Errorf("loadConfig: %w", err)
 	}
 	serviceMetadataFile = strings.TrimSpace(serviceMetadataFile)
-	serviceMetadataEditor, err := loadServiceMetadataEditorConfig(lookup, serviceMetadataFile)
+	portalEditMode, serviceMetadataEditor, err := resolveServiceEditMode(lookup, serviceMetadataFile)
+	if err != nil {
+		return nil, fmt.Errorf("loadConfig: %w", err)
+	}
+
+	personalServices, err := loadPersonalServicesConfig(lookup, provider)
 	if err != nil {
 		return nil, fmt.Errorf("loadConfig: %w", err)
 	}
@@ -243,6 +250,8 @@ func loadConfigFrom(lookup configLookup) (*Config, error) {
 		NPMPassword:                 values["NPM_PASSWORD"],
 		ServiceMetadataFile:         serviceMetadataFile,
 		ServiceMetadataEditor:       serviceMetadataEditor,
+		PortalEditMode:              portalEditMode,
+		PersonalServices:            personalServices,
 		ServiceHealthFile:           serviceHealthFile,
 		ListenAddr:                  listenAddr,
 		PollInterval:                interval,
@@ -513,6 +522,10 @@ func runServer(cfg *Config) error {
 		return fmt.Errorf("run: %w", err)
 	}
 	defer editor.Close()
+	personalServices, err := NewPersonalServicesStore(cfg.PersonalServices)
+	if err != nil {
+		return fmt.Errorf("run: personal services unavailable")
+	}
 	controlPlane, npm := newUpstreamClients(cfg)
 	metadataLoader := serviceMetadataLoaderForPath(cfg.ServiceMetadataFile)
 	if editor != nil {
@@ -556,10 +569,12 @@ func runServer(cfg *Config) error {
 	mux := http.NewServeMux()
 	portal := NewPortalHandlerWithOptions(cache, healthPoller.Store(), cfg.PortalLogoDefaultVisible)
 	portal.editor = editor
+	portal.editMode = cfg.PortalEditMode
+	portal.personal = personalServices
+	portal.pollInterval = cfg.PollInterval
 	portalHandler := IdentityMiddleware(cfg.TrustedProxyCIDR, portal)
-	if editor != nil {
-		mux.Handle(serviceMetadataEditorRoute, newServiceMetadataEditorHandler(editor, cache, cfg.TrustedProxyCIDR, cfg.PollInterval))
-	}
+	mountServiceMetadataEditor(mux, editor, cache, cfg.TrustedProxyCIDR, cfg.PollInterval)
+	mountPersonalServices(mux, personalServices, cache, cfg.TrustedProxyCIDR, cfg.PollInterval)
 	mux.Handle("GET /", portalHandler)
 	mux.Handle("GET /portal", portalHandler)
 	mux.Handle("GET /static/", staticAssetHandler(static))

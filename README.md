@@ -4,9 +4,11 @@
 
 # Velociportal
 
-### Your network access policy *is* your dashboard policy.
+### Your private tools, one familiar starting point.
 
-A self-hosted service portal that reads one selected **Headscale or Tailscale SaaS policy source** plus **Nginx Proxy Manager proxy hosts**, then renders only the service and machine cards its current matchers can correlate with the trusted viewer identity. Headscale uses the legacy ACL subset; the Tailscale preview also accepts a narrow network-Grants subset and a separate bounded SSH Machines projection.
+Velociportal gives you one familiar place to find and open your private tools without remembering which hostname, machine, or port they use. Its self-hosted, tailnet-only portal brings together readable service names, search, and direct links where available.
+
+Today, the web-service catalog comes from **Nginx Proxy Manager proxy hosts**, filtered for the trusted viewer using one selected **Headscale or Tailscale SaaS policy source** and its supported policy subset. Headscale uses the legacy ACL subset; the Tailscale preview also accepts a narrow network-Grants subset and a separate bounded SSH Machines projection.
 
 **Visibility layer only — complements identity and enforcement systems; never replaces them.**
 
@@ -37,7 +39,7 @@ The production bundle lives under [`deploy/`](./deploy/). It requires Docker Com
 > Published release-candidate images and `headscale-ops` artifacts exist, but they do not imply a public support claim. The selected provider's full TrueNAS acceptance matrix must still pass.
 
 > [!NOTE]
-> Published immutable **v0.2.0-rc.16** adds privacy-safe operator link-setup guidance. Recorded 2026-10-08 live checks confirmed a healthy portal, but the exact running-container digest remains unverified; these are not end-to-end acceptance. Shared service editing is **unreleased**. Published RCs remain immutable and Tailscale SaaS remains preview. See [handoff context](knowledgebase/04-handoff-context.md) for the exact image and evidence boundary.
+> **v0.2.0-rc.18 candidate:** this source adds browser-local editing and personal tailnet services to RC.17's opt-in single-file shared editor. RC.17 includes neither new feature and remains immutable. This source snapshot does not establish RC.18 image publication: require a successful immutable Release workflow and verify its image digest before deployment. Publication or portal health is not end-to-end acceptance; Tailscale SaaS remains preview. See [handoff context](knowledgebase/04-handoff-context.md) for the evidence boundary.
 
 > [!WARNING]
 > The canonical browser route is tailnet-only HTTP Serve over WireGuard: `:8081 -> http://127.0.0.1:18080`. NPM is not portal identity. Official Tailscale can automate `*.ts.net` certificates, but Headscale automatic HTTPS Serve remains future upstream work tracked by [issue #2527](https://github.com/juanfont/headscale/issues/2527) and [PR #3300](https://github.com/juanfont/headscale/pull/3300). Tailnet HTTP Serve is not a release blocker.
@@ -93,9 +95,28 @@ Each user's display name and login open an accessible settings panel with the on
 
 The page includes an install manifest and committed mobile icons. Identity-derived portal responses are `no-store`, and the service worker has install/activate lifecycle handling only: it has no fetch handler, Cache Storage use, offline fallback, or cached service/machine data. Full service-worker control and normal install prompts require HTTPS or localhost. The canonical plain-HTTP Tailscale Serve route may still be saved as a browser shortcut where supported, but enabling HTTPS is a separate infrastructure decision. Arbitrary per-service logos, access history, broader personalization, account-synchronized profiles, and delegated administration remain deferred.
 
-## Unreleased shared service editing
+## Service editing modes (RC.18 candidate)
 
-Optional exact-login editors can change shared service names, links and finite embedded icons in the **one existing `SERVICE_METADATA_FILE`**. The first explicit successful save preserves the complete v1/v2 document and writes deterministic v3; reset preserves category/order. Editing is off by default and requires separately provisioned runtime-owned directory storage, exact editor logins and a canonical public origin. Upstream APIs remain read-only; no database, second presentation store, sessions or policy mutation is added. See [metadata/editor reference](docs/reference/service-metadata.md) and the [TrueNAS opt-in prerequisites](docs/guides/truenas-scale.md#optional-shared-service-editing-unreleased). Before a first v3 save, review private backup/restore: rollback to RC.16 needs compatible v1/v2 metadata and editing-disabled config, not just the old image. No live migration or deployment is complete.
+The RC.18 candidate selects one quiet Edit dialog through strict `PORTAL_EDIT_MODE`, not a dashboard switch:
+
+| Mode | Persistence and prerequisites |
+|---|---|
+| Absent | Preserve RC.17: disabled when both shared settings are absent; valid supplied settings select shared, partial/invalid settings fail |
+| `off` | No editor; retained shared settings are inactive, ordinary readonly metadata still loads |
+| `browser` | Any trusted viewer edits only already-authorized cards; per-identity, per-origin browser-local name/link/finite-icon choices, no shared editor/origin/file/writable mount; supplied shared settings are rejected |
+| `shared` | Existing exact-login/origin/safe-directory guards; saves to the one `SERVICE_METADATA_FILE` for everyone who can already see the service |
+
+With an independently verified RC.18 image and separate deployment approval, add the single line `PORTAL_EDIT_MODE: browser` to the existing Compose service's `environment` mapping. Optional readonly metadata supplies defaults. Browser Save/Cancel/Reset uses quiet “Saved in this browser” help; blank/reset restores the **current server defaults**, not necessarily raw NPM values. Choices never synchronize across browsers/devices and disappear when site storage is cleared. Stored IDs never restore absent cards; category/order, health and SSH stay unchanged.
+
+RC.17 shared editing remains separate: its first confirmed save preserves complete v1/v2 metadata and writes v3, while shared reset removes name/link/icon for everyone and preserves category/order. Upstream APIs remain read-only. See [metadata/editor reference](docs/reference/service-metadata.md) and [TrueNAS prerequisites](docs/guides/truenas-scale.md#optional-shared-service-editing). Before a first v3 save, review private backup/restore: rollback to RC.16 needs compatible v1/v2 metadata and editing-disabled config, not just the old image. This source snapshot does not establish RC.18 publication or any deployment; require successful workflow and image-digest evidence.
+
+## Personal tailnet services (RC.18 candidate)
+
+The independent Tailscale-only opt-in `PORTAL_PERSONAL_SERVICES_ORIGIN` adds **Add service**, personal-card Edit, and **Your services** in account settings. Use the exact canonical origin already used to open this portal, such as the placeholder `http://portal.tailnet.ts.net:8081`, without a path or trailing slash. Absent disables it; empty/invalid values or Headscale fail configuration. This is separate from `PORTAL_EDIT_MODE` and needs no writable mount, metadata file, shared-editor allowlist, database or extra container. RC.17 does not contain it; no TrueNAS enablement or deployment is claimed.
+
+Save only a normal HTTPS `*.ts.net` application launch link, never pairing links/codes. Query, fragment and userinfo are rejected, though a secret embedded in a path cannot be detected reliably. An active card requires a current unique device hostname and a positive network Grant permitting TCP to the URL's ingress port (443 by default), **not legacy ACL evidence**. Cold/stale evidence suppresses personal cards; unavailable authored entries remain editable without bypass links. Neither app sign-in nor reachability is guaranteed. NPM editing/health, SSH and `/healthz` remain unchanged.
+
+The private catalog belongs to the **same exact login** across devices and lives only in bounded process RAM: up to 128 initialized collections, each at most 128 entries/64 KiB. Other browsers need not remain online to retrieve the latest acknowledged server copy **while that process survives**. Restart/redeploy loses it. A browser may explicitly restore its retained authored copy, which could be stale; newest recovery is not guaranteed. Deleting all entries leaves initialized-empty state and does not resurrect old browser data. Conflicts require review; no automatic overwrite/merge, offline queue, iroh or MCP. Browser-local NPM preferences remain unsynchronized. See the [full personal-service and recovery contract](docs/reference/service-metadata.md#personal-tailnet-services-unreleased). Native-browser and real two-device acceptance remain pending.
 
 ## What it is — and is not
 
@@ -127,7 +148,7 @@ Optional exact-login editors can change shared service names, links and finite e
 - A role-gated Tailscale Machines navigation action on already SSH-capable machine rows that uses a validated short name/IP plus `property:tailscale-ssh` and remains navigation only because Tailscale exposes no standalone browser-session URL
 - Privacy-safe PWA metadata and icons, `no-store` identity responses, and a lifecycle-only service worker with no fetch interception, offline mode, or authorization-data cache; full install/service-worker behavior requires HTTPS or localhost
 - Truthful plain-language SSH action labels, a short display/search machine name alongside the full canonical target, a safe client-validated custom non-root account input, and a browser-local, per-identity, 10-entry SSH account suggestion list with a clear control
-- Strict optional service metadata applied only after policy matching: v1 name/URL and v2 category/order remain compatible; unreleased v3 adds finite local icon IDs and optional one-file shared editing
+- Strict optional service metadata applied only after policy matching: v1 name/URL and v2 category/order remain compatible; RC.17 v3 adds finite local icon IDs and optional one-file shared editing; browser-local mode belongs to the RC.18 candidate
 - One-shot private hostname suggestions from selected-control-plane names plus optional bounded hostname-only stdin, with whole-component ambiguity rejection and manual metadata merge only
 - Explicit opt-in HTTP GET or connect-only TCP backend probes with topology allowlists, direct validated-IP dialing, verified TLS, fixed worker bounds, no credentials/proxies/redirects, and identity-filtered presentation
 - Non-root `FROM scratch` image and Engine-28+-gated loopback-only publication
@@ -223,9 +244,11 @@ No CA state lives on pfSense/the router. Router replacement restores ordinary DN
 - [x] Add a bounded Tailscale-preview SSH Machines view with dual SSH-policy plus Grant TCP/22 evidence and safe copy commands
 - [x] Add a role-gated Tailscale Machines navigation action and a username-triggered accessible settings panel with a per-identity browser-local logo preference plus optional `PORTAL_LOGO_DEFAULT` deployment default
 - [x] Narrow the navigation action by explicit per-device SSH capability, add mobile bottom navigation, and add a non-caching PWA shell
-- [ ] Verify and publish the unreleased one-file shared name/link/local-icon editor; separately approve storage and live acceptance
+- [x] Publish RC.17 one-file shared name/link/local-icon editing; storage and live save acceptance remain separate
+- [ ] Verify and publish browser-local editing with strict off/browser/shared configuration; native-browser and live acceptance remain pending
 - [ ] Add arbitrary logo uploads/external logos, access history, and account-synchronized personalization
 - [ ] Add Caddy and Traefik service-discovery adapters
+- [ ] Explore an explicit catalog for non-NPM tailnet services, including Tailscale Serve destinations, with supported-policy filtering; this broader catalog is not implemented
 
 ## License
 

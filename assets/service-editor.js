@@ -1,8 +1,11 @@
-/* Shared presentation only. Drafts, search and opaque form tokens stay in memory. */
+/* Shared controller; browser mode uses a presentation-only persistence adapter.
+ * Drafts, search and shared form tokens stay in memory. */
 (function () {
   "use strict";
   var dialog = document.getElementById("service-editor");
-  if (!dialog || typeof dialog.showModal !== "function" || !window.AbortController) {
+  var mode = dialog && (dialog.getAttribute("data-edit-mode") || "shared");
+  var browser = mode === "browser";
+  if (!dialog || typeof dialog.showModal !== "function" || (!browser && !window.AbortController) || (browser && (!window.__velociportalBrowserEditor || typeof TextEncoder !== "function"))) {
     function hideUnsupportedControls() {
       document.querySelectorAll("[data-edit-service]").forEach(function (b) { b.hidden = true; });
     }
@@ -22,13 +25,15 @@
   var reload = document.getElementById("service-editor-reload");
   var announcement = document.getElementById("service-editor-announcement");
   var initialScope = content().getAttribute("data-identity-scope");
-  var session = null, epoch = 0, controller = null;
+  var session = null, epoch = 0, controller = null, pageInvalid = false;
+  var local = browser ? window.__velociportalBrowserEditor(initialScope, icon) : null;
 
+  function rootMode(root) { return root.getAttribute("data-service-edit-mode") || "shared"; }
   function content() { return document.getElementById("portal-content"); }
   function eligible(id) {
     var root = content();
     // Search-hidden remains authorized: never use :visible or the hidden property.
-    return !!root && root.getAttribute("data-identity-scope") === initialScope &&
+    return !pageInvalid && !!root && rootMode(root) === mode && root.getAttribute("data-identity-scope") === initialScope &&
       root.getAttribute("data-service-editing") === "true" &&
       !!root.querySelector('[data-edit-service="' + id + '"]');
   }
@@ -52,6 +57,9 @@
   }
   function previewIcon() {
     var option = icon.options[icon.selectedIndex];
+    if (browser && !icon.value && session && session.defaultIcon) {
+      option = Array.from(icon.options).find(function (candidate) { return candidate.value === session.defaultIcon; }) || option;
+    }
     preview.src = option ? option.getAttribute("data-icon-path") : "/static/service-icons/generic.svg";
   }
   function current(ticket) { return session && dialog.open && ticket === epoch && eligible(session.id); }
@@ -77,6 +85,11 @@
     }
   }
   function explain(error, posting) {
+    if (browser) {
+      controls(true); reload.hidden = false;
+      message(error.message === "invalid_fields" ? "Not saved. Check the name, complete HTTP(S) URL and listed icon. Stored preferences must also be valid." : "Not saved in this browser. Browser storage is unavailable or full. Your draft is kept; try again when storage is available.", true);
+      return;
+    }
     controls(false); reload.hidden = false;
     var text;
     if (error.code === "conflict") text = "The shared file or service changed. Your draft is kept. Reload current values for review before saving again. If an operator changed the file, stop editing and restart the server.";
@@ -90,15 +103,25 @@
   async function load() {
     controls(false); reload.hidden = true; message("Loading current values…");
     try {
-      var data = await request("GET"); if (!data) return;
-      if (data.identity_scope !== initialScope || data.id !== Number(session.id)) { close(true); return; }
-      session.tokens = { revision: data.revision, target_revision: data.target_revision, csrf: data.csrf };
+      var data;
+      if (browser) {
+        if (!session || !eligible(session.id)) { close(true); return; }
+        data = local.load(content(), session.id);
+        session.defaultIcon = data.defaults.icon;
+      } else {
+        data = await request("GET"); if (!data) return;
+        if (data.identity_scope !== initialScope || data.id !== Number(session.id)) { close(true); return; }
+        session.tokens = { revision: data.revision, target_revision: data.target_revision, csrf: data.csrf };
+      }
       name.value = data.fields.name; url.value = data.fields.url; icon.value = data.fields.icon;
-      document.getElementById("service-editor-defaults").textContent = "Empty fields use defaults: " + data.defaults.name + (data.defaults.url ? " — " + data.defaults.url : " — no concrete link") + ". Icon defaults to generic.";
+      document.getElementById("service-editor-defaults").textContent = "Empty fields use defaults: " + data.defaults.name + (data.defaults.url ? " — " + data.defaults.url : " — no concrete link") + (browser ? ". Icon uses the current server default." : ". Icon defaults to generic.");
       name.placeholder = data.defaults.name; url.placeholder = data.defaults.url || "https://service.example.com";
       session.baseline = JSON.stringify(values()); session.loaded = true; previewIcon(); controls(true); message("");
       if (document.activeElement === document.getElementById("service-editor-title")) name.focus();
-    } catch (error) { explain(error, false); }
+    } catch (error) {
+      if (browser && session) { session.baseline = JSON.stringify(values()); session.loaded = true; }
+      explain(error, false);
+    }
   }
   document.addEventListener("click", function (event) {
     var button = event.target.closest("[data-edit-service]");
@@ -116,11 +139,18 @@
   });
   icon.addEventListener("change", previewIcon);
   reload.addEventListener("click", function () {
-    if (dirty() && !window.confirm("Replace your unsaved draft with the current shared values for review?")) return;
+    if (dirty() && !window.confirm(browser ? "Replace your unsaved draft with the current browser values?" : "Replace your unsaved draft with the current shared values for review?")) return;
     load();
   });
   async function submit(action) {
     if (!session || !session.loaded || save.disabled || !eligible(session.id)) return;
+    if (browser) {
+      try {
+        local.save(content(), session.id, values(), action === "reset");
+        close(true); announcement.textContent = action === "reset" ? "Service defaults restored in this browser." : "Service changes saved in this browser.";
+      } catch (error) { explain(error, true); }
+      return;
+    }
     var body = Object.assign({ action: action }, session.tokens);
     if (action === "save") Object.assign(body, values());
     session.posting = true; controls(false); message(action === "reset" ? "Resetting shared fields…" : "Saving shared fields…");
@@ -135,25 +165,38 @@
   }
   form.addEventListener("submit", function (event) { event.preventDefault(); submit("save"); });
   reset.addEventListener("click", function () {
-    if (window.confirm("Reset this service’s name, link and icon for everyone? Category and order remain unchanged.")) submit("reset");
+    if (window.confirm(browser ? "Reset this service’s name, link and icon in this browser?" : "Reset this service’s name, link and icon for everyone? Category and order remain unchanged.")) submit("reset");
   });
   function reconcile() {
     if (session && !eligible(session.id)) { close(true); announcement.textContent = "Editing closed because the identity or available service changed."; }
     var root = content();
-    if (root && root.getAttribute("data-identity-scope") !== initialScope) {
+    if (root && (pageInvalid || root.getAttribute("data-identity-scope") !== initialScope || rootMode(root) !== mode || root.getAttribute("data-service-editing") !== "true")) {
+      pageInvalid = true;
+      close(true);
+      if (local) local.apply(root, true);
+      announcement.textContent = "Editing is no longer available. Refresh the portal before continuing.";
       root.querySelectorAll("[data-edit-service]").forEach(function (button) { button.hidden = true; });
       var search = document.getElementById("portal-search-input"); if (search) search.value = "";
       if (window.__velociportalApplyPortalSearch) window.__velociportalApplyPortalSearch();
-    }
+    } else if (root && local) local.apply(root);
+  }
+  if (local) {
+    reconcile();
+    window.addEventListener("storage", function (event) {
+      if (event.key !== local.key && event.key !== null) return;
+      // Never replace a dirty form from another tab. Card presentation may update.
+      reconcile();
+      if (session && !dirty() && eligible(session.id)) load();
+    });
   }
   document.body.addEventListener("htmx:afterSwap", reconcile);
   document.body.addEventListener("htmx:beforeSwap", function (event) {
     if (!event.detail || event.detail.target.id !== "portal-content") return;
     var parsed = new DOMParser().parseFromString(event.detail.xhr.responseText, "text/html").getElementById("portal-content");
-    if (session && parsed && (parsed.getAttribute("data-identity-scope") !== initialScope || parsed.getAttribute("data-service-editing") !== "true" || !parsed.querySelector('[data-edit-service="' + session.id + '"]'))) close(true);
+    if (session && parsed && (parsed.getAttribute("data-identity-scope") !== initialScope || rootMode(parsed) !== mode || parsed.getAttribute("data-service-editing") !== "true" || !parsed.querySelector('[data-edit-service="' + session.id + '"]'))) close(true);
     else if (session && session.posting) event.detail.shouldSwap = false;
   });
   document.body.addEventListener("htmx:responseError", function (event) {
-    if (event.detail && event.detail.target.id === "portal-content" && [401,403].indexOf(event.detail.xhr.status) !== -1) { close(true); announcement.textContent = "Editing is no longer available. Refresh the portal."; }
+    if (event.detail && event.detail.target.id === "portal-content" && [401,403].indexOf(event.detail.xhr.status) !== -1) { pageInvalid = true; reconcile(); close(true); announcement.textContent = "Editing is no longer available. Refresh the portal."; }
   });
 }());

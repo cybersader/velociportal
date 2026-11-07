@@ -16,7 +16,8 @@ Configure optional exact-login shared presentation editing. SERVICE_METADATA_FIL
 must already be set. This command only updates the environment file; it does not
 create, migrate, lock or probe metadata storage. Provision and privately review a
 dedicated runtime-owned directory separately before enabling the server. Disabling
-editing removes both settings, never metadata or icons. v3 needs a compatible binary.
+editing removes both shared settings and sets PORTAL_EDIT_MODE=off, never metadata
+or icons. Shared setup sets PORTAL_EDIT_MODE=shared. v3 needs a compatible binary.
 `
 
 func runSetupServiceEditorCommand(args []string, stdout, stderr io.Writer) int {
@@ -65,7 +66,9 @@ func configureSetupServiceEditor(path, editors, origin string, disable bool) err
 	if disable {
 		delete(values, "PORTAL_EDITORS")
 		delete(values, "PORTAL_PUBLIC_ORIGIN")
+		values["PORTAL_EDIT_MODE"] = string(serviceEditOff)
 	} else {
+		values["PORTAL_EDIT_MODE"] = string(serviceEditShared)
 		values["PORTAL_EDITORS"], values["PORTAL_PUBLIC_ORIGIN"] = editors, origin
 		if _, err := loadServiceMetadataEditorConfig(mapConfigLookup(values), strings.TrimSpace(values["SERVICE_METADATA_FILE"])); err != nil {
 			return err
