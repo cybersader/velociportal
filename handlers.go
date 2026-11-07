@@ -18,6 +18,9 @@ type PortalHandler struct {
 	health             *ServiceHealthStore
 	logoDefaultVisible bool
 	editor             *ServiceMetadataEditor
+	editMode           serviceEditMode
+	personal           *PersonalServicesStore
+	pollInterval       time.Duration
 }
 
 func NewPortalHandler(cache *Cache) *PortalHandler {
@@ -38,7 +41,7 @@ func NewPortalHandlerWithOptions(cache *Cache, health *ServiceHealthStore, logoD
 
 func (h *PortalHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	setIdentityResponseCacheHeaders(w.Header())
-	if h.editor != nil {
+	if h.editor != nil || h.editMode == serviceEditBrowser || h.personal != nil {
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("Content-Security-Policy", "frame-ancestors 'none'")
 	}
@@ -56,6 +59,15 @@ func (h *PortalHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	start := time.Now()
 	cards := MatchServices(identity, data)
+	var personalState *PersonalServicesState
+	if personalRenderIdentity(h.personal, r, identity) {
+		if state, err := h.personal.Read(identity.Login); err == nil {
+			personalState = &state
+			// Presentation boundary only: existing NPM evaluation and health stay separate.
+			personalCards, _ := ProjectPersonalServices(identity, data, state, start, h.pollInterval)
+			cards = append(cards, personalCards...)
+		}
+	}
 	machinesAvailable := machineProjectionAvailable(data)
 	machines := MatchMachines(identity, data)
 	consoleEligible := machineConsoleEligible(identity.Login, data)
@@ -78,8 +90,10 @@ func (h *PortalHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		Organized:                 serviceMetadataHasOrganization(data.ServiceMetadata),
 		LogoDefaultVisible:        h.logoDefaultVisible,
 		Health:                    h.health,
-		ServiceEditing:            h.editor != nil && h.editor.editingIdentity(r),
-		ServiceEditorAvailable:    h.editor != nil,
+		ServiceEditing:            h.editMode == serviceEditBrowser || h.editor != nil && h.editor.editingIdentity(r),
+		ServiceEditorAvailable:    h.editor != nil || h.editMode == serviceEditBrowser,
+		ServiceEditMode:           h.editMode,
+		Personal:                  personalState,
 	}
 	if err := renderPortalWithOptions(w, identity, cards, opts); err != nil {
 		slog.Error("render portal", "err", err)
@@ -102,6 +116,8 @@ type portalRenderOptions struct {
 	Health                    *ServiceHealthStore
 	ServiceEditing            bool
 	ServiceEditorAvailable    bool
+	ServiceEditMode           serviceEditMode
+	Personal                  *PersonalServicesState
 }
 
 func renderPortal(w io.Writer, id *Identity, cards []ServiceCard, healthStores ...*ServiceHealthStore) error {
@@ -125,15 +141,22 @@ func renderPortalWithOptions(w io.Writer, id *Identity, cards []ServiceCard, opt
 	machines := opts.Machines
 	machinesAvailable := opts.MachinesAvailable
 	organized := opts.Organized
+	mode := opts.ServiceEditMode
+	if mode == "" {
+		mode = serviceEditOff
+		if opts.ServiceEditorAvailable || opts.ServiceEditing {
+			mode = serviceEditShared
+		}
+	}
 
 	var servicesBody strings.Builder
 	servicesClass := "grid"
 	if organized {
 		servicesClass = "services-organized"
-		renderServiceSections(&servicesBody, cards, health, opts.ServiceEditing, opts.ServiceEditorAvailable)
+		renderServiceSections(&servicesBody, cards, health, opts.ServiceEditing, opts.ServiceEditorAvailable, mode == serviceEditBrowser, opts.Personal != nil)
 	} else {
 		for _, card := range cards {
-			renderServiceCard(&servicesBody, card, health, opts.ServiceEditing, opts.ServiceEditorAvailable)
+			renderServiceCard(&servicesBody, card, health, opts.ServiceEditing, opts.ServiceEditorAvailable, mode == serviceEditBrowser, opts.Personal != nil)
 		}
 	}
 
@@ -182,9 +205,13 @@ func renderPortalWithOptions(w io.Writer, id *Identity, cards []ServiceCard, opt
 	}
 
 	refreshTrigger := "every 60s"
-	if opts.ServiceEditing {
+	if opts.ServiceEditing && mode == serviceEditShared {
 		refreshTrigger += ", service-metadata-saved from:body"
 	}
+	if opts.Personal != nil {
+		refreshTrigger += ", personal-services-saved from:body"
+	}
+	personalMarkers, personalAdd, personalManager, personalEditor := renderPersonalServicesUI(opts.Personal)
 	page := strings.NewReplacer(
 		"{{USER_NAME}}", html.EscapeString(displayName),
 		"{{USER_LOGIN}}", html.EscapeString(id.Login),
@@ -196,8 +223,13 @@ func renderPortalWithOptions(w io.Writer, id *Identity, cards []ServiceCard, opt
 		"{{LOGO_PREF_SCOPE}}", logoPreferenceScope(id.Login),
 		"{{LOGO_DEFAULT_VISIBLE}}", logoDefaultLiteral,
 		"{{SERVICE_EDITING}}", fmt.Sprint(opts.ServiceEditing),
-		"{{SERVICE_EDITOR}}", renderServiceEditor(opts.ServiceEditorAvailable || opts.ServiceEditing),
-		"{{SERVICE_EDITOR_CSS}}", serviceEditorCSS,
+		"{{SERVICE_EDIT_MODE}}", string(mode),
+		"{{SERVICE_EDITOR}}", renderServiceEditor(opts.ServiceEditorAvailable || opts.ServiceEditing, mode),
+		"{{SERVICE_EDITOR_CSS}}", serviceEditorCSS+personalServicesCSS,
+		"{{PERSONAL_MARKERS}}", personalMarkers,
+		"{{PERSONAL_ADD}}", personalAdd,
+		"{{PERSONAL_MANAGER}}", personalManager,
+		"{{PERSONAL_EDITOR}}", personalEditor,
 		"{{PORTAL_REFRESH_TRIGGER}}", refreshTrigger,
 	).Replace(portalPage)
 
@@ -285,7 +317,11 @@ func renderServiceSections(body *strings.Builder, cards []ServiceCard, health *S
 // Optional flags enable editor controls and the generic icon default, respectively.
 // Legacy read-only v1/v2 cards without an icon retain their established rendering.
 func renderServiceCard(body *strings.Builder, card ServiceCard, health *ServiceHealthStore, editing ...bool) {
-	healthMarkup := renderServiceHealthStatus(health, card.ID)
+	personal := card.PersonalID != ""
+	healthMarkup := ""
+	if !personal {
+		healthMarkup = renderServiceHealthStatus(health, card.ID)
+	}
 	scheme, linkable := cardURLScheme(card.URL)
 	linkable = linkable && card.LinkState == serviceLinkReady
 	hostname := ""
@@ -294,8 +330,19 @@ func renderServiceCard(body *strings.Builder, card ServiceCard, health *ServiceH
 		hostname = parsed.Hostname()
 	}
 	attrs := fmt.Sprintf(`data-service="%s" data-service-id="%d" data-service-hostname="%s"`, html.EscapeString(card.Name), card.ID, html.EscapeString(hostname))
+	if personal {
+		attrs = fmt.Sprintf(`data-service="%s" data-personal-service="%s" data-service-hostname="%s"`, html.EscapeString(card.Name), html.EscapeString(card.PersonalID), html.EscapeString(hostname))
+	}
+	if !personal && len(editing) > 2 && editing[2] {
+		defaultURL := ""
+		if linkable {
+			defaultURL = card.URL
+		}
+		// Defaults belong to this fresh server fragment, never customized DOM text.
+		attrs += fmt.Sprintf(` data-default-name="%s" data-default-url="%s" data-default-icon="%s" data-default-link-state="%s" data-default-hostname="%s" data-default-scheme="%s"`, html.EscapeString(card.Name), html.EscapeString(defaultURL), html.EscapeString(card.Icon), html.EscapeString(string(card.LinkState)), html.EscapeString(hostname), html.EscapeString(scheme))
+	}
 	iconMarkup := ""
-	if card.Icon != "" || (len(editing) > 0 && editing[0]) || (len(editing) > 1 && editing[1]) {
+	if personal || card.Icon != "" || (len(editing) > 0 && editing[0]) || (len(editing) > 1 && editing[1]) {
 		icon := serviceIconForID(card.Icon)
 		iconMarkup = fmt.Sprintf(`<img class="service-icon" src="%s" width="32" height="32" alt="">`, icon.Path)
 	}
@@ -304,12 +351,16 @@ func renderServiceCard(body *strings.Builder, card ServiceCard, health *ServiceH
 		badge = scheme
 	}
 	content := fmt.Sprintf(`%s<span class="card-head"><span class="card-name">%s</span></span><span class="card-meta"><span class="badge">%s</span>%s</span>`, iconMarkup, html.EscapeString(card.Name), badge, healthMarkup)
-	if len(editing) > 0 && editing[0] {
+	if personal && len(editing) > 3 && editing[3] || !personal && len(editing) > 0 && editing[0] {
 		fmt.Fprintf(body, `<article class="card card-editable" %s>`, attrs)
 		if linkable {
 			fmt.Fprintf(body, `<a class="service-main" href="%s">%s</a>`, html.EscapeString(card.URL), content)
 		} else {
 			fmt.Fprintf(body, `<div class="service-main card-unlinked">%s</div>`, content)
+		}
+		if personal {
+			fmt.Fprintf(body, `<button type="button" class="service-edit-button" data-edit-personal="%s" aria-label="Edit service: %s" aria-haspopup="dialog" aria-controls="personal-editor" hidden>Edit service</button></article>`, html.EscapeString(card.PersonalID), html.EscapeString(card.Name))
+			return
 		}
 		fmt.Fprintf(body, `<button type="button" class="service-edit-button" data-edit-service="%d" aria-label="Edit service: %s" aria-haspopup="dialog" aria-controls="service-editor">Edit service</button></article>`, card.ID, html.EscapeString(card.Name))
 		return
@@ -917,6 +968,7 @@ Show Velociportal logo
 <button type="button" class="btn-clear-accounts" id="clear-ssh-accounts-button" hidden>Clear saved SSH accounts</button>
 <span class="account-panel-status" id="clear-ssh-accounts-status" role="status" aria-live="polite"></span>
 </div>
+{{PERSONAL_MANAGER}}
 </div>
 </div>
 </div>
@@ -932,9 +984,9 @@ Show Velociportal logo
 <span class="portal-search-status" id="portal-search-status" role="status" aria-live="polite"></span>
 </div>
 <p class="portal-search-no-results" id="portal-search-no-results" hidden>No results for this search.</p>
-<div class="portal-content" id="portal-content" hx-get="/portal" hx-trigger="{{PORTAL_REFRESH_TRIGGER}}" hx-target="#portal-content" hx-select="#portal-content" hx-swap="outerHTML" data-identity-scope="{{LOGO_PREF_SCOPE}}" data-service-editing="{{SERVICE_EDITING}}">
+<div class="portal-content" id="portal-content" hx-get="/portal" hx-trigger="{{PORTAL_REFRESH_TRIGGER}}" hx-target="#portal-content" hx-select="#portal-content" hx-swap="outerHTML" data-identity-scope="{{LOGO_PREF_SCOPE}}" data-service-editing="{{SERVICE_EDITING}}" data-service-edit-mode="{{SERVICE_EDIT_MODE}}" {{PERSONAL_MARKERS}}>
 <section class="portal-section" aria-labelledby="services-heading">
-<h2 class="section-title" id="services-heading">Services</h2>
+<div class="services-heading-row"><h2 class="section-title" id="services-heading">Services</h2>{{PERSONAL_ADD}}</div>
 {{SERVICES_HEALTH_HELP}}
 <div class="{{SERVICES_CLASS}}" id="services">
 {{SERVICES_BODY}}
@@ -945,6 +997,7 @@ Show Velociportal logo
 </main>
 {{BOTTOM_NAV}}
 {{SERVICE_EDITOR}}
+{{PERSONAL_EDITOR}}
 <datalist id="ssh-account-suggestions"></datalist>
 <script src="/static/htmx.min.js"></script>
 <script>
@@ -1206,7 +1259,7 @@ Show Velociportal logo
     var query = raw.trim().toLowerCase();
     if (clearButton) clearButton.hidden = raw.length === 0;
 
-    var cards = document.querySelectorAll("#services .card, #services .card-unlinked");
+    var cards = document.querySelectorAll("#services .card");
     var rows = document.querySelectorAll(".machine-row");
     var visible = 0;
 
@@ -1227,7 +1280,7 @@ Show Velociportal logo
         return;
       }
       var anyVisible = false;
-      section.querySelectorAll(".card, .card-unlinked").forEach(function (card) {
+      section.querySelectorAll(".card").forEach(function (card) {
         if (!card.hidden) anyVisible = true;
       });
       section.hidden = !anyVisible;

@@ -19,6 +19,53 @@ type ServiceMetadataEditorConfig struct {
 	Host   string
 }
 
+type serviceEditMode string
+
+const (
+	serviceEditOff     serviceEditMode = "off"
+	serviceEditBrowser serviceEditMode = "browser"
+	serviceEditShared  serviceEditMode = "shared"
+)
+
+// Explicit off never interprets inactive shared configuration. An absent mode
+// retains the RC.17 presence-based shared validator, including explicit empties.
+func resolveServiceEditMode(lookup configLookup, path string) (serviceEditMode, *ServiceMetadataEditorConfig, error) {
+	value, present, err := lookup("PORTAL_EDIT_MODE")
+	if err != nil {
+		return "", nil, err
+	}
+	mode := serviceEditMode(value)
+	if present && mode != serviceEditOff && mode != serviceEditBrowser && mode != serviceEditShared {
+		return "", nil, errors.New("PORTAL_EDIT_MODE must be off, browser or shared")
+	}
+	if present && mode == serviceEditOff {
+		return mode, nil, nil
+	}
+	if present && mode == serviceEditBrowser {
+		for _, key := range []string{"PORTAL_EDITORS", "PORTAL_PUBLIC_ORIGIN"} {
+			_, set, lookupErr := lookup(key)
+			if set {
+				return "", nil, errors.New("PORTAL_EDIT_MODE browser conflicts with " + key)
+			}
+			if lookupErr != nil {
+				return "", nil, lookupErr
+			}
+		}
+		return mode, nil, nil
+	}
+	shared, err := loadServiceMetadataEditorConfig(lookup, path)
+	if err != nil {
+		return "", nil, err
+	}
+	if shared != nil {
+		return serviceEditShared, shared, nil
+	}
+	if present {
+		return "", nil, errors.New("PORTAL_EDIT_MODE shared requires PORTAL_EDITORS, PORTAL_PUBLIC_ORIGIN and SERVICE_METADATA_FILE")
+	}
+	return serviceEditOff, nil, nil
+}
+
 func loadServiceMetadataEditorConfig(lookup configLookup, path string) (*ServiceMetadataEditorConfig, error) {
 	editors, editorsSet, err := lookup("PORTAL_EDITORS")
 	if err != nil {

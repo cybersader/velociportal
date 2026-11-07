@@ -6,39 +6,58 @@ import (
 	"strings"
 )
 
-func renderServiceEditor(enabled bool) string {
+func renderServiceEditor(enabled bool, modes ...serviceEditMode) string {
 	if !enabled {
 		return ""
 	}
+	mode := serviceEditShared
+	if len(modes) > 0 {
+		mode = modes[0]
+	}
+	help := "Changes are shared with everyone who can already see this service. They do not change access or backend checks."
+	saveLabel, resetLabel := "Save for everyone", "Reset name/link/icon"
+	nameMax, adapter := "120", ""
+	if mode == serviceEditBrowser {
+		help = "Saved in this browser."
+		saveLabel, resetLabel = "Save", "Reset"
+		// The validator counts Unicode code points, not UTF-16 input units.
+		nameMax = "240"
+		adapter = `<script src="/static/service-editor-browser.js" defer></script>`
+	}
 	var choices strings.Builder
-	choices.WriteString(`<option value="" data-icon-path="/static/service-icons/generic.svg">Default (generic service)</option>`)
+	defaultIconLabel := "Default (generic service)"
+	if mode == serviceEditBrowser {
+		defaultIconLabel = "Default (server icon)"
+	}
+	fmt.Fprintf(&choices, `<option value="" data-icon-path="/static/service-icons/generic.svg">%s</option>`, defaultIconLabel)
 	for _, icon := range serviceIcons {
 		fmt.Fprintf(&choices, `<option value="%s" data-icon-path="%s">%s</option>`, icon.ID, icon.Path, html.EscapeString(icon.Label))
 	}
 	return `<p class="service-editor-announcement" id="service-editor-announcement" role="status" aria-live="polite"></p>
-<dialog id="service-editor" class="service-editor" aria-labelledby="service-editor-title" aria-describedby="service-editor-help">
+<dialog id="service-editor" data-edit-mode="` + string(mode) + `" class="service-editor" aria-labelledby="service-editor-title" aria-describedby="service-editor-help">
 <form id="service-editor-form">
 <h2 id="service-editor-title" tabindex="-1" autofocus>Edit service</h2>
-<p id="service-editor-help">Changes are shared with everyone who can already see this service. They do not change access or backend checks.</p>
+<p id="service-editor-help">` + help + `</p>
 <p id="service-editor-status" role="status" aria-live="polite">Loading current values…</p>
 <fieldset id="service-editor-fields" disabled>
 <label for="service-editor-name">Display name</label>
-<input id="service-editor-name" type="text" maxlength="120" autocomplete="off" spellcheck="false" aria-describedby="service-editor-defaults">
+<input id="service-editor-name" type="text" maxlength="` + nameMax + `" autocomplete="off" spellcheck="false" aria-describedby="service-editor-defaults">
 <label for="service-editor-url">Link URL</label>
 <input id="service-editor-url" type="text" inputmode="url" maxlength="2048" autocomplete="off" spellcheck="false" autocapitalize="none" aria-describedby="service-editor-defaults">
 <p id="service-editor-defaults" class="service-editor-hint">Leave fields empty to use the current defaults.</p>
 <label for="service-editor-icon">Local icon</label>
 <div class="service-icon-picker"><img id="service-editor-preview" src="/static/service-icons/generic.svg" width="40" height="40" alt=""><select id="service-editor-icon">` + choices.String() + `</select></div>
 </fieldset>
-<div class="service-editor-actions"><button id="service-editor-save" class="service-editor-primary" type="submit" disabled>Save for everyone</button><button id="service-editor-cancel" type="button">Cancel</button></div>
-<div class="service-editor-secondary"><button id="service-editor-reset" type="button" disabled>Reset name/link/icon</button><button id="service-editor-reload" type="button" hidden>Reload for review</button></div>
+<div class="service-editor-actions"><button id="service-editor-save" class="service-editor-primary" type="submit" disabled>` + saveLabel + `</button><button id="service-editor-cancel" type="button">Cancel</button></div>
+<div class="service-editor-secondary"><button id="service-editor-reset" type="button" disabled>` + resetLabel + `</button><button id="service-editor-reload" type="button" hidden>Reload for review</button></div>
 </form>
 </dialog>
-<script src="/static/service-editor.js" defer></script>`
+` + adapter + `<script src="/static/service-editor.js" defer></script>`
 }
 
 const serviceEditorCSS = `
 .service-icon { display: block; width: 32px; height: 32px; object-fit: contain; }
+.service-domain { display: block; color: var(--muted); font-size: .8rem; overflow-wrap: anywhere; }
 .card-editable { padding: 0; gap: 0; overflow: hidden; }
 .service-main { display: flex; flex: 1; flex-direction: column; gap: .55rem; min-width: 0; min-height: 44px; padding: 1rem 1.1rem; color: inherit; text-decoration: none; }
 a.service-main:hover, a.service-main:focus-visible { background: var(--card-hover-bg); }

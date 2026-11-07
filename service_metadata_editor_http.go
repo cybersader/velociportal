@@ -22,6 +22,13 @@ const (
 	serviceMetadataCSRFDuration = 30 * time.Minute
 )
 
+// Browser/off have no writer, so no edit route is mounted at all.
+func mountServiceMetadataEditor(mux *http.ServeMux, editor *ServiceMetadataEditor, cache *Cache, trusted *net.IPNet, interval time.Duration) {
+	if editor != nil {
+		mux.Handle(serviceMetadataEditorRoute, newServiceMetadataEditorHandler(editor, cache, trusted, interval))
+	}
+}
+
 var errMetadataNotVisible = errors.New("service not available")
 var errMetadataStale = errors.New("fresh complete snapshot required")
 var errMetadataCSRF = errors.New("invalid or expired csrf")

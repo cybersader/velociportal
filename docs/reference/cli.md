@@ -69,9 +69,11 @@ The lock closes the check/replace race between Velociportal commands. Unrelated 
 
 Secret values are not accepted through command-line flags and are never printed.
 
-### Optional shared editor setup (unreleased)
+### Optional service editing configuration
 
-`setup service-editor` updates only `PORTAL_EDITORS` and `PORTAL_PUBLIC_ORIGIN` in an existing env file, or removes both with `--disable`. `SERVICE_METADATA_FILE` must already be set. It preserves other keys, validates exact-login/origin syntax, and does not create, migrate, lock or probe metadata storage. Unlike credentials, editor logins may be arguments and can appear in trusted same-host process listings/history; private env editing is an alternative. A separately provisioned runtime-owned directory and compatible binary are still required. See [metadata/editor configuration and recovery](service-metadata.md).
+RC.17 `setup service-editor` configures shared `PORTAL_EDITORS` and `PORTAL_PUBLIC_ORIGIN`, or removes both with `--disable`. In the RC.18 candidate mode extension it also selects `PORTAL_EDIT_MODE=shared`; disable removes the shared keys and sets `PORTAL_EDIT_MODE=off`. `SERVICE_METADATA_FILE` must already be set. Other keys are preserved, syntax is validated, and no metadata storage is created, migrated, locked or probed. Unlike credentials, editor logins may appear in trusted same-host process listings/history; private env editing is an alternative. A separately provisioned runtime-owned directory is required only for shared editing.
+
+Browser mode belongs to the **RC.18 candidate** and has no new wizard: add `PORTAL_EDIT_MODE: browser` to the existing Compose service `environment` mapping (or `PORTAL_EDIT_MODE="browser"` in the provider env). No allowlist, public origin, file or writable/editor mount is needed; supplied shared settings are rejected, even empty values. Optional readonly metadata supplies defaults. Browser-local choices never synchronize across devices/browsers and disappear when site storage is cleared. Browser blank/reset restores current server defaults; shared reset changes the file for everyone. Doctor reports browser mode without shared writer/storage checks; its ordinary upstream diagnostics remain networked. See [mode matrix, validation and recovery](service-metadata.md).
 
 ### Observe the trusted proxy source
 
@@ -276,9 +278,11 @@ Do not commit a populated environment file, private service-name mapping, or ser
 | `NPM_PASSWORD` | Yes | NPM account password |
 | `LISTEN_ADDR` | No | Defaults to `127.0.0.1:8080`; Compose overrides it inside the container |
 | `POLL_INTERVAL` | No | Go duration from `5s` through `24h`; defaults to `30s` |
-| `SERVICE_METADATA_FILE` | No | Strict v1/v2/v3 JSON keyed by existing NPM IDs; v1 name/URL, v2 category/order, unreleased v3 finite local icons. Read-only by default; opt-in editing owns the same file in a safe writable directory. Blank disables metadata |
-| `PORTAL_EDITORS` | Editing only | Strict exact full-login JSON array, <=32 entries, <=254 bytes each; no inferred membership; requires origin and existing metadata |
-| `PORTAL_PUBLIC_ORIGIN` | Editing only | Canonical external HTTP(S) origin, no path/trailing slash; both settings absent leave readonly mode |
+| `SERVICE_METADATA_FILE` | No | Strict v1/v2/v3 JSON keyed by existing NPM IDs; v1 name/URL, v2 category/order, RC.17 v3 finite icons. Readonly by default and optional browser defaults; shared writer owns this same file in a safe directory. Blank disables metadata |
+| `PORTAL_EDIT_MODE` | No; RC.18 candidate | Strict `off`, `browser`, `shared`; absent preserves RC.17 shared-setting inference/validation. Explicit off ignores retained shared keys; browser requires no file/allowlist/origin and rejects supplied shared keys; shared preserves existing guards. Empty/invalid values fail |
+| `PORTAL_EDITORS` | Shared only | Strict exact full-login JSON array, <=32 entries, <=254 bytes each; no inferred membership; requires origin and metadata; rejected in browser, ignored in explicit off |
+| `PORTAL_PUBLIC_ORIGIN` | Shared only | Canonical external HTTP(S) origin, no path/trailing slash; absent mode plus both shared keys absent leaves readonly mode |
+| `PORTAL_PERSONAL_SERVICES_ORIGIN` | No; RC.18 candidate, Tailscale only | Independent opt-in canonical same browser-facing portal HTTP(S) origin, no path/trailing slash; absent disables, explicit empty/invalid or Headscale fails. Enables exact-login volatile personal catalogs, not shared NPM editing; no mount/database/extra container. Restart recovery is explicit and may be stale; see [personal services](service-metadata.md#personal-tailnet-services-unreleased) |
 | `SERVICE_HEALTH_FILE` | No | Strict version-1 read-only JSON file for explicit proxy-host health probes, scheduling bounds, accepted HTTP statuses, and mandatory topology allowlists; blank disables probes |
 | `TRUSTED_PROXY_CIDR` | Yes | Exact source `/32`, `/128`, or the smallest intentionally trusted proxy subnet |
 | `PORTAL_LOGO_DEFAULT` | No | `visible` (default) or `hidden`; supplies only the initial browser-local built-in-logo state when no valid per-identity browser preference exists yet. The preference itself lives only in that browser's `localStorage`, scoped by an opaque SHA-256 digest of the exact login, and is never sent to or stored by Velociportal |

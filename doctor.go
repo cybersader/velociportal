@@ -219,7 +219,15 @@ func runDoctorCommandWithDependencies(args []string, stdout, stderr io.Writer, d
 		fmt.Fprintf(stdout, "PASS service metadata: loaded %d override(s)\n", len(metadata.Overrides))
 	}
 
-	if cfg.ServiceMetadataEditor == nil {
+	if cfg.PersonalServices == nil {
+		fmt.Fprintln(stdout, "PASS personal services: disabled")
+	} else {
+		fmt.Fprintf(stdout, "PASS personal services: configured, volatile RAM only; capacity %d collections / %d entries each; runtime counts unavailable to Doctor\n", maxPersonalCollections, maxPersonalEntries)
+	}
+
+	if cfg.PortalEditMode == serviceEditBrowser {
+		fmt.Fprintln(stdout, "PASS service editor: browser-local mode (no shared writer or storage checks)")
+	} else if cfg.ServiceMetadataEditor == nil {
 		fmt.Fprintln(stdout, "PASS service editor: disabled (read-only mode)")
 	} else if inspectServiceMetadataEditorStorage(cfg.ServiceMetadataFile) != nil {
 		fmt.Fprintln(stdout, "FAIL service editor: configured, storage prerequisites unavailable; no probe writes performed")
