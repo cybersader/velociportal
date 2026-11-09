@@ -1,0 +1,2085 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Identity-aware service visibility from Headscale or Tailscale policy and Nginx Proxy Manager, with a bounded Tailscale SSH Machines preview">
+      
+      
+      
+        <link rel="canonical" href="https://cybersader.github.io/velociportal/reference/service-metadata/">
+      
+      
+        <link rel="prev" href="../known-limitations/">
+      
+      
+        <link rel="next" href="../headscale-api/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/logo-card.svg">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Service metadata and editing - Velociportal</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/extra.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="custom" data-md-color-accent="custom">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#service-metadata-and-editing" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="Velociportal" class="md-header__button md-logo" aria-label="Velociportal" data-md-component="logo">
+      
+  <img src="../../assets/logo-card.svg" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Velociportal
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Service metadata and editing
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="custom" data-md-color-accent="custom"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="custom" data-md-color-accent="custom"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+          <a href="javascript:void(0)" class="md-search__icon md-icon" title="Share" aria-label="Share" data-clipboard data-clipboard-text="" data-md-component="search-share" tabindex="-1">
+            
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9a3 3 0 0 0-3 3 3 3 0 0 0 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.15c-.05.21-.08.43-.08.66 0 1.61 1.31 2.91 2.92 2.91s2.92-1.3 2.92-2.91A2.92 2.92 0 0 0 18 16.08"/></svg>
+          </a>
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/cybersader/velociportal" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    cybersader/velociportal
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../.." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../guides/truenas-scale/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  TrueNAS Quickstart
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../getting-started/validation/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Start here
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../guides/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Choose an architecture
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../guides/private-tls/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Deploy
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../integrations/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Integrate identity
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../concept/overview/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Understand
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../cli/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Reference
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="Velociportal" class="md-nav__button md-logo" aria-label="Velociportal" data-md-component="logo">
+      
+  <img src="../../assets/logo-card.svg" alt="logo">
+
+    </a>
+    Velociportal
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/cybersader/velociportal" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    cybersader/velociportal
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/truenas-scale/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    TrueNAS Quickstart
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Start here
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Start here
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/validation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Validate a real deployment
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/setup/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Local-source diagnostics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../guides/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Choose an architecture
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_4" id="__nav_4_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Choose an architecture
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/headscale-npm/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Headscale + NPM control and runtime
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/tailscale-saas-npm/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tailscale SaaS + NPM (preview)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/headscale-caddy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Headscale + Caddy (planned)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/headscale-traefik/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Headscale + Traefik (planned)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deploy
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Deploy
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/private-tls/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Optional native Headscale TLS
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/vps-headscale/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    VPS for Headscale
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../integrations/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Integrate identity
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_6" id="__nav_6_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Integrate identity
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../integrations/no-idp/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    No IdP / Tailscale identity
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../integrations/authentik/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Authentik
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../integrations/authelia/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Authelia
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Understand
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Understand
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../concept/overview/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Concept overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../concept/how-it-works/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    How it works
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../concept/alternatives/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Alternatives
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_8" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_8" id="__nav_8_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_8_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_8">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI and Make targets
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../known-limitations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Known limitations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Service metadata and editing
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Service metadata and editing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#policy-first-server-defaults" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Policy first, server defaults
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#editing-mode-selection-unreleased" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Editing mode selection (RC.18)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#browser-local-interaction-and-persistence-rc18" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Browser-local interaction and persistence (RC.18)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#personal-tailnet-services-unreleased" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Personal tailnet services (RC.18)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Personal tailnet services (RC.18)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#enablement-and-use" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Enablement and use
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#links-and-current-policy-evidence" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Links and current policy evidence
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#volatile-availability-conflicts-and-explicit-recovery" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Volatile availability, conflicts and explicit recovery
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#optional-exact-login-shared-editors-rc17" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Optional exact-login shared editors (RC.17)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#finite-embedded-icons" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Finite embedded icons
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#shared-storage-conflicts-and-recovery" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Shared storage, conflicts and recovery
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../headscale-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Headscale API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../tailscale-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tailscale API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../npm-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    NPM API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../tailscale-headers/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tailscale identity headers
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#policy-first-server-defaults" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Policy first, server defaults
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#editing-mode-selection-unreleased" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Editing mode selection (RC.18)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#browser-local-interaction-and-persistence-rc18" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Browser-local interaction and persistence (RC.18)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#personal-tailnet-services-unreleased" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Personal tailnet services (RC.18)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Personal tailnet services (RC.18)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#enablement-and-use" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Enablement and use
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#links-and-current-policy-evidence" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Links and current policy evidence
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#volatile-availability-conflicts-and-explicit-recovery" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Volatile availability, conflicts and explicit recovery
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#optional-exact-login-shared-editors-rc17" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Optional exact-login shared editors (RC.17)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#finite-embedded-icons" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Finite embedded icons
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#shared-storage-conflicts-and-recovery" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Shared storage, conflicts and recovery
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="service-metadata-and-editing">Service metadata and editing<a class="headerlink" href="#service-metadata-and-editing" title="Permanent link">&para;</a></h1>
+<p><strong>Published RC.18 adds browser-local editing, <code>PORTAL_EDIT_MODE</code> and the separate personal catalog below to RC.17's metadata v3/shared editor. RC.18 has a startup panic when personal services or shared editing is enabled.</strong> The RC.19 corrective candidate fixes that production route conflict; use only an independently verified corrected RC.19-or-newer image after separate deployment approval. This source snapshot does not establish RC.19 publication or live recovery. These features change presentation for services a viewer can already see; they do not change policy, NPM, DNS, backend targets, SSH evidence or access. This documentation performs no deployment, provisioning or migration.</p>
+<h2 id="policy-first-server-defaults">Policy first, server defaults<a class="headerlink" href="#policy-first-server-defaults" title="Permanent link">&para;</a></h2>
+<p><code>SERVICE_METADATA_FILE</code> is the optional server presentation configuration source. Entries associate with existing positive NPM <code>proxy_host_id</code> values <strong>after</strong> supported policy matching. Metadata cannot create, hide or enable cards, repair a domainless host, or alter health. A concrete NPM domain remains the preferred default; a wildcard-only card remains visible without a usable link until an explicit URL is supplied.</p>
+<p>The strict reader accepts:</p>
+<table>
+<thead>
+<tr>
+<th>Version</th>
+<th>Fields in each service entry</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td><code>proxy_host_id</code>, optional <code>name</code> and <code>url</code></td>
+</tr>
+<tr>
+<td>2</td>
+<td>v1 plus optional <code>category</code> and <code>order</code></td>
+</tr>
+<tr>
+<td>3 (RC.17)</td>
+<td>v2 plus optional finite <code>icon</code> ID</td>
+</tr>
+</tbody>
+</table>
+<p>All documents require exact <code>version</code> and <code>services</code> keys. Unknown, duplicate, case-variant, malformed and trailing JSON is rejected. The complete file is bounded to 256 KiB and 1,024 entries. Names are canonical unpadded strings up to 120 Unicode code points; URLs are bounded to 2,048 bytes and must be validated absolute HTTP(S) URLs without credentials or wildcard hosts. Categories are canonical strings up to 64 characters; order is an integer from 0 through 1,000,000. Existing v1/v2 <code>name</code>/<code>url</code> null presence remains readable and is preserved for untouched entries. Category and order require v2 or v3; icons require v3.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="p">{</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span><span class="nt">"version"</span><span class="p">:</span><span class="w"> </span><span class="mi">3</span><span class="p">,</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">  </span><span class="nt">"services"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">    </span><span class="p">{</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="w">      </span><span class="nt">"proxy_host_id"</span><span class="p">:</span><span class="w"> </span><span class="mi">7</span><span class="p">,</span>
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="w">      </span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Media"</span><span class="p">,</span>
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="w">      </span><span class="nt">"url"</span><span class="p">:</span><span class="w"> </span><span class="s2">"https://media.example.com"</span><span class="p">,</span>
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="w">      </span><span class="nt">"category"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Home"</span><span class="p">,</span>
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="w">      </span><span class="nt">"order"</span><span class="p">:</span><span class="w"> </span><span class="mi">10</span><span class="p">,</span>
+<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="w">      </span><span class="nt">"icon"</span><span class="p">:</span><span class="w"> </span><span class="s2">"jellyfin"</span>
+<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a><span class="w">    </span><span class="p">}</span>
+<a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a><span class="w">  </span><span class="p">]</span>
+<a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a><span class="p">}</span>
+</code></pre></div>
+<p>Categories and order group/sort only authorized cards, with uncategorized last and deterministic name/ID fallbacks. The dashboard edits only <strong>name, URL and icon</strong>. Neither editing mode changes category/order, health targets, SSH or the authorized card set. Startup does not write or migrate metadata. <code>suggest-hostnames</code> emits a strict v1 <strong>proposal fragment</strong>; never replace a complete v2/v3 file with that fragment. Preserve category/order/icons and unrelated entries when reviewing an operator merge.</p>
+<h2 id="editing-mode-selection-unreleased">Editing mode selection (RC.18)<a class="headerlink" href="#editing-mode-selection-unreleased" title="Permanent link">&para;</a></h2>
+<p><code>PORTAL_EDIT_MODE</code> accepts only canonical lowercase <code>off</code>, <code>browser</code>, or <code>shared</code>. Explicit empty, padded, case-variant and unknown values fail configuration.</p>
+<table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Result</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Absent</td>
+<td>Preserve RC.17 exactly: both shared settings absent disables editing; supplied settings follow existing shared validation, including failure for partial/invalid values</td>
+</tr>
+<tr>
+<td><code>off</code></td>
+<td>No editor controls, writer initialization or edit API; retained shared settings are ignored, not deleted; normal readonly metadata still loads</td>
+</tr>
+<tr>
+<td><code>browser</code></td>
+<td>Personal presentation for any trusted viewer's currently authorized cards; no allowlist, public origin, metadata file or writable mount required</td>
+</tr>
+<tr>
+<td><code>shared</code></td>
+<td>Require exact editor logins, canonical public origin and the existing safe single-file writer storage</td>
+</tr>
+</tbody>
+</table>
+<p>Browser mode rejects <strong>supplied</strong> <code>PORTAL_EDITORS</code> or <code>PORTAL_PUBLIC_ORIGIN</code>, even empty values. Ordinary readonly <code>SERVICE_METADATA_FILE</code> is allowed as the source of browser defaults. With an independently verified corrected RC.19-or-newer image and separate deployment approval, add the single line <code>PORTAL_EDIT_MODE: browser</code> to the existing Compose service's <code>environment</code> mapping; no editor directory overlay is needed. Production provider env files may instead use <code>PORTAL_EDIT_MODE="browser"</code> with their existing go-quoted-v1 convention. RC.17 itself does not implement this selector or personal editing.</p>
+<h2 id="browser-local-interaction-and-persistence-rc18">Browser-local interaction and persistence (RC.18)<a class="headerlink" href="#browser-local-interaction-and-persistence-rc18" title="Permanent link">&para;</a></h2>
+<p>The existing Edit dialog uses <strong>Save</strong>, <strong>Cancel</strong>, <strong>Reset</strong>, and quiet “Saved in this browser” help. No mode switch or dashboard banner is added. Empty fields remove only that field's local override. Reset removes this service's local name/link/icon choices and restores the <strong>current server-rendered defaults</strong>, including optional metadata, not necessarily raw NPM values. It never modifies the server file or anyone else's browser.</p>
+<p>The browser stores only user-entered name/URL/finite-icon overrides in a versioned map by canonical positive service ID: at most 1,024 entries and 256 KiB serialized UTF-8. Its key uses the existing opaque SHA-256 digest of the exact login, never the raw login. Browser origin supplies deployment separation. There is <strong>no cross-device or cross-browser persistence</strong>, account synchronization or server backup. Clearing site storage removes these choices; private windows and blocked/cleared storage may have none. Logo and SSH-account suggestions remain separate browser-local preferences.</p>
+<p>Loaded data and saves are both untrusted and validated: exact field types/allowed fields, positive safe-integer IDs, 120-code-point names, 2,048-byte HTTP(S) URLs without userinfo/controls/padding, and finite icon choices. The browser deliberately rejects ambiguous WHATWG normalization such as shorthand IPs, host-case/default-port rewrites and dot segments; it is a conservative subset, not an assertion that Go and browser URL parsers are identical. Names update as text, icon paths come only from the fixed rendered registry, and link updates use safe DOM operations rather than stored HTML.</p>
+<p>Only current authorized DOM cards receive preferences. Stored IDs never create cards or reveal missing topology; absent-card preferences may remain inert within the bounds. Positive NPM ID reuse can inherit old presentation, never authorization: reset/remove obsolete choices when IDs are repurposed. The browser stores no catalog, policy, access decisions, credentials or shared form tokens and makes <strong>zero edit API calls</strong>. Normal server polling still updates authorization.</p>
+<p>Each fresh fragment supplies new immutable server defaults, then local preferences are applied and search is recomputed. Personal URLs update visible/search domains and linked/unlinked navigation without affecting probes. Local names do not reorder server categories or cards. Drafts survive harmless polling/search filtering; search-hidden is not unauthorized. Identity, mode or editing-availability changes invalidate the controller and require a full reload; loss of the current service clears its draft. Same-origin cross-tab events do not replace dirty forms, and saves reread the current validated map to preserve unrelated entries. Simultaneous writes are not transactional or promised conflict-free.</p>
+<p>Unavailable, full or corrupt storage does not break browsing. Failed saves keep the draft and state <strong>not saved</strong>, never claim persistence or silently overwrite corrupt data. Browser blank/reset still requires working, valid storage; operator-cleared site storage restores defaults but also removes other preferences at that origin. Synthetic DOM/controller fixtures do not prove native dialog focus, layout, keyboard/touch or live behavior.</p>
+<h2 id="personal-tailnet-services-unreleased">Personal tailnet services (RC.18)<a class="headerlink" href="#personal-tailnet-services-unreleased" title="Permanent link">&para;</a></h2>
+<p>Personal entries are <strong>separate from NPM presentation metadata and browser-local overrides</strong>. They support ordinary Tailscale-native HTTPS applications without an NPM host, but do not remove the selected-provider-plus-NPM dependency, alter <code>/healthz</code>, or administer upstreams. RC.17 includes neither this catalog nor browser mode.</p>
+<h3 id="enablement-and-use">Enablement and use<a class="headerlink" href="#enablement-and-use" title="Permanent link">&para;</a></h3>
+<p><code>PORTAL_PERSONAL_SERVICES_ORIGIN</code> is an independent opt-in, available only with <code>CONTROL_PLANE=tailscale</code>. Its value must be the exact canonical HTTP(S) origin already used to open this portal: for example, the placeholder <code>http://portal.tailnet.ts.net:8081</code>, without a path, query, fragment or trailing slash. Absence disables store/routes/controls; supplied empty/invalid values or Headscale fail configuration. It is not an application destination, a new listener or an instruction to change Serve/DNS/TLS. An independently verified corrected RC.19-or-newer image and a separately approved deployment change are needed; no live configuration is performed here.</p>
+<p>No file, database, writable mount, extra container, <code>PORTAL_EDITORS</code> or shared writer is needed. <code>PORTAL_EDIT_MODE</code> still independently selects NPM presentation editing: <code>off</code> does not disable an explicitly enabled personal catalog, and <code>browser</code> still never sends NPM edit requests. Shared mode retains its existing allowlist/origin/storage guards.</p>
+<p>Use <strong>Add service</strong> near Services for a name, normal launch link and optional finite embedded icon. Personal cards have their own Edit action; <strong>Your services</strong> in account settings also manages edit/delete and recovery, including saved entries not currently displayed. Inactive entries have coarse status and no clickable bypass link. Creation/editing/recovery require JavaScript; eligible server-rendered links already in RAM remain usable without it. Personal IDs are opaque and separate from positive NPM IDs; NPM metadata, category/order, health and shared-edit APIs do not join to them.</p>
+<h3 id="links-and-current-policy-evidence">Links and current policy evidence<a class="headerlink" href="#links-and-current-policy-evidence" title="Permanent link">&para;</a></h3>
+<p>Links are canonical HTTPS URLs to a current device's canonical <code>*.ts.net</code> hostname, with an optional validated nondefault port and application path. Names are bounded to 120 Unicode code points and links to 2,048 bytes. IP fallbacks, arbitrary domains, userinfo, queries, fragments, controls, padding and unsafe normalization are rejected. <strong>Never save pairing URLs, pairing codes or other secrets.</strong> Query/fragment exclusion rejects common pairing-link forms but cannot detect every secret someone might embed in a path; use the normal launch address, and let the app handle its own pairing/sign-in.</p>
+<p>Every render resolves that hostname to exactly one current normalized device and requires a positive network Grant permitting TCP to the link's ingress port (443 by default), for the exact authoritative direct member's supported login/group/role evidence. Legacy ACLs are not port evidence. Device ownership, tags on a person's devices, SSH policy/capability and NPM are not substitutes. Hostname binding follows the current device with that exact name, including a replacement that acquires it; missing, renamed, malformed or ambiguous names suppress the active card. Cold, future-dated or stale complete-snapshot evidence (older than three polling intervals) suppresses personal cards without changing existing NPM stale-render behavior. Authored inactive records remain manageable. A card is not enforcement, a health check, a reachability guarantee or proof of application login.</p>
+<h3 id="volatile-availability-conflicts-and-explicit-recovery">Volatile availability, conflicts and explicit recovery<a class="headerlink" href="#volatile-availability-conflicts-and-explicit-recovery" title="Permanent link">&para;</a></h3>
+<p>The existing process retains at most <strong>128 initialized collections</strong>, including initialized-empty collections; each versioned document allows <strong>128 entries and 64 KiB</strong> canonical serialized data. GET does not allocate collections. Capacity exhaustion fails explicitly rather than silently evicting another user's latest catalog. Collections are private to the same exact trusted login, not shared with other tailnet users. They are not encrypted from the trusted server/host operator.</p>
+<p>During that process lifetime, same-login devices can read the latest acknowledged catalog without another browser being online. Existing portal polling announces generation/revision changes; there is no separate sync service or polling subsystem. Each mutation compares process generation and collection revision atomically. A concurrent change conflicts: preserve the draft, reload/review, and save deliberately. There is no automatic overwrite, merge, last-arrival-wins, offline commit queue or automatic mutation retry. A timeout after POST is uncertain; the controller reads back state to reconcile rather than blindly repeating the write.</p>
+<p>Each browser may retain the latest confirmed <strong>authored document</strong> plus format/generation/revision under the opaque exact-login digest and origin. Load/save validates untrusted data and guards storage errors. No raw login, CSRF/session token, policy, device topology, rendered card catalog or authorization decisions are stored. This is an explicit authored-data recovery copy, not a PWA/authorization cache. NPM browser-local overrides, logo and SSH-account preferences remain separate and unsynchronized. A server save can succeed while browser backup fails; the UI distinguishes those outcomes.</p>
+<p><strong>Restart/redeploy loses the server RAM catalog.</strong> An absent server collection never automatically uploads or erases a retained browser copy. <strong>Restore from this browser</strong> requires explicit action and the same revision/generation guard; a competing create/restore conflicts. A prior-generation copy remains until explicit restore or adoption of the current server collection. A browser's copy may be stale: Velociportal cannot prove it is newest. If all copies are lost, recovery is impossible. Deleting every entry leaves initialized-empty authoritative state, which must not resurrect old entries from a recovery copy.</p>
+<p>No guaranteed crash durability, history, backup service, account-synchronized NPM preferences, iroh, MCP, CRDT or generic bookmark/plugin framework is provided. Synthetic controller/server fixtures do not establish native layout/focus/keyboard/touch or real two-device/restart acceptance; those remain separate pending checks.</p>
+<h2 id="optional-exact-login-shared-editors-rc17">Optional exact-login shared editors (RC.17)<a class="headerlink" href="#optional-exact-login-shared-editors-rc17" title="Permanent link">&para;</a></h2>
+<p>Shared mode retains the existing guards. Both settings absent keep RC.17 read-only behavior; partial configuration fails. Both present require an existing valid <code>SERVICE_METADATA_FILE</code> in safe, separately provisioned writable storage.</p>
+<table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Contract</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>PORTAL_EDITORS</code></td>
+<td>Strict JSON array, at most 32 exact full logins, each at most 254 bytes; no padding, controls, duplicates, aliases, case folding or inferred roles</td>
+</tr>
+<tr>
+<td><code>PORTAL_PUBLIC_ORIGIN</code></td>
+<td>Exact canonical browser-facing HTTP(S) origin, including non-default port when used; no path, query, fragment, userinfo, wildcard or trailing slash</td>
+</tr>
+</tbody>
+</table>
+<p>An empty editor array configures storage but grants nobody editing. RC.17 disables editing by <strong>removing both settings</strong>, not empty strings. The RC.18 selector additionally allows explicit <code>off</code> without deleting retained settings. Tailnet HTTP Serve remains supported; no HTTPS infrastructure change is implied.</p>
+<p>The narrow setup subcommand validates these settings, preserving other environment entries:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>velociportal<span class="w"> </span>setup<span class="w"> </span>service-editor<span class="w"> </span>--env-file<span class="w"> </span>velociportal.env<span class="w"> </span>--editors<span class="w"> </span><span class="s1">'["alice@example.com"]'</span><span class="w"> </span>--origin<span class="w"> </span>http://portal.tailnet.ts.net:8081
+</code></pre></div>
+<p>In the RC.18 extension setup also sets <code>PORTAL_EDIT_MODE=shared</code>. <code>SERVICE_METADATA_FILE</code> must already be set; when Compose supplies it, use the corresponding fixed runtime path in the operator configuration too. Setup never provisions or probes metadata storage. Logins in arguments can be visible to trusted same-host administration tools/history; authenticated private env editing is an alternative. Disable without changing metadata:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>velociportal<span class="w"> </span>setup<span class="w"> </span>service-editor<span class="w"> </span>--env-file<span class="w"> </span>velociportal.env<span class="w"> </span>--disable
+</code></pre></div>
+<p>The RC.18 disable path removes both shared keys <strong>and sets <code>PORTAL_EDIT_MODE=off</code></strong>. Doctor reports browser-local mode without writer/storage inspection, or coarse shared read-only prerequisites. It creates no editor lock/probe files, performs no write test and prints no editor identities/origin or saved URLs in that diagnostic. Passing is not lifetime-lock, durability or save proof. Other Doctor upstream checks remain networked.</p>
+<p>Only configured exact logins receive shared Edit buttons, including wildcard cards. Ordinary service links remain useful without JavaScript. The native dialog/mobile sheet has explicit labels, finite icon preview, <strong>Save for everyone</strong>, Cancel and confirmed <strong>Reset name/link/icon</strong>. Blank/reset removes only shared name/link/icon, restoring NPM/generic defaults for everyone; category/order and unrelated entries remain. An entry disappears only when no fields remain. The first confirmed explicit save serializes the <strong>complete preserved document as deterministic v3</strong>, including unseen entries; subsequent saves do not downgrade it.</p>
+<p>Shared drafts survive harmless polling/search and clear on identity or editing/service-visibility loss. Whole-file/target conflicts keep the draft and disable saving until explicit reload/review, never per-field merge or silent overwrite. Save is announced only after confirmation; other viewers update on ordinary polling/reload. Shared drafts, form tokens and search are memory-only, never browser storage or URL parameters.</p>
+<p>The API requires trusted-proxy identity, unique raw identity headers, exact configured login/Host and a currently visible positive ID. POST additionally requires exact Origin, a 30-minute identity/origin-bound HMAC CSRF token, acceptable Fetch Metadata, exact JSON content type and a strict body at most 16 KiB. Missing/invisible IDs are indistinguishable. Responses are no-store/frame-denied with no CORS. Fresh complete authorization is checked immediately before save using the existing three-poll-interval cutoff; this is <strong>not transactional upstream-revocation enforcement</strong>. Metadata never mutates authorization state.</p>
+<h2 id="finite-embedded-icons">Finite embedded icons<a class="headerlink" href="#finite-embedded-icons" title="Permanent link">&para;</a></h2>
+<p>Available IDs are <code>generic</code>, <code>adguard-home</code>, <code>gitea</code>, <code>grafana</code>, <code>home-assistant</code>, <code>immich</code>, <code>jellyfin</code>, <code>nextcloud</code>, <code>nginx-proxy-manager</code>, <code>paperless-ngx</code>, <code>portainer</code>, <code>qbittorrent</code>, and <code>uptime-kuma</code>. An empty shared icon restores generic; an empty browser override restores the current server icon, including metadata. Selection is explicit, never inferred from a private hostname. No uploads, arbitrary paths, external icon URLs, favicon fetches or runtime logo-service calls exist.</p>
+<p>The twelve unmodified PNGs come from <a href="https://github.com/homarr-labs/dashboard-icons/tree/57e939e504eda0ea764098015da93aa666ad6f31">Dashboard Icons revision 57e939e</a>, bounded, decoded and visually reviewed before embedding. <code>assets/service-icons/provenance.json</code> records exact upstream paths, sizes and SHA-256 digests; <code>LICENSE</code> and <code>ATTRIBUTION.txt</code> retain Apache-2.0 attribution. The generic SVG is an original inert project asset. Trademarks remain their owners' property; licensing grants no trademark rights, affiliation or endorsement. Arbitrary logos, access history and account-synchronized personalization remain deferred.</p>
+<h2 id="shared-storage-conflicts-and-recovery">Shared storage, conflicts and recovery<a class="headerlink" href="#shared-storage-conflicts-and-recovery" title="Permanent link">&para;</a></h2>
+<p>One process owns the single file and stable adjacent lifetime lock. Require a regular non-symlink, single-link target owned by the runtime effective UID with owner read/write and no group/other write; its dedicated directory must also be runtime-owned, owner-rwx and not group/other writable. Ancestors cannot be symlinks or non-sticky group/other-writable directories. No chmod/chown/ACL repair occurs. Do not replace/unlink a live lock inode.</p>
+<p>Saves use whole-file byte revisions: <strong>any</strong> intervening edit, even unrelated, conflicts. A separate opaque revision detects changed NPM targets/defaults but ignores poll timestamps. No fingerprint/generation/tombstone is persisted. Positive IDs are not stable identities: review/remove obsolete metadata when deleting/reusing an NPM ID. Reuse can receive old presentation, never new authorization.</p>
+<p>A save creates an exclusive adjacent <code>0600</code> temporary file, writes and fsyncs, rechecks disk/current visibility/target, renames, fsyncs the directory, then publishes confirmed immutable memory. Before-rename failures preserve the original file. Directory fsync failure <strong>after rename</strong> is uncertain: writes are disabled and rendering keeps last confirmed memory until restart/reconciliation. Never claim disk rollback, blindly retry or delete synchronization files.</p>
+<p>Live external editing is unsupported while the dashboard writer runs. Drift causes conflict; byte rechecks are <strong>not race-proof against uncooperative external writers</strong>. Stop the writer, privately merge/review the complete file preserving every field and ownership/mode, then restart. Startup validates/syncs disk before enabling editing, without migration. For uncertain saves, stop, reconcile disk against a reviewed private backup/intended save, then restart with a valid known document.</p>
+<p><strong>Before first v3 save</strong>, separately approve private backup/restore and compatibility rollback. RC.16 is v1/v2-only: rollback requires compatible metadata <strong>and editing-disabled configuration</strong>, not image alone. Do not just lower the version with v3 fields retained. Restore a reviewed v1/v2 backup or produce a compatible document privately, reviewing presentation changes. RC.17 already supports v3/shared editing but not the new mode selector; browser localStorage is not sent to that binary or migrated into its file. No production backup/transfer/migration is performed here.</p>
+<p>For unchanged non-root/private-port mount alternatives, see <a href="../../guides/truenas-scale/#optional-shared-service-editing">TrueNAS shared editing</a>.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+  <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+    
+      
+      <nav class="md-footer__inner md-grid" aria-label="Footer" >
+        
+          
+          <a href="../known-limitations/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Known limitations">
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+            </div>
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Previous
+              </span>
+              <div class="md-ellipsis">
+                Known limitations
+              </div>
+            </div>
+          </a>
+        
+        
+          
+          <a href="../headscale-api/" class="md-footer__link md-footer__link--next" aria-label="Next: Headscale API">
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Next
+              </span>
+              <div class="md-ellipsis">
+                Headscale API
+              </div>
+            </div>
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 11v2h12l-5.5 5.5 1.42 1.42L19.84 12l-7.92-7.92L10.5 5.5 16 11z"/></svg>
+            </div>
+          </a>
+        
+      </nav>
+    
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Velociportal is a visibility layer, not an authentication or enforcement layer.
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["content.code.copy", "content.tabs.link", "content.tooltips", "navigation.footer", "navigation.indexes", "navigation.sections", "navigation.tabs", "navigation.top", "search.highlight", "search.share", "toc.follow"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>
