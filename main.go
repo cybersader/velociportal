@@ -559,33 +559,10 @@ func runServer(cfg *Config) error {
 	)
 	healthPoller.Start(ctx)
 
-	static, err := fs.Sub(assetsFS, "assets")
+	mux, err := newServerMux(cfg, cache, healthPoller.Store(), editor, personalServices)
 	if err != nil {
 		return fmt.Errorf("run: %w", err)
 	}
-
-	pollStale := cfg.PollInterval * 3
-
-	mux := http.NewServeMux()
-	portal := NewPortalHandlerWithOptions(cache, healthPoller.Store(), cfg.PortalLogoDefaultVisible)
-	portal.editor = editor
-	portal.editMode = cfg.PortalEditMode
-	portal.personal = personalServices
-	portal.pollInterval = cfg.PollInterval
-	portalHandler := IdentityMiddleware(cfg.TrustedProxyCIDR, portal)
-	mountServiceMetadataEditor(mux, editor, cache, cfg.TrustedProxyCIDR, cfg.PollInterval)
-	mountPersonalServices(mux, personalServices, cache, cfg.TrustedProxyCIDR, cfg.PollInterval)
-	mux.Handle("GET /", portalHandler)
-	mux.Handle("GET /portal", portalHandler)
-	mux.Handle("GET /static/", staticAssetHandler(static))
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
-		age := time.Since(cache.LastUpdated())
-		if cache.LastUpdated().IsZero() || age > pollStale {
-			http.Error(w, fmt.Sprintf("stale cache: age=%s", age.Round(time.Second)), http.StatusServiceUnavailable)
-			return
-		}
-		fmt.Fprintf(w, "ok cache_age=%s\n", age.Round(time.Second))
-	})
 
 	srv := &http.Server{
 		Addr:              cfg.ListenAddr,
@@ -615,4 +592,38 @@ func runServer(cfg *Config) error {
 	}
 	slog.Info("shutdown complete")
 	return nil
+}
+
+// newServerMux assembles the production routes without starting upstream pollers
+// or a listener, so optional route combinations can be checked together.
+func newServerMux(cfg *Config, cache *Cache, health *ServiceHealthStore, editor *ServiceMetadataEditor, personalServices *PersonalServicesStore) (*http.ServeMux, error) {
+	static, err := fs.Sub(assetsFS, "assets")
+	if err != nil {
+		return nil, err
+	}
+
+	pollStale := cfg.PollInterval * 3
+	mux := http.NewServeMux()
+	portal := NewPortalHandlerWithOptions(cache, health, cfg.PortalLogoDefaultVisible)
+	portal.editor = editor
+	portal.editMode = cfg.PortalEditMode
+	portal.personal = personalServices
+	portal.pollInterval = cfg.PollInterval
+	portalHandler := IdentityMiddleware(cfg.TrustedProxyCIDR, portal)
+	mountServiceMetadataEditor(mux, editor, cache, cfg.TrustedProxyCIDR, cfg.PollInterval)
+	mountPersonalServices(mux, personalServices, cache, cfg.TrustedProxyCIDR, cfg.PollInterval)
+	// Keep the portal root exact: a GET subtree conflicts with the narrower
+	// methodless APIs, which retain their own guarded method rejection.
+	mux.Handle("GET /{$}", portalHandler)
+	mux.Handle("GET /portal", portalHandler)
+	mux.Handle("GET /static/", staticAssetHandler(static))
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
+		age := time.Since(cache.LastUpdated())
+		if cache.LastUpdated().IsZero() || age > pollStale {
+			http.Error(w, fmt.Sprintf("stale cache: age=%s", age.Round(time.Second)), http.StatusServiceUnavailable)
+			return
+		}
+		fmt.Fprintf(w, "ok cache_age=%s\n", age.Round(time.Second))
+	})
+	return mux, nil
 }

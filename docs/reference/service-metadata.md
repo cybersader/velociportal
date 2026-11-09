@@ -1,6 +1,6 @@
 # Service metadata and editing
 
-**RC.17 includes metadata v3 and opt-in shared editing; the RC.18 candidate adds browser-local editing, `PORTAL_EDIT_MODE` and the separate personal catalog below.** This source snapshot does not establish image publication: require a successful immutable Release workflow and verified digest before deployment. These features change presentation for services a viewer can already see; they do not change policy, NPM, DNS, backend targets, SSH evidence or access. This documentation performs no deployment, provisioning or migration.
+**Published RC.18 adds browser-local editing, `PORTAL_EDIT_MODE` and the separate personal catalog below to RC.17's metadata v3/shared editor. RC.18 has a startup panic when personal services or shared editing is enabled.** The RC.19 corrective candidate fixes that production route conflict; use only an independently verified corrected RC.19-or-newer image after separate deployment approval. This source snapshot does not establish RC.19 publication or live recovery. These features change presentation for services a viewer can already see; they do not change policy, NPM, DNS, backend targets, SSH evidence or access. This documentation performs no deployment, provisioning or migration.
 
 ## Policy first, server defaults
 
@@ -34,7 +34,7 @@ All documents require exact `version` and `services` keys. Unknown, duplicate, c
 
 Categories and order group/sort only authorized cards, with uncategorized last and deterministic name/ID fallbacks. The dashboard edits only **name, URL and icon**. Neither editing mode changes category/order, health targets, SSH or the authorized card set. Startup does not write or migrate metadata. `suggest-hostnames` emits a strict v1 **proposal fragment**; never replace a complete v2/v3 file with that fragment. Preserve category/order/icons and unrelated entries when reviewing an operator merge.
 
-## Editing mode selection (RC.18 candidate) { #editing-mode-selection-unreleased }
+## Editing mode selection (RC.18) { #editing-mode-selection-unreleased }
 
 `PORTAL_EDIT_MODE` accepts only canonical lowercase `off`, `browser`, or `shared`. Explicit empty, padded, case-variant and unknown values fail configuration.
 
@@ -45,9 +45,9 @@ Categories and order group/sort only authorized cards, with uncategorized last a
 | `browser` | Personal presentation for any trusted viewer's currently authorized cards; no allowlist, public origin, metadata file or writable mount required |
 | `shared` | Require exact editor logins, canonical public origin and the existing safe single-file writer storage |
 
-Browser mode rejects **supplied** `PORTAL_EDITORS` or `PORTAL_PUBLIC_ORIGIN`, even empty values. Ordinary readonly `SERVICE_METADATA_FILE` is allowed as the source of browser defaults. With an independently verified RC.18 image and separate deployment approval, add the single line `PORTAL_EDIT_MODE: browser` to the existing Compose service's `environment` mapping; no editor directory overlay is needed. Production provider env files may instead use `PORTAL_EDIT_MODE="browser"` with their existing go-quoted-v1 convention. RC.17 itself does not implement this selector or personal editing.
+Browser mode rejects **supplied** `PORTAL_EDITORS` or `PORTAL_PUBLIC_ORIGIN`, even empty values. Ordinary readonly `SERVICE_METADATA_FILE` is allowed as the source of browser defaults. With an independently verified corrected RC.19-or-newer image and separate deployment approval, add the single line `PORTAL_EDIT_MODE: browser` to the existing Compose service's `environment` mapping; no editor directory overlay is needed. Production provider env files may instead use `PORTAL_EDIT_MODE="browser"` with their existing go-quoted-v1 convention. RC.17 itself does not implement this selector or personal editing.
 
-## Browser-local interaction and persistence (RC.18 candidate)
+## Browser-local interaction and persistence (RC.18)
 
 The existing Edit dialog uses **Save**, **Cancel**, **Reset**, and quiet “Saved in this browser” help. No mode switch or dashboard banner is added. Empty fields remove only that field's local override. Reset removes this service's local name/link/icon choices and restores the **current server-rendered defaults**, including optional metadata, not necessarily raw NPM values. It never modifies the server file or anyone else's browser.
 
@@ -61,13 +61,13 @@ Each fresh fragment supplies new immutable server defaults, then local preferenc
 
 Unavailable, full or corrupt storage does not break browsing. Failed saves keep the draft and state **not saved**, never claim persistence or silently overwrite corrupt data. Browser blank/reset still requires working, valid storage; operator-cleared site storage restores defaults but also removes other preferences at that origin. Synthetic DOM/controller fixtures do not prove native dialog focus, layout, keyboard/touch or live behavior.
 
-## Personal tailnet services (RC.18 candidate) { #personal-tailnet-services-unreleased }
+## Personal tailnet services (RC.18) { #personal-tailnet-services-unreleased }
 
 Personal entries are **separate from NPM presentation metadata and browser-local overrides**. They support ordinary Tailscale-native HTTPS applications without an NPM host, but do not remove the selected-provider-plus-NPM dependency, alter `/healthz`, or administer upstreams. RC.17 includes neither this catalog nor browser mode.
 
 ### Enablement and use
 
-`PORTAL_PERSONAL_SERVICES_ORIGIN` is an independent opt-in, available only with `CONTROL_PLANE=tailscale`. Its value must be the exact canonical HTTP(S) origin already used to open this portal: for example, the placeholder `http://portal.tailnet.ts.net:8081`, without a path, query, fragment or trailing slash. Absence disables store/routes/controls; supplied empty/invalid values or Headscale fail configuration. It is not an application destination, a new listener or an instruction to change Serve/DNS/TLS. An independently verified RC.18 image and a separately approved deployment change are needed; no live configuration is performed here.
+`PORTAL_PERSONAL_SERVICES_ORIGIN` is an independent opt-in, available only with `CONTROL_PLANE=tailscale`. Its value must be the exact canonical HTTP(S) origin already used to open this portal: for example, the placeholder `http://portal.tailnet.ts.net:8081`, without a path, query, fragment or trailing slash. Absence disables store/routes/controls; supplied empty/invalid values or Headscale fail configuration. It is not an application destination, a new listener or an instruction to change Serve/DNS/TLS. An independently verified corrected RC.19-or-newer image and a separately approved deployment change are needed; no live configuration is performed here.
 
 No file, database, writable mount, extra container, `PORTAL_EDITORS` or shared writer is needed. `PORTAL_EDIT_MODE` still independently selects NPM presentation editing: `off` does not disable an explicitly enabled personal catalog, and `browser` still never sends NPM edit requests. Shared mode retains its existing allowlist/origin/storage guards.
 
@@ -100,7 +100,7 @@ Shared mode retains the existing guards. Both settings absent keep RC.17 read-on
 | `PORTAL_EDITORS` | Strict JSON array, at most 32 exact full logins, each at most 254 bytes; no padding, controls, duplicates, aliases, case folding or inferred roles |
 | `PORTAL_PUBLIC_ORIGIN` | Exact canonical browser-facing HTTP(S) origin, including non-default port when used; no path, query, fragment, userinfo, wildcard or trailing slash |
 
-An empty editor array configures storage but grants nobody editing. RC.17 disables editing by **removing both settings**, not empty strings. The RC.18 candidate selector additionally allows explicit `off` without deleting retained settings. Tailnet HTTP Serve remains supported; no HTTPS infrastructure change is implied.
+An empty editor array configures storage but grants nobody editing. RC.17 disables editing by **removing both settings**, not empty strings. The RC.18 selector additionally allows explicit `off` without deleting retained settings. Tailnet HTTP Serve remains supported; no HTTPS infrastructure change is implied.
 
 The narrow setup subcommand validates these settings, preserving other environment entries:
 
@@ -108,13 +108,13 @@ The narrow setup subcommand validates these settings, preserving other environme
 velociportal setup service-editor --env-file velociportal.env --editors '["alice@example.com"]' --origin http://portal.tailnet.ts.net:8081
 ```
 
-In the RC.18 candidate extension setup also sets `PORTAL_EDIT_MODE=shared`. `SERVICE_METADATA_FILE` must already be set; when Compose supplies it, use the corresponding fixed runtime path in the operator configuration too. Setup never provisions or probes metadata storage. Logins in arguments can be visible to trusted same-host administration tools/history; authenticated private env editing is an alternative. Disable without changing metadata:
+In the RC.18 extension setup also sets `PORTAL_EDIT_MODE=shared`. `SERVICE_METADATA_FILE` must already be set; when Compose supplies it, use the corresponding fixed runtime path in the operator configuration too. Setup never provisions or probes metadata storage. Logins in arguments can be visible to trusted same-host administration tools/history; authenticated private env editing is an alternative. Disable without changing metadata:
 
 ```bash
 velociportal setup service-editor --env-file velociportal.env --disable
 ```
 
-The RC.18 candidate disable path removes both shared keys **and sets `PORTAL_EDIT_MODE=off`**. Doctor reports browser-local mode without writer/storage inspection, or coarse shared read-only prerequisites. It creates no editor lock/probe files, performs no write test and prints no editor identities/origin or saved URLs in that diagnostic. Passing is not lifetime-lock, durability or save proof. Other Doctor upstream checks remain networked.
+The RC.18 disable path removes both shared keys **and sets `PORTAL_EDIT_MODE=off`**. Doctor reports browser-local mode without writer/storage inspection, or coarse shared read-only prerequisites. It creates no editor lock/probe files, performs no write test and prints no editor identities/origin or saved URLs in that diagnostic. Passing is not lifetime-lock, durability or save proof. Other Doctor upstream checks remain networked.
 
 Only configured exact logins receive shared Edit buttons, including wildcard cards. Ordinary service links remain useful without JavaScript. The native dialog/mobile sheet has explicit labels, finite icon preview, **Save for everyone**, Cancel and confirmed **Reset name/link/icon**. Blank/reset removes only shared name/link/icon, restoring NPM/generic defaults for everyone; category/order and unrelated entries remain. An entry disappears only when no fields remain. The first confirmed explicit save serializes the **complete preserved document as deterministic v3**, including unseen entries; subsequent saves do not downgrade it.
 
