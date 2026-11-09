@@ -39,7 +39,7 @@ The production bundle lives under [`deploy/`](./deploy/). It requires Docker Com
 > Published release-candidate images and `headscale-ops` artifacts exist, but they do not imply a public support claim. The selected provider's full TrueNAS acceptance matrix must still pass.
 
 > [!NOTE]
-> **v0.2.0-rc.18 candidate:** this source adds browser-local editing and personal tailnet services to RC.17's opt-in single-file shared editor. RC.17 includes neither new feature and remains immutable. This source snapshot does not establish RC.18 image publication: require a successful immutable Release workflow and verify its image digest before deployment. Publication or portal health is not end-to-end acceptance; Tailscale SaaS remains preview. See [handoff context](knowledgebase/04-handoff-context.md) for the evidence boundary.
+> **RC.19 corrective candidate:** published immutable RC.18 adds browser-local editing and personal tailnet services, but enabling either the personal API or shared editor causes a production route-registration startup panic. The owner reported this after enabling personal services on an RC.18 container and is leaving the portal off. This source fixes the conflict and tests all six edit-mode/personal-enabled combinations; it does not establish RC.19 publication or live recovery. Require a successful immutable Release workflow and verified RC.19 image digest before any separately approved deployment. RC.17/RC.18 remain immutable; Tailscale remains preview and native/live acceptance remains pending. See [handoff context](knowledgebase/04-handoff-context.md).
 
 > [!WARNING]
 > The canonical browser route is tailnet-only HTTP Serve over WireGuard: `:8081 -> http://127.0.0.1:18080`. NPM is not portal identity. Official Tailscale can automate `*.ts.net` certificates, but Headscale automatic HTTPS Serve remains future upstream work tracked by [issue #2527](https://github.com/juanfont/headscale/issues/2527) and [PR #3300](https://github.com/juanfont/headscale/pull/3300). Tailnet HTTP Serve is not a release blocker.
@@ -95,9 +95,9 @@ Each user's display name and login open an accessible settings panel with the on
 
 The page includes an install manifest and committed mobile icons. Identity-derived portal responses are `no-store`, and the service worker has install/activate lifecycle handling only: it has no fetch handler, Cache Storage use, offline fallback, or cached service/machine data. Full service-worker control and normal install prompts require HTTPS or localhost. The canonical plain-HTTP Tailscale Serve route may still be saved as a browser shortcut where supported, but enabling HTTPS is a separate infrastructure decision. Arbitrary per-service logos, access history, broader personalization, account-synchronized profiles, and delegated administration remain deferred.
 
-## Service editing modes (RC.18 candidate)
+## Service editing modes (RC.18)
 
-The RC.18 candidate selects one quiet Edit dialog through strict `PORTAL_EDIT_MODE`, not a dashboard switch:
+The RC.18 selects one quiet Edit dialog through strict `PORTAL_EDIT_MODE`, not a dashboard switch:
 
 | Mode | Persistence and prerequisites |
 |---|---|
@@ -106,11 +106,11 @@ The RC.18 candidate selects one quiet Edit dialog through strict `PORTAL_EDIT_MO
 | `browser` | Any trusted viewer edits only already-authorized cards; per-identity, per-origin browser-local name/link/finite-icon choices, no shared editor/origin/file/writable mount; supplied shared settings are rejected |
 | `shared` | Existing exact-login/origin/safe-directory guards; saves to the one `SERVICE_METADATA_FILE` for everyone who can already see the service |
 
-With an independently verified RC.18 image and separate deployment approval, add the single line `PORTAL_EDIT_MODE: browser` to the existing Compose service's `environment` mapping. Optional readonly metadata supplies defaults. Browser Save/Cancel/Reset uses quiet “Saved in this browser” help; blank/reset restores the **current server defaults**, not necessarily raw NPM values. Choices never synchronize across browsers/devices and disappear when site storage is cleared. Stored IDs never restore absent cards; category/order, health and SSH stay unchanged.
+With an independently verified corrected RC.19-or-newer image and separate deployment approval, add the single line `PORTAL_EDIT_MODE: browser` to the existing Compose service's `environment` mapping. Optional readonly metadata supplies defaults. Browser Save/Cancel/Reset uses quiet “Saved in this browser” help; blank/reset restores the **current server defaults**, not necessarily raw NPM values. Choices never synchronize across browsers/devices and disappear when site storage is cleared. Stored IDs never restore absent cards; category/order, health and SSH stay unchanged.
 
-RC.17 shared editing remains separate: its first confirmed save preserves complete v1/v2 metadata and writes v3, while shared reset removes name/link/icon for everyone and preserves category/order. Upstream APIs remain read-only. See [metadata/editor reference](docs/reference/service-metadata.md) and [TrueNAS prerequisites](docs/guides/truenas-scale.md#optional-shared-service-editing). Before a first v3 save, review private backup/restore: rollback to RC.16 needs compatible v1/v2 metadata and editing-disabled config, not just the old image. This source snapshot does not establish RC.18 publication or any deployment; require successful workflow and image-digest evidence.
+RC.17 shared editing remains separate: its first confirmed save preserves complete v1/v2 metadata and writes v3, while shared reset removes name/link/icon for everyone and preserves category/order. Upstream APIs remain read-only. See [metadata/editor reference](docs/reference/service-metadata.md) and [TrueNAS prerequisites](docs/guides/truenas-scale.md#optional-shared-service-editing). Before a first v3 save, review private backup/restore: rollback to RC.16 needs compatible v1/v2 metadata and editing-disabled config, not just the old image. Published RC.18 has the optional-API startup defect described above. This source snapshot does not establish RC.19 publication or recovery; require successful corrected-release workflow and image-digest evidence.
 
-## Personal tailnet services (RC.18 candidate)
+## Personal tailnet services (RC.18)
 
 The independent Tailscale-only opt-in `PORTAL_PERSONAL_SERVICES_ORIGIN` adds **Add service**, personal-card Edit, and **Your services** in account settings. Use the exact canonical origin already used to open this portal, such as the placeholder `http://portal.tailnet.ts.net:8081`, without a path or trailing slash. Absent disables it; empty/invalid values or Headscale fail configuration. This is separate from `PORTAL_EDIT_MODE` and needs no writable mount, metadata file, shared-editor allowlist, database or extra container. RC.17 does not contain it; no TrueNAS enablement or deployment is claimed.
 
@@ -148,7 +148,7 @@ The private catalog belongs to the **same exact login** across devices and lives
 - A role-gated Tailscale Machines navigation action on already SSH-capable machine rows that uses a validated short name/IP plus `property:tailscale-ssh` and remains navigation only because Tailscale exposes no standalone browser-session URL
 - Privacy-safe PWA metadata and icons, `no-store` identity responses, and a lifecycle-only service worker with no fetch interception, offline mode, or authorization-data cache; full install/service-worker behavior requires HTTPS or localhost
 - Truthful plain-language SSH action labels, a short display/search machine name alongside the full canonical target, a safe client-validated custom non-root account input, and a browser-local, per-identity, 10-entry SSH account suggestion list with a clear control
-- Strict optional service metadata applied only after policy matching: v1 name/URL and v2 category/order remain compatible; RC.17 v3 adds finite local icon IDs and optional one-file shared editing; browser-local mode belongs to the RC.18 candidate
+- Strict optional service metadata applied only after policy matching: v1 name/URL and v2 category/order remain compatible; RC.17 v3 adds finite local icon IDs and optional one-file shared editing; browser-local mode belongs to the RC.18
 - One-shot private hostname suggestions from selected-control-plane names plus optional bounded hostname-only stdin, with whole-component ambiguity rejection and manual metadata merge only
 - Explicit opt-in HTTP GET or connect-only TCP backend probes with topology allowlists, direct validated-IP dialing, verified TLS, fixed worker bounds, no credentials/proxies/redirects, and identity-filtered presentation
 - Non-root `FROM scratch` image and Engine-28+-gated loopback-only publication

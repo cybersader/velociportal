@@ -124,9 +124,11 @@ Private-CA and health can combine with either metadata mode. **Never combine rea
 
 For the RC.17 shared editor directory overlay, separately approve/provision a dedicated runtime-owned directory containing reviewed `services.json`; set `VELOCIPORTAL_SERVICE_METADATA_DIRECTORY` to it and both exact-login `PORTAL_EDITORS`/canonical `PORTAL_PUBLIC_ORIGIN` in the provider env. The sole runtime file is `/service-metadata/services.json`; no automatic source-directory creation or permission repair occurs. Do not repurpose protected `950:950` storage. Before first explicit v3 save establish private compatible backup/restore: RC.16 rollback needs v1/v2 metadata and editing disabled. See the [metadata/editor reference](../docs/reference/service-metadata.md) and [TrueNAS prerequisites](../docs/guides/truenas-scale.md#optional-shared-service-editing).
 
-## Browser-local service editing (RC.18 candidate)
+## Browser-local service editing (RC.18)
 
-With an independently verified RC.18 image and separate deployment approval, add the single line `PORTAL_EDIT_MODE: browser` to the existing service's `environment` mapping; existing env-file pass-through also supports `PORTAL_EDIT_MODE="browser"`. There is no new service/network or writable mount. Do not add the editor overlay. No metadata file, allowlist or origin is required; optional readonly metadata supplies defaults, and supplied `PORTAL_EDITORS`/`PORTAL_PUBLIC_ORIGIN` are contradictory even when empty.
+**RC.18 startup warning:** enabling personal services or shared editing causes a production route-registration panic. The RC.19 corrective candidate fixes that conflict; require its successful immutable Release workflow and verified image digest before any separately approved deployment. The owner is leaving the portal off; this publication does not restart, deploy or change TrueNAS.
+
+With an independently verified corrected RC.19-or-newer image and separate deployment approval, add the single line `PORTAL_EDIT_MODE: browser` to the existing service's `environment` mapping; existing env-file pass-through also supports `PORTAL_EDIT_MODE="browser"`. There is no new service/network or writable mount. Do not add the editor overlay. No metadata file, allowlist or origin is required; optional readonly metadata supplies defaults, and supplied `PORTAL_EDITORS`/`PORTAL_PUBLIC_ORIGIN` are contradictory even when empty.
 
 | Mode | Effective behavior |
 |---|---|
@@ -135,11 +137,11 @@ With an independently verified RC.18 image and separate deployment approval, add
 | `browser` | Per-identity+origin local name/link/finite-icon overrides only on current authorized cards |
 | `shared` | Existing exact-login/origin/runtime-owned-directory protections |
 
-Browser blank/reset restores current server defaults including metadata; shared reset changes shared name/link/icon for everyone and preserves category/order. Browser choices never synchronize across devices/browsers and disappear with site-storage clearing; storage failures retain not-saved drafts. No browser edit API calls or shared file/lock are initialized. RC.17 does not include browser mode or `PORTAL_EDIT_MODE`; both belong to the RC.18 candidate. See the [metadata/editor boundary](../docs/reference/service-metadata.md).
+Browser blank/reset restores current server defaults including metadata; shared reset changes shared name/link/icon for everyone and preserves category/order. Browser choices never synchronize across devices/browsers and disappear with site-storage clearing; storage failures retain not-saved drafts. No browser edit API calls or shared file/lock are initialized. RC.17 does not include browser mode or `PORTAL_EDIT_MODE`; both belong to the RC.18. See the [metadata/editor boundary](../docs/reference/service-metadata.md).
 
-## Personal tailnet services (RC.18 candidate)
+## Personal tailnet services (RC.18)
 
-This separate Tailscale-only opt-in uses `PORTAL_PERSONAL_SERVICES_ORIGIN="http://portal.tailnet.ts.net:8081"` in the provider env file, or the equivalent service environment value. That is a **placeholder**, not a deployed endpoint: choose the exact canonical origin already used to open this portal, without a path or trailing slash. Absence disables the feature; empty/invalid values or Headscale fail configuration. RC.17 does not include it. An independently verified RC.18 image and separately approved deployment change are required; nothing here enables it on TrueNAS.
+This separate Tailscale-only opt-in uses `PORTAL_PERSONAL_SERVICES_ORIGIN="http://portal.tailnet.ts.net:8081"` in the provider env file, or the equivalent service environment value. That is a **placeholder**, not a deployed endpoint: choose the exact canonical origin already used to open this portal, without a path or trailing slash. Absence disables the feature; empty/invalid values or Headscale fail configuration. RC.17 does not include it. An independently verified corrected RC.19-or-newer image and separately approved deployment change are required; nothing here enables it on TrueNAS.
 
 It is independent of `PORTAL_EDIT_MODE` and needs no shared-editor allowlist, metadata file, writable mount, database or extra container. Existing NPM discovery, health, networks and `/healthz` remain unchanged. Add service and the account panel's Your services manage a private same-exact-login catalog in bounded process RAM. Active links require a current unique device hostname and positive TCP Grant for the HTTPS URL's ingress port, not legacy ACL evidence. A link is not a reachability or app-login guarantee; never save pairing links/codes.
 
