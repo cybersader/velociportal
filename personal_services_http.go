@@ -35,6 +35,7 @@ type personalServicesHandler struct {
 	cache    *Cache
 	interval time.Duration
 	now      func() time.Time
+	trusted  *net.IPNet
 }
 
 // Mount only when enabled; this never initializes or calls the shared writer.
@@ -45,7 +46,7 @@ func mountPersonalServices(mux *http.ServeMux, store *PersonalServicesStore, cac
 }
 
 func newPersonalServicesHandler(store *PersonalServicesStore, cache *Cache, trusted *net.IPNet, interval time.Duration) http.Handler {
-	h := &personalServicesHandler{store: store, cache: cache, interval: interval, now: time.Now}
+	h := &personalServicesHandler{store: store, cache: cache, interval: interval, now: time.Now, trusted: trusted}
 	protected := IdentityMiddleware(trusted, h)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		setIdentityResponseCacheHeaders(w.Header())
@@ -123,6 +124,10 @@ func (h *personalServicesHandler) ServeHTTP(w http.ResponseWriter, r *http.Reque
 	}
 	identity := IdentityFromContext(r.Context())
 	var state PersonalServicesState
+	var data *CacheData
+	if h.cache != nil {
+		data = h.cache.Get()
+	}
 	var err error
 	if r.Method == http.MethodPost {
 		contentType, single, _ := singleRawHeader(r.Header, "Content-Type")
@@ -141,15 +146,25 @@ func (h *personalServicesHandler) ServeHTTP(w http.ResponseWriter, r *http.Reque
 			return
 		}
 		if !h.store.validCSRF(identity.Login, request.CSRF, h.now()) {
-			fail(http.StatusForbidden, "forbidden")
+			code := "forbidden"
+			if h.store.storage != nil {
+				code = "csrf_expired"
+			}
+			fail(http.StatusForbidden, code)
 			return
 		}
-		state, err = h.store.Mutate(identity.Login, request)
+		state, data, err = h.store.MutateBrowser(r, request, h.cache, h.trusted, h.interval, h.now)
 	} else {
-		state, err = h.store.Read(identity.Login)
+		state, err = h.store.ReadForSnapshot(identity.Login, data, h.interval, h.now)
 	}
 	if err != nil {
 		switch {
+		case errors.Is(err, errPersonalForbidden):
+			fail(http.StatusForbidden, "forbidden")
+		case errors.Is(err, errPersonalCSRF):
+			fail(http.StatusForbidden, "csrf_expired")
+		case errors.Is(err, errPersonalStorageUncertain):
+			fail(http.StatusServiceUnavailable, "uncertain")
 		case errors.Is(err, errPersonalConflict):
 			fail(http.StatusConflict, "conflict")
 		case errors.Is(err, errPersonalCapacity):
@@ -160,10 +175,6 @@ func (h *personalServicesHandler) ServeHTTP(w http.ResponseWriter, r *http.Reque
 			fail(http.StatusServiceUnavailable, "unavailable")
 		}
 		return
-	}
-	var data *CacheData
-	if h.cache != nil {
-		data = h.cache.Get()
 	}
 	_, statuses := ProjectPersonalServices(identity, data, state, h.now(), h.interval)
 	scope := sha256.Sum256([]byte(identity.Login))
@@ -204,7 +215,13 @@ func decodePersonalMutation(w http.ResponseWriter, r *http.Request) (PersonalSer
 	if err != nil || strconv.FormatUint(revision, 10) != request.Revision {
 		return request, errPersonalInvalid
 	}
-	allowed := []string{"action", "generation", "revision", "csrf"}
+	allowed := []string{"action", "generation", "revision", "csrf", "store_id"}
+	if raw, present := fields["store_id"]; present {
+		value, valid := personalJSONString(raw)
+		if !valid || !validPersonalStoreID(value) {
+			return request, errPersonalInvalid
+		}
+	}
 	switch request.Action {
 	case "create", "update":
 		allowed = append(allowed, "name", "url", "icon")

@@ -51,7 +51,7 @@ func TestPersonalConfiguration(t *testing.T) {
 			}
 		})
 	}
-	_, err := loadPersonalServicesConfig(func(string) (string, bool, error) { return "", false, errors.New("lookup unavailable") }, controlPlaneTailscale)
+	_, err := loadPersonalServicesConfig(func(string) (string, bool, error) { return "", false, errors.New("lookup unavailable") }, controlPlaneTailscale, "")
 	if err == nil {
 		t.Fatal("lookup error ignored")
 	}

@@ -206,7 +206,7 @@ func runDoctorCommandWithDependencies(args []string, stdout, stderr io.Writer, d
 		fmt.Fprintln(stdout, headscaleHTTPDoctorWarning)
 	}
 
-	metadata, err := loadServiceMetadataSnapshot(serviceMetadataLoaderForPath(cfg.ServiceMetadataFile))
+	metadata, err := loadServiceMetadataSnapshot(boundServiceMetadataLoaderForPath(cfg.ServiceMetadataFile, cfg.metadataBinding()))
 	if err != nil {
 		stage, cause := snapshotStageFailure(err)
 		fmt.Fprintf(stdout, "FAIL %s: %s\n", stage, sanitizeDoctorError(cause, secrets))
@@ -229,7 +229,7 @@ func runDoctorCommandWithDependencies(args []string, stdout, stderr io.Writer, d
 		fmt.Fprintln(stdout, "PASS service editor: browser-local mode (no shared writer or storage checks)")
 	} else if cfg.ServiceMetadataEditor == nil {
 		fmt.Fprintln(stdout, "PASS service editor: disabled (read-only mode)")
-	} else if inspectServiceMetadataEditorStorage(cfg.ServiceMetadataFile) != nil {
+	} else if inspectBoundServiceMetadataEditorStorage(cfg.ServiceMetadataFile, cfg.metadataBinding()) != nil {
 		fmt.Fprintln(stdout, "FAIL service editor: configured, storage prerequisites unavailable; no probe writes performed")
 		return 1
 	} else {

@@ -10,6 +10,10 @@ import (
 // Read-only prerequisite inspection: no lock creation, sync, temporary file or
 // probe write. Passing does not prove rename/fsync capability or lock availability.
 func inspectServiceMetadataEditorStorage(path string) error {
+	return inspectBoundServiceMetadataEditorStorage(path, serviceMetadataBinding{})
+}
+
+func inspectBoundServiceMetadataEditorStorage(path string, binding serviceMetadataBinding) error {
 	if !filepath.IsAbs(path) || filepath.Clean(path) != path {
 		return errMetadataStorage
 	}
@@ -33,7 +37,7 @@ func inspectServiceMetadataEditorStorage(path string) error {
 		return errMetadataStorage
 	}
 	defer target.Close()
-	if _, err := parseServiceMetadata(data); err != nil {
+	if _, err := parseBoundRuntimeServiceMetadata(data, binding); err != nil {
 		return errMetadataStorage
 	}
 	return nil

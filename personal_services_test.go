@@ -321,6 +321,21 @@ func TestPersonalProjectionRequiresCurrentUniqueNodeAndPositiveTCPGrant(t *testi
 			test.change(identity, data, &state, &now)
 			before := copyPersonalDocument(state.Document)
 			cards, statuses := ProjectPersonalServices(identity, data, state, now, 30*time.Second)
+			evidence, active := newPersonalServiceEvaluator(identity, data, now, 30*time.Second).evaluate(state.Document.Entries[0])
+			if active != test.active {
+				t.Fatal("shared evaluator diverged from existing projection matrix")
+			}
+			if active {
+				if !reflect.DeepEqual(evidence.node, data.Nodes[0]) || evidence.hostname != "server.tailnet.ts.net" || evidence.escapedPath != "/app" {
+					t.Fatal("evidence did not retain exact selected node/destination")
+				}
+				_, port, _ := validatePersonalURL(state.Document.Entries[0].URL)
+				if evidence.port != port {
+					t.Fatal("evidence changed effective ingress port")
+				}
+			} else if !reflect.DeepEqual(evidence, personalServiceEvidence{}) {
+				t.Fatal("inactive entry retained target evidence")
+			}
 			if (len(cards) == 1) != test.active || len(statuses) != 1 || (statuses[0].Status == "active") != test.active {
 				t.Fatalf("cards=%v statuses=%v", cards, statuses)
 			}

@@ -155,6 +155,13 @@ func TestLoadSnapshot_AllOrNothing(t *testing.T) {
 	if snapshot == nil || snapshot.Policy == nil {
 		t.Fatalf("loadSnapshot returned incomplete snapshot: %+v", snapshot)
 	}
+	if snapshot.TailscaleUsersByLogin != nil {
+		t.Fatalf("Headscale snapshot has Tailscale identities: %#v", snapshot.TailscaleUsersByLogin)
+	}
+	providerResult, err := u.hs.Load(context.Background(), nil)
+	if err != nil || providerResult == nil || providerResult.TailscaleUsersByLogin != nil {
+		t.Fatalf("Headscale Load() result = %#v, error = %v; want nil Tailscale identities", providerResult, err)
+	}
 	if len(snapshot.Nodes) != 1 || len(snapshot.ProxyHosts) != 1 || snapshot.UpdatedAt.IsZero() {
 		t.Fatalf("loadSnapshot returned unexpected data: %+v", snapshot)
 	}
@@ -353,6 +360,110 @@ func TestCache_ControlPlaneFailureRetainsExactSnapshot(t *testing.T) {
 	}
 	if got := cache.Get().GrantRoleSelectorsByLogin["alice@example.com"]; !reflect.DeepEqual(got, []string{"autogroup:member"}) {
 		t.Fatalf("recovered role selectors = %v", got)
+	}
+}
+
+func TestCache_TailscaleIdentitiesPublishWithCompleteSnapshot(t *testing.T) {
+	u := newTestUpstreams(t)
+	firstClient, closeFirst := tailscaleClientWithBodies(t,
+		`{"users":[{"id":"user-1","loginName":"alice@example.com","type":"member","role":"owner"}]}`,
+		`{"devices":[{"id":"device-1","user":"user-1","addresses":["100.64.0.1"]}]}`,
+		`{"acls":[{"action":"accept","src":["alice@example.com"],"dst":["100.64.0.1:443"]}]}`)
+	defer closeFirst()
+	cache := NewCache(firstClient, u.npm, time.Hour, discardLogger())
+	if err := cache.refresh(context.Background()); err != nil {
+		t.Fatalf("initial refresh error = %v", err)
+	}
+	first := cache.Get()
+	firstIdentities := map[string]TailscaleUserIdentity{"alice@example.com": {ID: "user-1", DirectMember: true}}
+	if !reflect.DeepEqual(first.TailscaleUsersByLogin, firstIdentities) {
+		t.Fatalf("initial identities = %#v", first.TailscaleUsersByLogin)
+	}
+
+	// Replace the upstream response, never mutate an already-published map.
+	secondClient, closeSecond := tailscaleClientWithBodies(t,
+		`{"users":[{"id":"user-2","loginName":"alice@example.com","type":"shared","role":"admin"}]}`,
+		`{"devices":[{"id":"device-2","user":"user-2","addresses":["100.64.0.2"]}]}`,
+		`{"acls":[]}`)
+	defer closeSecond()
+	cache.controlPlane = secondClient
+	if cache.Get() != first || !reflect.DeepEqual(first.TailscaleUsersByLogin, firstIdentities) {
+		t.Fatal("upstream change affected the published identity before refresh")
+	}
+	u.proxyHostsFail.Store(true)
+	err := cache.refresh(context.Background())
+	var loadErr *snapshotLoadError
+	if !errors.As(err, &loadErr) || loadErr.Stage != snapshotStageNPMProxyHosts {
+		t.Fatalf("failed refresh error = %v, want NPM proxy-host stage", err)
+	}
+	if cache.Get() != first || !reflect.DeepEqual(first.TailscaleUsersByLogin, firstIdentities) || len(first.Policy.ACLs) != 1 || first.Nodes[0].ID != "device-1" {
+		t.Fatal("NPM failure published partial identity, policy or device evidence")
+	}
+
+	u.proxyHostsFail.Store(false)
+	if err := cache.refresh(context.Background()); err != nil {
+		t.Fatalf("recovery refresh error = %v", err)
+	}
+	second := cache.Get()
+	secondIdentities := map[string]TailscaleUserIdentity{"alice@example.com": {ID: "user-2", DirectMember: false}}
+	if second == first || !reflect.DeepEqual(second.TailscaleUsersByLogin, secondIdentities) || len(second.Policy.ACLs) != 0 || second.Nodes[0].ID != "device-2" || len(second.GrantRoleSelectorsByLogin) != 0 {
+		t.Fatalf("recovery did not replace identity, policy, roles and devices together: %#v", second)
+	}
+	if !reflect.DeepEqual(first.TailscaleUsersByLogin, firstIdentities) || len(first.Policy.ACLs) != 1 || first.Nodes[0].ID != "device-1" {
+		t.Fatal("successful refresh mutated the previous complete snapshot")
+	}
+
+	emptyClient, closeEmpty := tailscaleClientWithBodies(t, `{"users":[]}`, `{"devices":[]}`, "")
+	defer closeEmpty()
+	cache.controlPlane = emptyClient
+	if err := cache.refresh(context.Background()); err != nil {
+		t.Fatalf("empty-users refresh error = %v", err)
+	}
+	if got := cache.Get(); got == second || got.TailscaleUsersByLogin == nil || len(got.TailscaleUsersByLogin) != 0 {
+		t.Fatalf("empty-users refresh did not replace identity mapping: %#v", got)
+	}
+	if !reflect.DeepEqual(second.TailscaleUsersByLogin, secondIdentities) {
+		t.Fatal("empty-users refresh mutated the previous identity mapping")
+	}
+}
+
+func TestCache_InvalidTailscaleUsersNeverPublishPartialEvidence(t *testing.T) {
+	const valid = `{"id":"user-1","loginName":"alice@example.com","type":"member","role":"owner"}`
+	for name, users := range map[string]string{
+		"padded login":        `{"users":[` + valid + `,{"id":"user-2","loginName":" bob@example.com ","type":"member","role":"member"}]}`,
+		"malformed id":        `{"users":[` + valid + `,{"id":{},"loginName":"bob@example.com","type":"member","role":"member"}]}`,
+		"duplicate id":        `{"users":[` + valid + `,{"id":" user-1 ","loginName":"bob@example.com","type":"member","role":"member"}]}`,
+		"duplicate login":     `{"users":[` + valid + `,{"id":"user-2","loginName":"alice@example.com","type":"shared","role":"admin"}]}`,
+		"ambiguous reference": `{"users":[` + valid + `,{"id":"alice@example.com","loginName":"bob@example.com","type":"member","role":"member"}]}`,
+		"partial response":    `{"users":[` + valid + `],"hasMore":true}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			u := newTestUpstreams(t)
+			fixture := newTailscaleFixture(t)
+			cache := NewCache(fixture.client, u.npm, time.Hour, discardLogger())
+			if err := cache.refresh(context.Background()); err != nil {
+				t.Fatalf("initial refresh error = %v", err)
+			}
+			good := cache.Get()
+			badClient, closeBad := tailscaleClientWithBodies(t, users, `{"devices":[]}`, `{"acls":[]}`)
+			defer closeBad()
+			cache.controlPlane = badClient
+			cold := NewCache(badClient, u.npm, time.Hour, discardLogger())
+			for _, candidate := range []*Cache{cache, cold} {
+				err := candidate.refresh(context.Background())
+				var loadErr *snapshotLoadError
+				if !errors.As(err, &loadErr) || loadErr.Stage != snapshotStageTailscaleUsers {
+					t.Fatalf("refresh error = %v, want Users stage", err)
+				}
+			}
+			if cold.Get() != nil || cache.Get() != good || len(good.Policy.ACLs) != 1 {
+				t.Fatal("invalid users replaced a complete snapshot or populated a cold cache")
+			}
+			want := map[string]TailscaleUserIdentity{"alice@example.com": {ID: "user-1", DirectMember: true}}
+			if !reflect.DeepEqual(cache.Get().TailscaleUsersByLogin, want) {
+				t.Fatalf("retained identity mapping = %#v, want %#v", cache.Get().TailscaleUsersByLogin, want)
+			}
+		})
 	}
 }
 

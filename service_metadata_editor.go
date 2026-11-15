@@ -46,6 +46,9 @@ type ServiceMetadataEditor struct {
 	disabled  bool
 	// failpoint is test-only and runs only against temporary fixtures.
 	failpoint func(string) error
+	// rename is a narrow syscall-result fixture seam; nil uses Renameat.
+	// Unlike the pre-syscall failpoint, any returned error is uncertain.
+	rename func(int, string, int, string) error
 }
 
 func newServiceMetadataEditor(path string, config *ServiceMetadataEditorConfig) (*ServiceMetadataEditor, error) {
@@ -79,7 +82,7 @@ func newServiceMetadataEditor(path string, config *ServiceMetadataEditorConfig) 
 	if err != nil {
 		return nil, err
 	}
-	metadata, err := parseServiceMetadata(data)
+	metadata, err := parseBoundRuntimeServiceMetadata(data, e.config.Binding)
 	if err != nil {
 		_ = file.Close()
 		return nil, errors.New("metadata editor requires valid existing service metadata")
@@ -112,7 +115,11 @@ func newServiceMetadataEditor(path string, config *ServiceMetadataEditorConfig) 
 	if err != nil {
 		return nil, err
 	}
-	metadata, err = parseServiceMetadata(data)
+	metadata, err = parseBoundRuntimeServiceMetadata(data, e.config.Binding)
+	if err != nil {
+		_ = file.Close()
+		return nil, errMetadataStorage
+	}
 	syncErr := file.Sync()
 	closeErr = file.Close()
 	if err != nil || syncErr != nil || closeErr != nil || e.directory.Sync() != nil {
@@ -264,9 +271,20 @@ func mutateServiceMetadata(document serviceMetadataDocument, id int, name, link,
 			return serviceMetadataDocument{}, errors.New("invalid icon")
 		}
 	}
-	updated := serviceMetadataDocument{Version: serviceMetadataVersionV3, Services: make([]serviceMetadataEntry, 0, len(document.Services)+1)}
+	if id <= 0 {
+		return serviceMetadataDocument{}, errors.New("invalid metadata target")
+	}
+	if err := validateServiceMetadataDocumentModel(document); err != nil {
+		return serviceMetadataDocument{}, err
+	}
+	updated := cloneServiceMetadataDocument(document)
+	if updated.Version != serviceMetadataVersionV4 {
+		updated.Version = serviceMetadataVersionV3
+	}
+	entries := updated.Services
+	updated.Services = make([]serviceMetadataEntry, 0, len(entries)+1)
 	selected := serviceMetadataEntry{ProxyHostID: id}
-	for _, entry := range document.Services {
+	for _, entry := range entries {
 		if entry.ProxyHostID == id {
 			selected = entry
 		} else {
@@ -290,29 +308,72 @@ func mutateServiceMetadata(document serviceMetadataDocument, id int, name, link,
 		updated.Services = append(updated.Services, selected)
 	}
 	sort.Slice(updated.Services, func(i, j int) bool { return updated.Services[i].ProxyHostID < updated.Services[j].ProxyHostID })
+	if _, err := serializeServiceMetadataDocument(updated); err != nil {
+		return serviceMetadataDocument{}, err
+	}
 	return updated, nil
 }
+
+type serviceMetadataWriteKind uint8
+
+const (
+	serviceMetadataWriteNPM serviceMetadataWriteKind = iota + 1
+	serviceMetadataWriteIcon
+)
 
 // commit runs under the writer mutex. finalCheck uses only the current in-memory
 // complete authorization snapshot, immediately before rename. No cache lock or
 // upstream call participates, and no transactional revocation guarantee exists.
-func (e *ServiceMetadataEditor) commit(expected string, document serviceMetadataDocument, finalCheck func() error) error {
+func (e *ServiceMetadataEditor) commit(expected string, document serviceMetadataDocument, kind serviceMetadataWriteKind, finalCheck func() error) error {
+	if kind != serviceMetadataWriteNPM && kind != serviceMetadataWriteIcon {
+		return errMetadataStorage
+	}
+	if e == nil || e.config == nil {
+		return errMetadataStorage
+	}
 	if e.disabled {
 		return errMetadataUncertain
 	}
+	if finalCheck == nil {
+		return errMetadataStorage
+	}
 	old := e.view.Load()
+	if old == nil || old.metadata == nil {
+		return errMetadataStorage
+	}
 	if !hmac.Equal([]byte(expected), []byte(old.revision)) {
 		return errMetadataConflict
 	}
+	prior := old.metadata.document
+	if validateServiceMetadataDocumentModel(prior) != nil || validateServiceMetadataBinding(prior, e.config.Binding) != nil {
+		return errMetadataStorage
+	}
+	// No downgrade or rebind. Ordinary full-dialog saves never opt legacy files
+	// into v4; only an explicit icon operation can promote under a valid binding.
+	if prior.Version == serviceMetadataVersionV4 {
+		if document.Version != serviceMetadataVersionV4 || document.Namespace != prior.Namespace || document.ControlPlane != prior.ControlPlane {
+			return errMetadataStorage
+		}
+	} else if kind == serviceMetadataWriteNPM {
+		if document.Version != serviceMetadataVersionV3 || document.Namespace != prior.Namespace || document.ControlPlane != prior.ControlPlane {
+			return errMetadataStorage
+		}
+	}
+	if kind == serviceMetadataWriteIcon && (!serviceMetadataV4RuntimeEnabled || document.Version != serviceMetadataVersionV4 || validateServiceMetadataBinding(document, e.config.Binding) != nil) {
+		return errMetadataStorage
+	}
+	contents, err := serializeServiceMetadataDocument(document)
+	if err != nil {
+		return err
+	}
+	// A writer must never publish a version or binding its configured readers
+	// cannot load, even if a future operation supplies a mistaken candidate.
+	metadata, err := parseBoundRuntimeServiceMetadata(contents, e.config.Binding)
+	if err != nil {
+		return err
+	}
+	// All candidate validation is complete before inspecting or changing disk.
 	if err := e.checkDisk(old); err != nil {
-		return err
-	}
-	contents, err := serializeServiceMetadataDocumentV3(document)
-	if err != nil {
-		return err
-	}
-	metadata, err := parseServiceMetadata(contents)
-	if err != nil {
 		return err
 	}
 	hit := func(stage string) error {
@@ -365,14 +426,23 @@ func (e *ServiceMetadataEditor) commit(expected string, document serviceMetadata
 	}
 	// Use held directory descriptor so replacement stays adjacent even if a path
 	// is interfered with; checkDisk also verifies the held directory/lock identity.
-	if err := unix.Renameat(int(e.directory.Fd()), filepath.Base(temporaryPath), int(e.directory.Fd()), e.base); err != nil {
-		return errMetadataStorage
+	rename := e.rename
+	if rename == nil {
+		rename = unix.Renameat
+	}
+	if err := rename(int(e.directory.Fd()), filepath.Base(temporaryPath), int(e.directory.Fd()), e.base); err != nil {
+		e.disabled = true
+		return errMetadataUncertain
 	}
 	if err := hit("dirsync"); err != nil {
 		e.disabled = true
 		return errMetadataUncertain
 	}
 	if err := e.directory.Sync(); err != nil {
+		e.disabled = true
+		return errMetadataUncertain
+	}
+	if err := hit("publish"); err != nil {
 		e.disabled = true
 		return errMetadataUncertain
 	}

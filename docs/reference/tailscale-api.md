@@ -98,6 +98,14 @@ Device owner references may identify a user by API ID or exact login, but that s
 
 The full Devices response may also contain `sshEnabled` and `blocksIncomingConnections`. Velociportal retains only a sparse true-only device-ID map when both values are exact JSON booleans, SSH is enabled, and incoming connections are not blocked. A machine row now requires its exact ID in this map in addition to supported SSH-policy and Grant TCP/22 evidence. Missing, null, malformed, wrong-type, false, blocked, or mismatched values fail closed and remove the machine instead of offering a command to a phone or another non-SSH device. This is current device self-report that narrows the visibility projection, not posture evaluation, authorization, health, reachability, or proof that SSH will succeed. Doctor consumes only the resulting coarse machine count and never exposes capability values. Other profile and posture data are not retained as snapshot state.
 
+## RC.20 candidate presentation and durable-owner projections
+
+The current source additionally retains the already-fetched Users API exact login → validated user ID/direct-member mapping for durable personal ownership. Fresh complete evidence must match persisted namespace/login/user ID on every private read/render/write; a reused login or changed ID cannot adopt an old collection. Device-owner mapping remains separate. No new scope or API endpoint is introduced.
+
+Shared Machine/application artwork uses a separate optional typed presentation-ID projection from actual device `id` versus `nodeId` provenance. It does not reinterpret the legacy node ID or broaden visibility. Supported canonical IDs persist across rename; replacement or an ID-kind change does not inherit by hostname/IP. Unsupported/ambiguous IDs omit the stable artwork target, not the otherwise-authorized card. Application destination digests include source binding, typed ID, effective HTTPS port and canonical path, not raw URLs in shared metadata and not a secrecy guarantee.
+
+These are **RC.20 candidate features, absent from immutable RC.18/19**, not a new provider support claim. See [metadata v4 and durable ownership](service-metadata.md#shared-icons-and-metadata-v4-unreleased-source) and [MCP client/live gates](mcp.md).
+
 ## Pagination and completeness
 
 The adapter requires complete users and devices responses. It fails the refresh when response bodies or headers indicate pagination, continuation, truncation, or a partial result. It does not publish the first page as though it were complete.

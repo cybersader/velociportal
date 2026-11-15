@@ -13,12 +13,20 @@ import (
 func serverMuxFixture(t *testing.T, mode serviceEditMode, personalEnabled bool) (*http.ServeMux, *Cache) {
 	t.Helper()
 	_, trusted, _ := net.ParseCIDR("127.0.0.1/32")
-	cfg := &Config{TrustedProxyCIDR: trusted, PollInterval: 30 * time.Second, PortalLogoDefaultVisible: true, PortalEditMode: mode}
-	cache := newTestCache(standardTestData())
+	provider := controlPlaneHeadscale
+	if personalEnabled {
+		provider = controlPlaneTailscale
+	}
+	cfg := &Config{ControlPlane: provider, TrustedProxyCIDR: trusted, PollInterval: 30 * time.Second, PortalLogoDefaultVisible: true, PortalEditMode: mode}
+	data := *standardTestData()
+	data.ControlPlane.Provider = provider
+	cache := newTestCache(&data)
 	var editor *ServiceMetadataEditor
 	if mode == serviceEditShared {
 		var err error
-		editor, err = newServiceMetadataEditor(editorTestFile(t, editorTestDocument), editorTestConfig())
+		editorConfig := editorTestConfig()
+		editorConfig.Binding = cfg.metadataBinding()
+		editor, err = newServiceMetadataEditor(editorTestFile(t, editorTestDocument), editorConfig)
 		if err != nil {
 			t.Fatal(err)
 		}

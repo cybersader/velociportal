@@ -23,6 +23,7 @@ Files:
 - `compose.private-ca.yaml` — optional bind-mount overlay for the public root certificate of a private certificate authority.
 - `compose.service-metadata.yaml` — optional read-only presentation-metadata overlay with a fixed in-container path and supplemental read group.
 - `compose.service-editor.yaml` — RC.17 alternative runtime-owned writable directory mount for the same one metadata file; never combine both metadata modes.
+- `compose.personal-services.yaml` — **RC.20 candidate; compatible published image required**, independent preexisting private directory at `/personal-services`; Tailscale + personal origin + namespace + valid snapshot required, not available in RC.18/19.
 - `service-metadata.example.json` — strict version-2 name/URL/category/order example keyed by an existing NPM proxy-host ID; version 1 remains compatible for name/URL-only files.
 - `compose.service-health.yaml` — optional read-only explicit health-probe overlay with a fixed in-container path and supplemental read group.
 - `service-health.example.json` — strict version-1 health example with bounded scheduling and topology allowlists.
@@ -126,7 +127,7 @@ For the RC.17 shared editor directory overlay, separately approve/provision a de
 
 ## Browser-local service editing (RC.18)
 
-**RC.18 startup warning:** enabling personal services or shared editing causes a production route-registration panic. The RC.19 corrective candidate fixes that conflict; require its successful immutable Release workflow and verified image digest before any separately approved deployment. The owner is leaving the portal off; this publication does not restart, deploy or change TrueNAS.
+**Published/source boundary:** RC.18's optional-API startup panic is corrected in published immutable RC.19 at tagged commit `a7fd76d807c6a5d608a09634409c1b9cf322edf7`. Neither image contains the new MCP/durable/v4 source features. This documentation does not establish current deployment state or authorize restart/enablement. Require a verified compatible immutable image and separate deployment approval.
 
 With an independently verified corrected RC.19-or-newer image and separate deployment approval, add the single line `PORTAL_EDIT_MODE: browser` to the existing service's `environment` mapping; existing env-file pass-through also supports `PORTAL_EDIT_MODE="browser"`. There is no new service/network or writable mount. Do not add the editor overlay. No metadata file, allowlist or origin is required; optional readonly metadata supplies defaults, and supplied `PORTAL_EDITORS`/`PORTAL_PUBLIC_ORIGIN` are contradictory even when empty.
 
@@ -143,9 +144,28 @@ Browser blank/reset restores current server defaults including metadata; shared 
 
 This separate Tailscale-only opt-in uses `PORTAL_PERSONAL_SERVICES_ORIGIN="http://portal.tailnet.ts.net:8081"` in the provider env file, or the equivalent service environment value. That is a **placeholder**, not a deployed endpoint: choose the exact canonical origin already used to open this portal, without a path or trailing slash. Absence disables the feature; empty/invalid values or Headscale fail configuration. RC.17 does not include it. An independently verified corrected RC.19-or-newer image and separately approved deployment change are required; nothing here enables it on TrueNAS.
 
-It is independent of `PORTAL_EDIT_MODE` and needs no shared-editor allowlist, metadata file, writable mount, database or extra container. Existing NPM discovery, health, networks and `/healthz` remain unchanged. Add service and the account panel's Your services manage a private same-exact-login catalog in bounded process RAM. Active links require a current unique device hostname and positive TCP Grant for the HTTPS URL's ingress port, not legacy ACL evidence. A link is not a reachability or app-login guarantee; never save pairing links/codes.
+With `PORTAL_PERSONAL_SERVICES_FILE` absent, it is independent of `PORTAL_EDIT_MODE` and needs no shared-editor allowlist, metadata file, writable mount, database or extra container. Existing NPM discovery, health, networks and `/healthz` remain unchanged. Add service and the account panel's Your services manage a private same-exact-login catalog in bounded process RAM. Active links require a current unique device hostname and positive TCP Grant for the HTTPS URL's ingress port, not legacy ACL evidence. A link is not a reachability or app-login guarantee; never save pairing links/codes.
 
 The latest server catalog is available to the same login's devices only during the process lifetime. Restart/redeploy loses it. A browser can explicitly restore its retained, potentially stale authored copy; there is no automatic overwrite/merge, offline queue or durable backup. Initialized-empty deletion remains authoritative. See [bounds, filtering and recovery](../docs/reference/service-metadata.md#personal-tailnet-services-unreleased); native-browser and real two-device acceptance remain pending.
+
+## RC.20 candidate private storage and MCP template
+
+The base remains mount-free and every active value in the existing env examples is unchanged. New origin/file/namespace settings are **commented opt-ins**. The historical `stack.env.example` image is not a feature image; RC.18/19 also lack MCP/durable/v4. Do not uncomment those settings until a future published immutable digest containing them is available and separately approved. Never manufacture a next-version tag or build on the NAS as a substitute.
+
+`compose.personal-services.yaml` adds **only** a writable directory bind from required `VELOCIPORTAL_PERSONAL_SERVICES_DIRECTORY` to `/personal-services`, with `create_host_path: false`, and sets `/personal-services/personal.json` as the private file. There is no named volume, bootstrap, source creation, permission repair, service/network/port change or automatic migration. Use a separately approved runtime-owned exact 0700 directory with a preexisting exact 0600 valid private snapshot. Actual production UID/GID remains `65534:65534`; namespace and random stable StoreID must match the reviewed initial document, not a copied demo identity.
+
+The provider runtime env supplies quoted `PORTAL_PERSONAL_SERVICES_ORIGIN`, `PORTAL_STATE_NAMESPACE` and optional `PORTAL_MCP_ORIGIN`. Raw env-file forwarding preserves the quotes for the application decoder. MCP origin equals all enabled shared/personal origins; use the existing Serve origin, no new network/HTTPS setup or credentials. Leave the file absent to retain browser RAM. Headscale disallows personal origin/file and must not select this private overlay, but may use NPM-only bound v4/shared MCP.
+
+| Permitted combinations | Target contract |
+|---|---|
+| Private only | `/personal-services/personal.json`, no shared writer |
+| Private + readonly metadata | Private directory plus readonly `/velociportal-services.json` |
+| Private + shared-editor directory | Separate `/personal-services` and `/service-metadata` directories; shared file remains `/service-metadata/services.json` |
+| Any above + optional CA and/or health | Existing distinct readonly CA/health targets unchanged |
+
+**Readonly metadata and shared-editor directory overlays are mutually exclusive in every combination.** Raw Compose does not enforce this; never accept two metadata authorities merely because it renders. Do not overlap targets, share the private/shared host directory, alias files/locks, or nest a parent mount over another target. No source host path is selected by this template. Existing protected `950:950`/`0750`/`0640` storage remains untouched; supplemental read groups are not private write ownership.
+
+See the [exact TrueNAS checkpoint and include example](../docs/guides/truenas-scale.md#unreleased-source-private-storage-and-mcp), [validated synthetic initial schemas and offline recovery](../docs/reference/service-metadata.md#durable-personal-storage-unreleased-source), and [nine tools/client gates](../docs/reference/mcp.md). Before live provisioning show the owner exact paths, runtime UID/GID/modes/ACLs, backups and compatible downgrade plan. Private and shared commits are independent; no cross-file atomicity, automatic replay, guaranteed crash recovery or image-only rollback. Browser copies are not backups. Bounded native Claude localhost calls passed; native Codex/T3, genuine Serve/two-device identity, restart with all browsers offline and the full preview matrix remain unverified. The owner waived these as RC.20 prepublication blockers, not as live acceptance or deployment prerequisites.
 
 ## Portal appearance, mobile navigation, and Tailscale Machines action
 

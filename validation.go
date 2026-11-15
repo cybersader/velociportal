@@ -302,7 +302,7 @@ func runValidationCommandWithDependencies(args []string, stdout, stderr io.Write
 		dependencies.loadSnapshot = defaultValidationDependencies().loadSnapshot
 	}
 
-	metadata, err := loadServiceMetadataSnapshot(serviceMetadataLoaderForPath(cfg.ServiceMetadataFile))
+	metadata, err := loadServiceMetadataSnapshot(boundServiceMetadataLoaderForPath(cfg.ServiceMetadataFile, cfg.metadataBinding()))
 	if err != nil {
 		fmt.Fprintf(stderr, "velociportal: validate: %s\n", sanitizeValidationRuntimeError(err, privacy, secrets))
 		return 1

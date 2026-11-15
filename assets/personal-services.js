@@ -9,6 +9,9 @@
   var initial = root(), scope = initial && initial.getAttribute("data-identity-scope");
   if (!/^[a-f0-9]{64}$/.test(scope || "") || initial.getAttribute("data-personal-enabled") !== "true") return;
   var mode = initial.getAttribute("data-service-edit-mode");
+  var durable = initial.getAttribute("data-personal-durable") === "true";
+  var ownerScope = initial.getAttribute("data-personal-owner-scope");
+  if (durable && !/^[a-f0-9]{64}$/.test(ownerScope || "")) return;
   var key = "velociportal-personal-services-v1:" + window.location.origin + ":" + scope;
   var form = byID("personal-editor-form"), fields = byID("personal-editor-fields");
   var name = byID("personal-editor-name"), url = byID("personal-editor-url"), icon = byID("personal-editor-icon");
@@ -23,6 +26,9 @@
   var state = null, backup = null, storageProblem = "", invalid = false, posting = false, loading = false;
   var draft = null, epoch = 0, controller = null, retired = new Set(), loadingHint = "";
   var recoveryChoice = false, tokenReceivedAt = null, tokenReceivedTick = null;
+  // At most four validated displaced copies (each <=64 KiB authored data), kept
+  // only in this tab for review. Never a second persistent store or request CAS.
+  var displaced = [], reviewOverflow = false;
   function monotonicNow() { return window.performance && typeof window.performance.now === "function" ? window.performance.now() : Date.now(); }
   function tokenNeedsRefresh() {
     var wallAge = Date.now() - tokenReceivedAt, tickAge = monotonicNow() - tokenReceivedTick;
@@ -50,7 +56,7 @@
     return JSON.stringify(normalized(a)) === JSON.stringify(normalized(b));
   }
   function confirms(result, body, previous) {
-    if (result.generation !== body.generation || result.revision !== nextRevision(body.revision) || !result.initialized) return false;
+    if ((result.store_id || "") !== (body.store_id || "") || result.generation !== body.generation || result.revision !== nextRevision(body.revision) || !result.initialized) return false;
     if (body.action === "restore") return sameDocument(result.document, body.document);
     var entries = previous.entries.map(function (e) { return Object.assign({}, e); });
     if (body.action === "create") {
@@ -95,10 +101,15 @@
     }) && documentBytes(value) <= 65536;
   }
   function validBackup(value) {
-    return keys(value, ["version", "generation", "revision", "document"]) && value.version === 1 && generation(value.generation) && revision(value.revision) && value.revision !== "0" && validDocument(value.document);
+    var fields = ["version", "generation", "revision", "document"];
+    if (value && value.version === 2) fields.push("store_id");
+    return keys(value, fields) && (value.version === 1 || value.version === 2 && generation(value.store_id)) && generation(value.generation) && revision(value.revision) && value.revision !== "0" && validDocument(value.document);
   }
   function validState(value) {
-    if (!keys(value, ["generation", "revision", "initialized", "document", "csrf", "identity_scope", "icons", "projection"]) || !generation(value.generation) || !revision(value.revision) || typeof value.initialized !== "boolean" || !validDocument(value.document) || value.identity_scope !== scope || typeof value.csrf !== "string" || !/^[0-9]{1,20}\.[a-f0-9]{64}$/.test(value.csrf)) return false;
+    var fields = ["generation", "revision", "initialized", "document", "csrf", "identity_scope", "icons", "projection"];
+    if (durable) fields.push("durable", "store_id");
+    if (durable && (!value || value.durable !== true || !generation(value.store_id))) return false;
+    if (!keys(value, fields) || !generation(value.generation) || !revision(value.revision) || typeof value.initialized !== "boolean" || !validDocument(value.document) || value.identity_scope !== scope || typeof value.csrf !== "string" || !/^[0-9]{1,20}\.[a-f0-9]{64}$/.test(value.csrf)) return false;
     if (value.initialized !== (value.revision !== "0") || !value.initialized && value.document.entries.length) return false;
     if (!Array.isArray(value.icons) || value.icons.length !== icons.size - 1 || new Set(value.icons).size !== value.icons.length || !value.icons.every(function (id) { return id !== "" && icons.has(id); })) return false;
     if (!Array.isArray(value.projection) || value.projection.length !== value.document.entries.length) return false;
@@ -111,11 +122,27 @@
     if (!validBackup(value)) throw new Error("invalid_copy");
     return value;
   }
-  function authoredCopy(value) { return { version: 1, generation: value.generation, revision: value.revision, document: value.document }; }
+  function authoredCopy(value) {
+    var copy = { version: value.durable ? 2 : 1, generation: value.generation, revision: value.revision, document: value.document };
+    if (value.durable) copy.store_id = value.store_id;
+    return copy;
+  }
+  function sameBase(a, b) { return a && b && a.generation === b.generation && a.revision === b.revision && (a.store_id || "") === (b.store_id || ""); }
   function observeBackup(value) {
+    // A durable browser copy is only a review candidate, never a source of
+    // monotonic authority. Equal-revision divergence and rollback need review.
+    if (durable) {
+      if (value && !sameCopy(value, backup)) {
+        var previous = backup; backup = value;
+        // API completions can observe disk before its queued storage event.
+        // Preserve conflicting evidence at every replacement, not just events.
+        retainDisplaced(previous);
+      }
+      return;
+    }
     // Disk selects the recovery generation. Within that generation, never forget
     // a higher validated copy merely because a delayed writer regressed disk.
-    if (value && (!backup || value.generation !== backup.generation || compare(value.revision, backup.revision) > 0)) backup = value;
+    if (value && (!backup || value.version !== backup.version || value.store_id !== backup.store_id || value.generation !== backup.generation || compare(value.revision, backup.revision) > 0)) backup = value;
   }
   function readBackup() {
     try {
@@ -126,14 +153,31 @@
       return null;
     }
   }
-  function needsChoice() { return !!(state && backup && backup.generation !== state.generation); }
-  function remember(explicit) {
+  function copyNeedsChoice(copy) {
+    if (!state || !copy) return false;
+    if (!durable) return copy.version !== 1 || copy.generation !== state.generation;
+    return copy.version !== 2 || copy.store_id !== state.store_id || compare(copy.revision, state.revision) > 0 || !sameDocument(copy.document, state.document);
+  }
+  function sameCopy(a, b) { return a && b && a.version === b.version && sameBase(a, b) && sameDocument(a.document, b.document); }
+  function retainDisplaced(value) {
+    if (!value || sameCopy(value, backup) || state && !copyNeedsChoice(value) || displaced.some(function (copy) { return sameCopy(copy, value); })) return;
+    if (displaced.length < 4) displaced.push(value);
+    else reviewOverflow = true; // Keep existing evidence; report rather than evict silently.
+  }
+  function needsChoice() { return copyNeedsChoice(backup) || !!(durable && state && (displaced.length || reviewOverflow)); }
+  function choiceBlocksEditing() { return !durable && needsChoice(); }
+  function canImport() { return copyNeedsChoice(backup) && !state.initialized && (!durable || backup.version === 1); }
+  function remember(explicit, previous) {
     // This check is not a cross-tab transaction. The storage listener below repairs
     // interleaved same-generation regressions using retained/event evidence.
     var disk = readBackup();
     observeBackup(disk);
-    if (!explicit && needsChoice()) return false;
-    if (backup && backup.generation === state.generation && compare(backup.revision, state.revision) > 0) return false;
+    // Only a confirmed progression from the exact previously observed copy can
+    // replace a differing durable backup without consent. Restart, rollback,
+    // legacy import and different stores never imply that one copy is newer.
+    var progression = durable && previous && sameBase(backup, previous) && sameDocument(backup.document, previous.document) && previous.store_id === state.store_id && previous.generation === state.generation && compare(state.revision, previous.revision) > 0;
+    if (!explicit && copyNeedsChoice(backup) && !progression) return false;
+    if (!durable && backup && backup.generation === state.generation && compare(backup.revision, state.revision) > 0) return false;
     if (!state.initialized && !explicit) return false; // absence NEVER erases a copy
     try {
       if (!state.initialized) { window.localStorage.removeItem(key); backup = null; }
@@ -145,10 +189,20 @@
     } catch (_) { storageProblem = "Saved on server; this browser’s recovery copy is unavailable."; return false; }
   }
   function compatible(node) {
-    return !invalid && node && node.getAttribute("data-personal-enabled") === "true" && node.getAttribute("data-identity-scope") === scope && node.getAttribute("data-service-edit-mode") === mode;
+    return !invalid && node && node.getAttribute("data-personal-enabled") === "true" && node.getAttribute("data-identity-scope") === scope && node.getAttribute("data-service-edit-mode") === mode && (node.getAttribute("data-personal-durable") === "true") === durable && (!durable || node.getAttribute("data-personal-owner-scope") === ownerScope);
+  }
+  function unavailable(node) { return durable && node && node.getAttribute("data-personal-unavailable") === "true"; }
+  function suspend() {
+    state = null; tokenReceivedAt = null; list.replaceChildren(); recovery.hidden = true;
+    var reviewList = byID("personal-recovery-list"); if (reviewList) reviewList.replaceChildren();
+    byID("personal-recovery-help").textContent = "";
+    if (root()) root().querySelectorAll("[data-personal-service]").forEach(function (card) { card.remove(); });
+    blockDraft("Current services are unavailable. Your draft is kept; do not repeat a save. Reload for review when available.");
+    summary.textContent = "Current services are unavailable; local drafts and recovery copies are retained, not confirmed.";
+    refresh.hidden = false; controls();
   }
   function controls() {
-    var ready = !!(state && !invalid && !posting && !loading && !needsChoice() && !recoveryChoice);
+    var ready = !!(state && !invalid && !posting && !loading && !choiceBlocksEditing() && !recoveryChoice);
     fields.disabled = !ready || !draft || draft.blocked;
     save.disabled = fields.disabled; remove.disabled = fields.disabled;
     byID("personal-editor-cancel").disabled = posting;
@@ -158,7 +212,13 @@
   function message(text, error) { status.textContent = text; status.setAttribute("data-error", String(!!error)); }
   function values() { return { name: name.value, url: url.value, icon: icon.value }; }
   function dirty() { return draft && draft.baseline !== JSON.stringify(values()); }
-  function preview() { byID("personal-editor-preview").src = icons.get(icon.value) || icons.get(""); }
+  function preview() {
+    var image = byID("personal-editor-preview");
+    // Empty is authored inheritance, not an assertion about the current default.
+    // Never copy resolved card artwork into the form, request or recovery data.
+    image.hidden = icon.value === "";
+    image.src = icons.get(icon.value) || icons.get("");
+  }
   function close(force) {
     if (!force && posting) return;
     if (!force && dirty() && !window.confirm("Discard your unsaved service changes?")) return;
@@ -169,9 +229,10 @@
     }
   }
   function invalidate() {
-    invalid = true; epoch++; if (controller) controller.abort(); state = null; backup = null; posting = false; loading = false;
+    invalid = true; epoch++; if (controller) controller.abort(); state = null; backup = null; displaced = []; reviewOverflow = false; posting = false; loading = false;
     close(true); list.replaceChildren(); manager.hidden = true; summary.textContent = ""; byID("personal-recovery-help").textContent = "";
     if (root()) root().querySelectorAll("[data-personal-service]").forEach(function (card) { card.remove(); });
+    var reviewList = byID("personal-recovery-list"); if (reviewList) reviewList.replaceChildren();
     notice.textContent = "Personal services are no longer available. Refresh the portal before continuing.";
     var search = byID("portal-search-input"); if (search) search.value = "";
     if (window.__velociportalApplyPortalSearch) window.__velociportalApplyPortalSearch();
@@ -195,10 +256,24 @@
       });
     }
     var choice = needsChoice();
-    recovery.hidden = !choice; restore.hidden = !choice || state.initialized; adopt.hidden = !choice;
-    byID("personal-recovery-help").textContent = choice ? "The server restarted. This browser has a copy of " + backup.document.entries.length + " services from before the restart. We cannot tell whether it is the newest. " + (state.initialized ? "A current server collection already exists; restoring over it is not allowed." : "Restore it only if you want to use this copy.") : "";
-    adopt.textContent = state && state.initialized ? "Use current server copy" : "Start without this copy";
-    summary.textContent = storageProblem || (choice ? "Choose which copy to keep before editing." : state ? (state.document.entries.length ? "Personal to your account. Edit includes delete." : "No personal services yet. Use Add service to save a tailnet launch link.") : "Loading your services…");
+    recovery.hidden = !choice; restore.hidden = !canImport(); adopt.hidden = !choice;
+    var reviewList = byID("personal-recovery-list");
+    if (reviewList) {
+      reviewList.replaceChildren();
+      var copies = choice ? (copyNeedsChoice(backup) ? [backup] : []).concat(durable ? displaced.filter(function (copy) { return !sameCopy(copy, backup); }) : []) : [];
+      copies.forEach(function (copy) {
+        if (!copy.document.entries.length) {
+          var empty = document.createElement("li"); empty.textContent = "Initialized-empty browser copy (no services)."; reviewList.appendChild(empty);
+        }
+        copy.document.entries.forEach(function (entry) {
+          var row = document.createElement("li"); row.textContent = entry.name + " — " + entry.url; reviewList.appendChild(row);
+        });
+      });
+    }
+    byID("personal-recovery-help").textContent = choice && backup ? "The server restarted. This browser has a copy of " + backup.document.entries.length + " services from before the restart. We cannot tell whether it is the newest. " + (state.initialized ? "A current server collection already exists; restoring over it is not allowed." : "Restore it only if you want to use this copy.") : "";
+    if (durable && choice) byID("personal-recovery-help").textContent = "Current disk state is authoritative. These browser copies are not a known-newer version. Review them or explicitly discard them; you can use current server data without choosing. " + (canImport() ? "Only the current legacy browser-storage copy may be imported while the server collection is absent." : "Restoring over durable state is not allowed.") + (displaced.length ? " Displaced copies are retained only in this tab until it closes; they are not saved in browser storage." : "") + (reviewOverflow ? " The four-copy review limit was reached; additional competing copies could not be retained." : "");
+    adopt.textContent = durable ? "Discard reviewed copies; keep server data" : state && state.initialized ? "Use current server copy" : "Start without this copy";
+    summary.textContent = storageProblem || (choice ? (durable ? "Using current server data; a browser copy is retained for review." : "Choose which copy to keep before editing.") : state ? (state.document.entries.length ? "Personal to your account. Edit includes delete." : "No personal services yet. Use Add service to save a tailnet launch link.") : "Loading your services…");
     controls();
     if (focusedID && !dialog.open) {
       var replacement = list.querySelector('[data-edit-personal="' + focusedID + '"]');
@@ -216,12 +291,13 @@
     if (state && state.generation === value.generation && compare(value.revision, state.revision) < 0) throw new Error("stale_response");
     var disk = readBackup();
     observeBackup(disk);
-    if (backup && backup.generation === value.generation && compare(backup.revision, value.revision) > 0) throw new Error("stale_response");
-    var changed = state && (state.generation !== value.generation || state.revision !== value.revision);
+    if (!durable && backup && backup.generation === value.generation && compare(backup.revision, value.revision) > 0) throw new Error("stale_response");
+    var previous = state;
+    var changed = state && (!sameBase(state, value) || !sameDocument(state.document, value.document));
     if (state && state.generation !== value.generation) retired.add(state.generation);
     state = value; tokenReceivedAt = Date.now(); tokenReceivedTick = monotonicNow();
     if (changed && draft) blockDraft("Your services changed elsewhere. Your draft is kept. Reload for review before saving.");
-    var persisted = remember(explicit);
+    var persisted = remember(explicit, previous);
     renderManager();
     return persisted;
   }
@@ -234,6 +310,23 @@
       if (body) { options.headers["Content-Type"] = "application/json"; options.body = JSON.stringify(body); }
       var response = await window.fetch("/api/personal-services", options);
       if (ticket !== epoch || !compatible(root())) return null;
+      if (durable && response.status === 403) {
+        // A typed CSRF rejection is not loss of Serve identity. Never resubmit;
+        // retain the draft for an explicit reload. Every other denial closes it.
+        var csrfDenied = false;
+        try {
+          if (/^application\/json(?:\s*;|$)/i.test(response.headers.get("Content-Type") || "")) {
+            var deniedText = await response.text();
+            if (ticket !== epoch || !compatible(root())) return null;
+            if (deniedText.length <= 1024) {
+              var denied = JSON.parse(deniedText);
+              csrfDenied = keys(denied, ["error"]) && denied.error === "csrf_expired";
+            }
+          }
+        } catch (_) {}
+        if (csrfDenied) { var expired = new Error("csrf_expired"); expired.code = "csrf_expired"; tokenReceivedAt = null; throw expired; }
+        invalidate(); return null;
+      }
       if ([401, 403, 404].includes(response.status)) { invalidate(); return null; }
       if (!/^application\/json(?:\s*;|$)/i.test(response.headers.get("Content-Type") || "")) throw new Error("invalid_response");
       var raw = await response.text();
@@ -241,8 +334,13 @@
       if (raw.length > 131072) throw new Error("invalid_response");
       var value = JSON.parse(raw);
       if (response.status !== 200) {
-        var codes = {400:["invalid_request"],409:["conflict"],413:["body_too_large"],415:["unsupported_media_type"],503:["busy","unavailable"],507:["capacity"]};
+        var codes = {400:["invalid_request"],409:["conflict"],413:["body_too_large"],415:["unsupported_media_type"],503:["busy","unavailable","uncertain"],507:["capacity"]};
         if (!keys(value, ["error"]) || !codes[response.status] || !codes[response.status].includes(value.error)) throw new Error("invalid_response");
+        if (durable && ["unavailable", "uncertain"].includes(value.error)) {
+          // No authoritative document survives loss of ownership/storage. Keep
+          // local copies and draft fields, but never reconfirm or replay them.
+          suspend();
+        }
         var error = new Error(value.error); error.code = value.error; throw error;
       }
       if (!validState(value)) {
@@ -281,11 +379,11 @@
   }
   function populate(entry) {
     name.value = entry ? entry.name : ""; url.value = entry ? entry.url : ""; icon.value = entry ? entry.icon || "" : "";
-    draft.generation = state.generation; draft.revision = state.revision; draft.blocked = false; draft.baseline = JSON.stringify(values());
+    draft.generation = state.generation; draft.revision = state.revision; draft.store_id = state.store_id || ""; draft.blocked = false; draft.baseline = JSON.stringify(values());
     remove.hidden = !entry; reload.hidden = true; preview(); message(""); controls(); name.focus();
   }
   function open(id, opener) {
-    if (dialog.open || !state || posting || loading || needsChoice() || recoveryChoice || !compatible(root())) return;
+    if (dialog.open || !state || posting || loading || choiceBlocksEditing() || recoveryChoice || !compatible(root())) return;
     var entry = id && state.document.entries.find(function (e) { return e.id === id; });
     if (id && !entry) return;
     draft = { id: id || "", opener: opener }; byID("personal-editor-title").textContent = entry ? "Edit service" : "Add service";
@@ -297,12 +395,13 @@
     dialog.showModal(); populate(entry);
   }
   async function mutate(action) {
-    if (!state || posting || loading || invalid || (action !== "restore" && (!draft || draft.blocked || needsChoice() || recoveryChoice))) return;
-    if (draft && (draft.generation !== state.generation || draft.revision !== state.revision)) { blockDraft("Your services changed. Reload for review before saving."); return; }
+    if (!state || posting || loading || invalid || (action !== "restore" && (!draft || draft.blocked || choiceBlocksEditing() || recoveryChoice))) return;
+    if (draft && (draft.generation !== state.generation || draft.revision !== state.revision || draft.store_id !== (state.store_id || ""))) { blockDraft("Your services changed. Reload for review before saving."); return; }
     var previous = state.document, candidate = backup && JSON.stringify(backup), originalDraft = draft, sent = false;
     var body = { action: action, generation: state.generation, revision: state.revision, csrf: state.csrf };
+    if (durable) body.store_id = state.store_id;
     if (action === "restore") {
-      if (!needsChoice() || state.initialized) return;
+      if (!canImport()) return;
       body.document = backup.document;
     } else {
       if (draft.id) body.id = draft.id;
@@ -320,8 +419,8 @@
         var fresh = await request("GET"); if (!fresh) return;
         accept(fresh, false);
         // A token refresh must not silently rebase an old draft or recovery choice.
-        if (fresh.generation !== body.generation || fresh.revision !== body.revision ||
-            action !== "restore" && (draft !== originalDraft || !draft || draft.blocked || needsChoice()) ||
+        if (fresh.generation !== body.generation || fresh.revision !== body.revision || (fresh.store_id || "") !== (body.store_id || "") ||
+            action !== "restore" && (draft !== originalDraft || !draft || draft.blocked || choiceBlocksEditing()) ||
             action === "restore" && (fresh.initialized || JSON.stringify(backup) !== candidate)) {
           blockDraft("Your services changed elsewhere. Your draft is kept. Reload for review before saving.");
           summary.textContent = "The server or browser copy changed. Reload current services before continuing.";
@@ -339,7 +438,7 @@
       // Explicit restore consents to replacing the selected copy, not any later copy.
       var disk = readBackup();
       var persisted = accept(result, action === "restore" && (!disk || JSON.stringify(disk) === candidate)); posting = false; close(true);
-      notice.textContent = persisted ? (action === "delete" ? "Service deleted." : action === "restore" ? "Browser copy restored. Its freshness cannot be verified." : "Service saved.") : "Saved on server; this browser’s recovery copy is unavailable.";
+      notice.textContent = persisted ? (action === "delete" ? "Service deleted." : action === "restore" ? "Browser copy restored. Its freshness cannot be verified." : "Service saved.") : durable && needsChoice() ? "Saved on server; the different browser copy is retained for review." : "Saved on server; this browser’s recovery copy is unavailable.";
       refreshCards();
     } catch (error) {
       posting = false;
@@ -352,13 +451,21 @@
         return;
       }
       if (error.code) {
-        if (error.code === "invalid_request" || error.code === "body_too_large") message("Not saved. Check the fields and collection size. Your draft is kept.", true);
+        if (error.code === "csrf_expired") {
+          blockDraft("The request token expired before confirmation. Your draft is kept; reload for review before saving again.");
+          summary.textContent = "Reload current services before continuing; no mutation will be replayed."; refresh.hidden = false;
+          if (action === "restore") recoveryChoice = true;
+        } else if (error.code === "uncertain") {
+          blockDraft("The save outcome is uncertain. Do not repeat the save. Reconciliation requires a validated server restart; reload for review when available.");
+          summary.textContent = "Save outcome unknown; no recovery copy was updated."; refresh.hidden = false;
+          if (action === "restore") recoveryChoice = true;
+        } else if (error.code === "invalid_request" || error.code === "body_too_large") message("Not saved. Check the fields and collection size. Your draft is kept.", true);
         else if (error.code === "conflict") {
           blockDraft("Your services changed elsewhere. Your draft is kept. Reload for review before saving.");
           summary.textContent = "The server copy changed. Reload current services before continuing."; refresh.hidden = false;
           if (action === "restore") recoveryChoice = true;
         } else {
-          message(error.code === "capacity" ? "Not saved. The personal-service limit has been reached. Your draft is kept." : "Not saved. The server is unavailable or busy. Your draft is kept; reload for review.", true);
+          message(error.code === "capacity" ? "Not saved. The personal-service limit has been reached. Your draft is kept." : durable && error.code === "unavailable" ? "No save confirmation is available. Keep your draft and reload for review; do not repeat the save." : "Not saved. The server is unavailable or busy. Your draft is kept; reload for review.", true);
           if (draft) { draft.blocked = true; reload.hidden = false; }
           refresh.hidden = false;
         }
@@ -399,13 +506,13 @@
   });
   refresh.addEventListener("click", function () { recoveryChoice = false; load(false); });
   restore.addEventListener("click", function () {
-    if (posting || loading || recoveryChoice || !needsChoice() || state.initialized) return;
+    if (posting || loading || recoveryChoice || !canImport()) return;
     if (window.confirm("Restore this browser’s copy? It may be older than changes saved on another device before the restart.")) mutate("restore");
   });
   adopt.addEventListener("click", function () {
     if (posting || loading || !needsChoice()) return;
-    if (!window.confirm("Discard this browser’s previous recovery copy and use the current server collection? This cannot be undone.")) return;
-    if (remember(true)) { recoveryChoice = false; renderManager(); notice.textContent = "Using the current server collection."; }
+    if (!window.confirm("Discard the reviewed browser recovery copies and use the current server collection? This cannot be undone.")) return;
+    if (remember(true)) { recoveryChoice = false; displaced = []; reviewOverflow = false; renderManager(); notice.textContent = "Using the current server collection."; }
     else { renderManager(); summary.textContent = "The previous browser copy could not be replaced. Recovery storage is unavailable; no server change was made."; }
   });
   window.addEventListener("storage", function (event) {
@@ -415,6 +522,17 @@
     // No repair after deletion/corruption or across generations: those need the
     // existing explicit recovery choice, not a guess about which run is newer.
     observeBackup(disk);
+    if (durable) {
+      // localStorage check/write is not atomic. The delayed event may be the only
+      // remaining evidence of a copy displaced between our last read and write.
+      // Retain validated evidence for review, never rewrite disk or request CAS.
+      if (event.key === key && typeof event.newValue === "string") {
+        try { retainDisplaced(parseBackup(event.newValue)); } catch (_) {}
+      }
+      renderManager();
+      if (draft) blockDraft("The browser copy changed in another tab. Your draft is kept; reload for review.");
+      return;
+    }
     if (disk && state && disk.generation === state.generation) {
       if (state.initialized) observeBackup(authoredCopy(state));
       if (event.key === key && typeof event.newValue === "string") {
@@ -439,10 +557,15 @@
     if (!detail || !detail.target || detail.target.id !== "portal-content") return;
     var incoming = new DOMParser().parseFromString(detail.xhr.responseText, "text/html").getElementById("portal-content");
     if (!compatible(incoming)) { invalidate(); return; }
+    if (unavailable(incoming)) {
+      epoch++; if (controller) controller.abort(); posting = false; loading = false;
+      suspend(); return; // Accept the card-free fragment, not a private document.
+    }
     var gen = incoming.getAttribute("data-personal-generation"), rev = incoming.getAttribute("data-personal-revision"), initialized = incoming.getAttribute("data-personal-initialized");
+    if (durable && !generation(incoming.getAttribute("data-personal-store"))) { detail.shouldSwap = false; return; }
     if (!generation(gen) || !revision(rev) || initialized !== String(rev !== "0")) { detail.shouldSwap = false; return; }
     if (posting || retired.has(gen) || state && gen === state.generation && compare(rev, state.revision) < 0) { detail.shouldSwap = false; return; }
-    if (state && gen !== state.generation) {
+    if (state && (gen !== state.generation || durable && incoming.getAttribute("data-personal-store") !== state.store_id)) {
       detail.shouldSwap = false;
       // An unknown generation is not "newer" merely because its fragment arrived last.
       load(false, incoming);
@@ -452,8 +575,9 @@
   });
   document.body.addEventListener("htmx:afterSwap", function () {
     if (!compatible(root())) { invalidate(); return; }
+    if (unavailable(root())) { suspend(); return; }
     renderManager();
-    if (!posting && (!state || root().getAttribute("data-personal-generation") !== state.generation || root().getAttribute("data-personal-revision") !== state.revision)) load(false);
+    if (!posting && (!state || root().getAttribute("data-personal-generation") !== state.generation || root().getAttribute("data-personal-revision") !== state.revision || durable && root().getAttribute("data-personal-store") !== state.store_id)) load(false);
   });
   document.body.addEventListener("htmx:responseError", function (event) {
     if (event.detail && event.detail.target && event.detail.target.id === "portal-content" && [401,403].includes(event.detail.xhr.status)) invalidate();

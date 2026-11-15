@@ -12,14 +12,16 @@ import (
 const upstreamTimeout = 10 * time.Second
 
 type CacheData struct {
-	Policy                    *Policy
-	Nodes                     []Node
-	ProxyHosts                []ProxyHost
-	ServiceMetadata           *ServiceMetadata
-	GrantRoleSelectorsByLogin map[string][]string
-	MachineSSHCapableByID     map[string]bool
-	ControlPlane              ControlPlaneMetadata
-	UpdatedAt                 time.Time
+	Policy                        *Policy
+	Nodes                         []Node
+	TailscaleUsersByLogin         map[string]TailscaleUserIdentity `json:"-"`
+	ProxyHosts                    []ProxyHost
+	ServiceMetadata               *ServiceMetadata
+	GrantRoleSelectorsByLogin     map[string][]string
+	MachineSSHCapableByID         map[string]bool
+	PresentationDeviceIDsByNodeID map[string]ProviderDeviceID `json:"-"`
+	ControlPlane                  ControlPlaneMetadata
+	UpdatedAt                     time.Time
 }
 
 type Cache struct {
@@ -179,14 +181,16 @@ func loadSnapshotWithProgress(ctx context.Context, controlPlane ControlPlane, np
 	reportSnapshotProgress(progress, snapshotStageNPMProxyHosts, len(proxyHosts))
 
 	return &CacheData{
-		Policy:                    controlResult.Policy,
-		Nodes:                     controlResult.Nodes,
-		ProxyHosts:                proxyHosts,
-		ServiceMetadata:           emptyServiceMetadata(),
-		GrantRoleSelectorsByLogin: controlResult.GrantRoleSelectorsByLogin,
-		MachineSSHCapableByID:     controlResult.MachineSSHCapableByID,
-		ControlPlane:              controlResult.Metadata,
-		UpdatedAt:                 time.Now(),
+		Policy:                        controlResult.Policy,
+		Nodes:                         controlResult.Nodes,
+		ProxyHosts:                    proxyHosts,
+		ServiceMetadata:               emptyServiceMetadata(),
+		TailscaleUsersByLogin:         controlResult.TailscaleUsersByLogin,
+		GrantRoleSelectorsByLogin:     controlResult.GrantRoleSelectorsByLogin,
+		MachineSSHCapableByID:         controlResult.MachineSSHCapableByID,
+		PresentationDeviceIDsByNodeID: controlResult.PresentationDeviceIDsByNodeID,
+		ControlPlane:                  controlResult.Metadata,
+		UpdatedAt:                     time.Now(),
 	}, nil
 }
 

@@ -124,7 +124,7 @@ func TestServiceEditModeNoWriterOrRoute(t *testing.T) {
 				t.Fatalf("inactive mode initialized writer: %v", err)
 			}
 			mux := http.NewServeMux()
-			mountServiceMetadataEditor(mux, e, nil, nil, time.Second)
+			mountServiceMetadataEditor(mux, newSharedIconOperations(&Config{PortalEditMode: mode, ControlPlane: controlPlaneHeadscale, PollInterval: time.Second}, e, nil, nil))
 			for _, method := range []string{http.MethodGet, http.MethodPost} {
 				w := httptest.NewRecorder()
 				mux.ServeHTTP(w, httptest.NewRequest(method, "/api/service-metadata/3", nil))

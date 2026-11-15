@@ -20,7 +20,7 @@ import (
 const editorTestDocument = `{"version":2,"services":[{"proxy_host_id":99,"name":null,"url":"https://unseen.example/path","category":"Unseen","order":0},{"proxy_host_id":3,"name":"Old Wiki","url":null,"category":"Tools","order":8}]}`
 
 func editorTestConfig() *ServiceMetadataEditorConfig {
-	return &ServiceMetadataEditorConfig{Logins: map[string]bool{"alice@example.com": true, "bob@example.com": true}, Origin: "http://portal.example:8081", Host: "portal.example:8081"}
+	return &ServiceMetadataEditorConfig{Logins: map[string]bool{"alice@example.com": true, "bob@example.com": true}, Origin: "http://portal.example:8081", Host: "portal.example:8081", Binding: serviceMetadataBinding{ControlPlane: controlPlaneHeadscale}}
 }
 func editorTestFile(t *testing.T, contents string) string {
 	t.Helper()
@@ -37,9 +37,19 @@ func editorFixture(t *testing.T) (*ServiceMetadataEditor, *Cache, http.Handler) 
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = e.Close() })
-	cache := newTestCache(standardTestData())
+	data := standardTestData()
+	data.ControlPlane.Provider = controlPlaneHeadscale
+	cache := newTestCache(data)
+	return e, cache, newServiceMetadataEditorHandler(editorTestOperations(e, cache))
+}
+
+// Fixtures explicitly supply the selected runtime binding. Captured operations
+// are rebuilt, never retroactively rebound, when a test seeds a different source.
+func editorTestOperations(e *ServiceMetadataEditor, cache *Cache) *SharedIconOperations {
 	_, trusted, _ := net.ParseCIDR("127.0.0.1/32")
-	return e, cache, newServiceMetadataEditorHandler(e, cache, trusted, 30*time.Second)
+	cfg := &Config{PortalEditMode: serviceEditShared, ControlPlane: e.config.Binding.ControlPlane,
+		StateNamespace: e.config.Binding.Namespace, TrustedProxyCIDR: trusted, PollInterval: 30 * time.Second}
+	return newSharedIconOperations(cfg, e, cache, nil)
 }
 func editHTTPRequest(handler http.Handler, method, id, login, body string, change func(*http.Request)) *httptest.ResponseRecorder {
 	request := httptest.NewRequest(method, "http://portal.example:8081"+serviceMetadataEditorRoute+id, strings.NewReader(body))
@@ -675,7 +685,9 @@ func TestServiceMetadataEditorRejectsReplacedLifetimeLock(t *testing.T) {
 func TestServiceMetadataEditorCSRFExpiresBeforeRename(t *testing.T) {
 	e, cache, _ := editorFixture(t)
 	clock := time.Now().Truncate(time.Second)
-	h := &serviceMetadataEditorHandler{editor: e, cache: cache, staleAfter: 90 * time.Second, now: func() time.Time { return clock }}
+	ops := editorTestOperations(e, cache)
+	ops.now = func() time.Time { return clock }
+	h := &serviceMetadataEditorHandler{ops: ops}
 	_, trusted, _ := net.ParseCIDR("127.0.0.1/32")
 	handler := IdentityMiddleware(trusted, h)
 	data := *cache.Get()

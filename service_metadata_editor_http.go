@@ -3,8 +3,6 @@ package main
 import (
 	"bytes"
 	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -23,9 +21,9 @@ const (
 )
 
 // Browser/off have no writer, so no edit route is mounted at all.
-func mountServiceMetadataEditor(mux *http.ServeMux, editor *ServiceMetadataEditor, cache *Cache, trusted *net.IPNet, interval time.Duration) {
-	if editor != nil {
-		mux.Handle(serviceMetadataEditorRoute, newServiceMetadataEditorHandler(editor, cache, trusted, interval))
+func mountServiceMetadataEditor(mux *http.ServeMux, ops *SharedIconOperations) {
+	if ops != nil && ops.mode == serviceEditShared && ops.editor != nil {
+		mux.Handle(serviceMetadataEditorRoute, newServiceMetadataEditorHandler(ops))
 	}
 }
 
@@ -69,14 +67,15 @@ type serviceMetadataEditRequest struct {
 }
 
 type serviceMetadataEditorHandler struct {
-	editor     *ServiceMetadataEditor
-	cache      *Cache
-	staleAfter time.Duration
-	now        func() time.Time
+	ops *SharedIconOperations
 }
 
-func newServiceMetadataEditorHandler(editor *ServiceMetadataEditor, cache *Cache, trusted *net.IPNet, interval time.Duration) http.Handler {
-	handler := &serviceMetadataEditorHandler{editor: editor, cache: cache, staleAfter: interval * 3, now: time.Now}
+func newServiceMetadataEditorHandler(ops *SharedIconOperations) http.Handler {
+	handler := &serviceMetadataEditorHandler{ops: ops}
+	var trusted *net.IPNet
+	if ops != nil {
+		trusted = ops.trusted
+	}
 	protected := IdentityMiddleware(trusted, handler)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		setIdentityResponseCacheHeaders(w.Header())
@@ -118,8 +117,7 @@ func (e *ServiceMetadataEditor) editingIdentity(r *http.Request) bool {
 
 func (h *serviceMetadataEditorHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	fail := func(code int, message string) { writeEditorJSON(w, code, map[string]string{"error": message}) }
-	identity := IdentityFromContext(r.Context())
-	if !h.editor.editingIdentity(r) {
+	if h.ops == nil || h.ops.editor == nil || h.ops.editor.config == nil || !h.ops.editor.editingIdentity(r) {
 		fail(http.StatusForbidden, "forbidden")
 		return
 	}
@@ -140,7 +138,7 @@ func (h *serviceMetadataEditorHandler) ServeHTTP(w http.ResponseWriter, r *http.
 	}
 	if r.Method == http.MethodPost {
 		origin, single, _ := singleRawHeader(r.Header, "Origin")
-		if !single || origin != h.editor.config.Origin {
+		if !single || origin != h.ops.editor.config.Origin {
 			fail(http.StatusForbidden, "forbidden")
 			return
 		}
@@ -164,105 +162,28 @@ func (h *serviceMetadataEditorHandler) ServeHTTP(w http.ResponseWriter, r *http.
 			}
 			return
 		}
-		if !h.editor.validCSRF(identity.Login, request.CSRF, h.now()) {
-			fail(http.StatusForbidden, "forbidden")
+		if err := h.ops.SaveBrowserNPM(r, id, request); err != nil {
+			h.respondError(w, err)
 			return
 		}
-		h.save(w, identity, id, request)
+		writeEditorJSON(w, http.StatusOK, map[string]string{"status": "saved"})
 		return
 	}
-	h.editor.mu.Lock()
-	defer h.editor.mu.Unlock()
-	if h.editor.disabled {
-		fail(http.StatusServiceUnavailable, "uncertain")
-		return
-	}
-	host, err := h.visibleHost(identity, id, "")
+	form, err := h.ops.GetBrowserNPM(r, id)
 	if err != nil {
 		h.respondError(w, err)
 		return
 	}
-	view := h.editor.view.Load()
-	if err := h.editor.checkDisk(view); err != nil {
-		h.respondError(w, err)
-		return
-	}
-	override := view.metadata.Overrides[id]
-	defaults, _ := resolveServiceCard(host, nil)
-	scope := sha256.Sum256([]byte(identity.Login))
-	writeEditorJSON(w, http.StatusOK, serviceMetadataEditForm{
-		ID:             id,
-		Fields:         serviceMetadataEditableFields{Name: override.Name, URL: override.URL, Icon: override.Icon},
-		Defaults:       serviceMetadataEditableFields{Name: defaults.Name, URL: defaults.URL, Icon: "generic"},
-		Icons:          append([]string(nil), serviceIconIDs...),
-		Revision:       view.revision,
-		TargetRevision: h.editor.targetRevision(host),
-		CSRF:           h.editor.csrf(identity.Login, h.now()),
-		IdentityScope:  hex.EncodeToString(scope[:]),
-	})
-}
-
-func (h *serviceMetadataEditorHandler) visibleHost(identity *Identity, id int, target string) (ProxyHost, error) {
-	data := h.editor.requestData(h.cache.Get())
-	now := h.now()
-	if data == nil || data.UpdatedAt.IsZero() || now.Sub(data.UpdatedAt) > h.staleAfter || data.UpdatedAt.After(now) {
-		return ProxyHost{}, errMetadataStale
-	}
-	var selected *ProxyHost
-	for _, match := range evaluateServices(identity, data) {
-		if match.ProxyHost.ID == id {
-			if selected != nil {
-				return ProxyHost{}, errMetadataNotVisible
-			} // Ambiguous IDs fail closed.
-			copy := match.ProxyHost
-			selected = &copy
-		}
-	}
-	if selected == nil {
-		return ProxyHost{}, errMetadataNotVisible
-	}
-	if target != "" && !hmac.Equal([]byte(target), []byte(h.editor.targetRevision(*selected))) {
-		return ProxyHost{}, errMetadataConflict
-	}
-	return *selected, nil
-}
-
-func (h *serviceMetadataEditorHandler) save(w http.ResponseWriter, identity *Identity, id int, request serviceMetadataEditRequest) {
-	e := h.editor
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	if e.disabled {
-		h.respondError(w, errMetadataUncertain)
-		return
-	}
-	if _, err := h.visibleHost(identity, id, request.TargetRevision); err != nil {
-		h.respondError(w, err)
-		return
-	}
-	document, err := mutateServiceMetadata(e.view.Load().metadata.document, id, request.Name, request.URL, request.Icon, request.Action == "reset")
-	if err != nil {
-		writeEditorJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_fields"})
-		return
-	}
-	err = e.commit(request.Revision, document, func() error {
-		if !e.validCSRF(identity.Login, request.CSRF, h.now()) {
-			return errMetadataCSRF
-		}
-		_, err := h.visibleHost(identity, id, request.TargetRevision)
-		return err
-	})
-	if err != nil {
-		h.respondError(w, err)
-		return
-	}
-	writeEditorJSON(w, http.StatusOK, map[string]string{"status": "saved"})
+	writeEditorJSON(w, http.StatusOK, form)
 }
 
 func (h *serviceMetadataEditorHandler) respondError(w http.ResponseWriter, err error) {
 	status, message := http.StatusInternalServerError, "storage_unavailable"
 	switch {
-	case errors.Is(err, errMetadataCSRF):
+	case errors.Is(err, errMetadataCSRF), errors.Is(err, errMetadataForbidden):
 		status, message = http.StatusForbidden, "forbidden"
+	case errors.Is(err, errMetadataInvalidFields):
+		status, message = http.StatusBadRequest, "invalid_fields"
 	case errors.Is(err, errMetadataConflict):
 		status, message = http.StatusConflict, "conflict"
 	case errors.Is(err, errMetadataNotVisible):
