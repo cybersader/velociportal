@@ -127,9 +127,15 @@ Follow the [TrueNAS Quickstart](truenas-scale.md), choosing the Tailscale SaaS p
 
 The optional private-CA overlay can still be used when the NPM API uses a private public root. It does not change or replace verification of `api.tailscale.com`. The optional service-metadata and service-health overlays are provider-neutral; health still protects the fixed Tailscale API socket and never uses OAuth credentials.
 
+## RC.20 candidate opt-ins
+
+The RC.20 candidate supports optional service-hosted MCP, durable personal authored state and source-bound metadata v4; **none is in immutable RC.18/19**. Leave the new commented keys disabled until a future published compatible digest and separate deployment/storage approval. The existing plain-HTTP Serve origin, one-container/two-network topology, NPM dependency and four OAuth scopes remain unchanged. Headscale gains no personal support.
+
+`PORTAL_PERSONAL_SERVICES_FILE` absent retains browser RAM. Configured durable mode requires personal origin, `PORTAL_STATE_NAMESPACE` and validated preexisting private storage; missing/corrupt files fail startup without fallback. Private ownership uses exact login plus the already-fetched authoritative Users API ID/direct-member evidence, never device-owner inference or persisted authorization. MCP human-device authority is shared by processes on the device; it is not independent agent authentication. See [MCP tools/client evidence and limits](../reference/mcp.md) and [private/v4 schemas and recovery](../reference/service-metadata.md#durable-personal-storage-unreleased-source). Bounded native Claude localhost calls passed; native Codex/T3 and genuine two-device/restart acceptance remain unverified. These are disclosed RC.20 limitations, not prepublication blockers or permission to deploy.
+
 ## Rollback and switching
 
-Provider files are intentionally separate. To roll back, select the prior immutable image and the matching provider-specific environment file. Do not combine both credential families in one runtime file.
+Provider files are intentionally separate. Before selecting a prior immutable image, reconcile metadata schema, editor mode and private/MCP configuration compatibility, with reviewed offline backups. A v4 file cannot be read by RC.18/19; disabling editing alone does not make it compatible. Retain durable data offline before a downgrade that cannot use it. Namespace/source or owner-ID changes require explicit offline reconciliation, not automatic rebinding or deletion. Use the [backup/downgrade procedure](../reference/service-metadata.md#offline-backup-restore-and-downgrade), then choose the compatible image/env. Do not combine both credential families in one runtime file.
 
 The setup wizard prompts for the provider first. When switching providers, it lists the inactive known key names and requires explicit confirmation before deleting them. Refusal or input abort leaves the original file byte-for-byte unchanged; unknown keys are preserved. No plaintext credential backup is created.
 

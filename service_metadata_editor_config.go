@@ -14,9 +14,10 @@ import (
 // ServiceMetadataEditorConfig contains only explicit operator configuration.
 // The empty configuration is read-only; there is no inferred role membership.
 type ServiceMetadataEditorConfig struct {
-	Logins map[string]bool
-	Origin string
-	Host   string
+	Logins  map[string]bool
+	Origin  string
+	Host    string
+	Binding serviceMetadataBinding
 }
 
 type serviceEditMode string

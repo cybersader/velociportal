@@ -53,7 +53,7 @@ func loadHostnameSuggestionData(ctx context.Context, cfg *Config) (*CacheData, [
 	if cfg == nil {
 		return nil, nil, errors.New("configuration is missing")
 	}
-	metadata, err := loadServiceMetadataSnapshot(serviceMetadataLoaderForPath(cfg.ServiceMetadataFile))
+	metadata, err := loadServiceMetadataSnapshot(boundServiceMetadataLoaderForPath(cfg.ServiceMetadataFile, cfg.metadataBinding()))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -62,7 +62,11 @@ func loadHostnameSuggestionData(ctx context.Context, cfg *Config) (*CacheData, [
 	if !ok {
 		return nil, nil, errors.New("selected control plane does not support hostname suggestions")
 	}
-	controlResult, candidateNames, err := suggestionControlPlane.LoadHostnameSuggestions(ctx, nil)
+	return loadHostnameSuggestionSnapshot(ctx, suggestionControlPlane, npm, metadata)
+}
+
+func loadHostnameSuggestionSnapshot(ctx context.Context, controlPlane hostnameSuggestionControlPlane, npm *NPMClient, metadata *ServiceMetadata) (*CacheData, []string, error) {
+	controlResult, candidateNames, err := controlPlane.LoadHostnameSuggestions(ctx, nil)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -71,12 +75,14 @@ func loadHostnameSuggestionData(ctx context.Context, cfg *Config) (*CacheData, [
 		return nil, nil, err
 	}
 	return &CacheData{
-		Policy:                    controlResult.Policy,
-		Nodes:                     controlResult.Nodes,
-		ProxyHosts:                proxyHosts,
-		ServiceMetadata:           metadata,
-		GrantRoleSelectorsByLogin: controlResult.GrantRoleSelectorsByLogin,
-		ControlPlane:              controlResult.Metadata,
+		Policy:                        controlResult.Policy,
+		Nodes:                         controlResult.Nodes,
+		ProxyHosts:                    proxyHosts,
+		ServiceMetadata:               metadata,
+		TailscaleUsersByLogin:         controlResult.TailscaleUsersByLogin,
+		GrantRoleSelectorsByLogin:     controlResult.GrantRoleSelectorsByLogin,
+		PresentationDeviceIDsByNodeID: controlResult.PresentationDeviceIDsByNodeID,
+		ControlPlane:                  controlResult.Metadata,
 	}, candidateNames, nil
 }
 

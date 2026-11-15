@@ -10,7 +10,9 @@ function check(value,message) { assert.ok(value,message);checks++; }
 const scope='a'.repeat(64), gen='b'.repeat(32), nextGen='c'.repeat(32), id='ps_'+'1'.repeat(32);
 const entry=(name='My tool',more={})=>({id,name,url:'https://server.tailnet.ts.net/app',...more});
 const state=(revision='0',entries=[],generation=gen)=>({generation,revision,initialized:revision!=='0',document:{version:1,entries},identity_scope:scope,csrf:'1234567890.'+'d'.repeat(64),icons:['generic','grafana'],projection:entries.map(e=>({id:e.id,status:'active'}))});
-const copy=s=>JSON.stringify({version:1,generation:s.generation,revision:s.revision,document:s.document});
+const storeID='e'.repeat(32), otherStore='f'.repeat(32);
+const durableState=(revision='0',entries=[],generation=gen,store=storeID)=>({...state(revision,entries,generation),durable:true,store_id:store});
+const copy=s=>JSON.stringify({version:s.durable?2:1,generation:s.generation,revision:s.revision,document:s.document,...(s.durable?{store_id:s.store_id}:{})});
 const tick=()=>new Promise(r=>setImmediate(r));
 async function settled(){await tick();await tick();}
 class Element {
@@ -28,28 +30,37 @@ class Element {
  querySelector(s){return this.querySelectorAll(s)[0]||null;}
  focus(){this.document.activeElement=this;}
 }
+function fragmentAttrs(html){
+ const tag=html.match(/<div\b[^>]*\bid="portal-content"[^>]*>/)?.[0];
+ assert.ok(tag,'actual rendered portal root is present');
+ return Object.fromEntries([...tag.matchAll(/(data-[a-z-]+)="([^"]*)"/g)].map(m=>[m[1],m[2]]));
+}
 function fixture(options={}){
- const ids=['portal-content','services-heading','portal-search-input','personal-editor','personal-manager','personal-editor-form','personal-editor-fields','personal-editor-name','personal-editor-url','personal-editor-icon','personal-editor-save','personal-editor-delete','personal-editor-reload','personal-editor-status','personal-announcement','personal-manager-status','personal-list','personal-recovery','personal-restore','personal-adopt','personal-refresh','personal-recovery-help','personal-editor-cancel','personal-editor-preview','personal-editor-title'];
+ const ids=['portal-content','services-heading','portal-search-input','personal-editor','personal-manager','personal-editor-form','personal-editor-fields','personal-editor-name','personal-editor-url','personal-editor-icon','personal-editor-save','personal-editor-delete','personal-editor-reload','personal-editor-status','personal-announcement','personal-manager-status','personal-list','personal-recovery','personal-restore','personal-adopt','personal-refresh','personal-recovery-help','personal-recovery-list','personal-editor-cancel','personal-editor-preview','personal-editor-title'];
  const els=Object.fromEntries(ids.map(x=>[x,new Element(x)])),document=new Element('document');document.document=document;document.body=new Element('body');document.body.document=document;document.appendChild(document.body);
  for(const e of Object.values(els)){e.document=document;document.body.appendChild(e);}
  document.getElementById=id=>els[id]||null;document.createElement=tag=>{const e=new Element('',tag);e.document=document;return e;};
  const root=els['portal-content'];root.attrs={'data-identity-scope':scope,'data-personal-enabled':'true','data-personal-generation':gen,'data-personal-revision':options.revision||'0','data-personal-initialized':String(!!options.revision&&options.revision!=='0'),'data-service-edit-mode':'browser'};
+ if(options.durable){root.attrs['data-personal-durable']='true';root.attrs['data-personal-store']=options.storeID||storeID;root.attrs['data-personal-owner-scope']='9'.repeat(64);}
+ if(options.initialHTML)root.attrs=fragmentAttrs(options.initialHTML);
  const add=new Element('add','button');add.attrs['data-add-personal']='';add.document=document;root.appendChild(add);
- const select=els['personal-editor-icon'];select.options=['','generic','grafana'].map(v=>{const e=new Element();e.value=v;e.attrs['data-icon-path']='/static/service-icons/'+(v||'generic')+(v==='grafana'?'.png':'.svg');return e;});
+ const select=els['personal-editor-icon'];select.options=['',...(options.icons||['generic','grafana'])].map(v=>{const e=new Element();e.value=v;e.attrs['data-icon-path']='/static/service-icons/'+(v||'generic')+(v==='grafana'?'.png':'.svg');return e;});
  const dialog=els['personal-editor'];dialog.showModal=()=>{dialog.open=true;};dialog.close=()=>{dialog.open=false;};
  els['personal-editor-form'].reset=()=>{for(const x of ['name','url','icon'])els['personal-editor-'+x].value='';};
  const requests=[],triggers=[],confirmations=[],storage=options.storage||new Map(),events=new Element('window'),timers=new Map();let timer=0;
  const s={els,document,root,add,dialog,requests,triggers,confirmations,storage,options,events,timers,confirm:true,now:2000000000000,tick:0,writes:0};
  s.advance=ms=>{s.now+=ms;s.tick+=ms;};
  class TestDate extends Date { static now(){return s.now;} }
- s.key='velociportal-personal-services-v1:http://portal.example:8081:'+scope;
+ s.key='velociportal-personal-services-v1:http://portal.example:8081:'+root.attrs['data-identity-scope'];
  if(options.backup)storage.set(s.key,typeof options.backup==='string'?options.backup:copy(options.backup));
  const window={AbortController,performance:{now:()=>s.tick},location:{origin:'http://portal.example:8081'},confirm:text=>{confirmations.push(text);return s.confirm;},setTimeout:f=>{timers.set(++timer,f);return timer;},clearTimeout:t=>timers.delete(t),addEventListener:(k,f)=>events.addEventListener(k,f),htmx:{trigger:(el,n)=>triggers.push(n)},localStorage:{getItem:k=>{if(options.readError)throw new Error('blocked');return storage.get(k)??null;},setItem:(k,v)=>{if(options.saveError)throw new Error('quota');s.writes++;options.beforeWrite?.(k,v,s);storage.set(k,v);},removeItem:k=>{if(options.saveError)throw new Error('quota');storage.delete(k);}}};
  window.fetch=(path,opts)=>new Promise((resolve,reject)=>requests.push({path,opts,reject,resolve:(status,data,type='application/json')=>resolve({status,headers:{get:()=>type},text:async()=>typeof data==='string'?data:JSON.stringify(data)})}));
  class DOMParser{parseFromString(){return{getElementById:()=>s.incoming||root};}}
  vm.runInContext(source,vm.createContext({document,window,AbortController,TextEncoder,URL,DOMParser,console,Date:TestDate}));
  s.click=e=>document.emit('click',{target:e});s.send=()=>els['personal-editor-form'].emit('submit');s.edit=()=>s.click(els['personal-list'].querySelector('[data-edit-personal]'));
- s.poll=(revision,generation=gen,extra={})=>{const incoming=new Element('portal-content');incoming.attrs={...root.attrs,'data-personal-revision':revision,'data-personal-generation':generation,'data-personal-initialized':String(revision!=='0'),...extra};s.incoming=incoming;const event={detail:{target:root,xhr:{responseText:'fixture'},shouldSwap:true}};document.body.emit('htmx:beforeSwap',event);if(event.detail.shouldSwap){root.attrs={...incoming.attrs};document.body.emit('htmx:afterSwap');}return event.detail.shouldSwap;};
+ s.swap=(attrs,html='fixture')=>{const incoming=new Element('portal-content');incoming.attrs=attrs;s.incoming=incoming;const event={detail:{target:root,xhr:{responseText:html},shouldSwap:true}};document.body.emit('htmx:beforeSwap',event);if(event.detail.shouldSwap){root.attrs={...incoming.attrs};if(html!=='fixture')root.replaceChildren();document.body.emit('htmx:afterSwap');}return event.detail.shouldSwap;};
+ s.poll=(revision,generation=gen,extra={})=>s.swap({...root.attrs,'data-personal-revision':revision,'data-personal-generation':generation,'data-personal-initialized':String(revision!=='0'),...extra});
+ s.fragment=html=>s.swap(fragmentAttrs(html),html);
  return s;
 }
 async function loaded(options={},value=state()){const s=fixture(options);s.requests[0].resolve(200,value);await settled();return s;}
@@ -237,5 +248,217 @@ await regression('event validation, storage failures and identity fencing remain
  s.options.saveError=false;s.events.emit('storage',{key:s.key,newValue:old});assert.equal(JSON.parse(s.storage.get(s.key)).revision,'3','retained high copy survives quota failure');
  s.poll('3',gen,{'data-identity-scope':'f'.repeat(64)});s.storage.set(s.key,old);s.events.emit('storage',{key:s.key,newValue:copy(state('4',[entry('Late')]))});assert.equal(s.storage.get(s.key),old,'invalidated identity cannot repair or consume late events');
 });
+await regression('durable restart loads disk without copy choice and never rebases dirty drafts',async()=>{
+ const old=durableState('3',[entry()]);const s=await loaded({durable:true,backup:old},durableState('3',[entry()],nextGen));
+ assert.ok(!s.add.disabled&&s.els['personal-recovery'].hidden&&s.els['personal-restore'].hidden);assert.equal(s.requests.length,1);
+ assert.equal(JSON.parse(s.storage.get(s.key)).version,2);assert.equal(JSON.parse(s.storage.get(s.key)).generation,nextGen);
+ s.edit();fill(s,'Keep draft');s.poll('3','d'.repeat(32));s.requests.at(-1).resolve(200,durableState('3',[entry()],'d'.repeat(32)));await settled();
+ assert.equal(s.els['personal-editor-name'].value,'Keep draft');assert.ok(s.els['personal-editor-save'].disabled);s.send();assert.equal(s.requests.filter(r=>r.opts.method==='POST').length,0);
+ s.els['personal-editor-reload'].emit('click');s.requests.at(-1).resolve(200,durableState('3',[entry()],'d'.repeat(32)));await settled();s.send();assert.equal(body(s).store_id,storeID);assert.equal(body(s).generation,'d'.repeat(32));
+});
+await regression('durable conflicting legacy/store/rollback copies remain reviewable without blocking server data',async()=>{
+ for(const old of [state('9',[entry('Legacy')]),durableState('9',[entry('Rollback')]),durableState('2',[entry('Different store')],gen,otherStore),durableState('2',[entry('Divergent')]),durableState('1',[entry('Older divergent')])]){
+  const s=await loaded({durable:true,revision:'2',backup:old},durableState('2',[],nextGen));
+  assert.equal(s.storage.get(s.key),copy(old));assert.ok(!s.add.disabled&&!s.els['personal-recovery'].hidden&&s.els['personal-restore'].hidden);
+  assert.match(s.els['personal-recovery-help'].textContent,/not a known-newer/);assert.equal(s.els['personal-recovery-list'].childNodes[0].textContent,old.document.entries[0].name+' — '+old.document.entries[0].url);assert.equal(s.els['personal-recovery-list'].querySelectorAll('[href]').length,0);
+  s.els['personal-adopt'].emit('click');assert.equal(JSON.parse(s.storage.get(s.key)).document.entries.length,0);assert.equal(s.requests.length,1);assert.ok(s.els['personal-recovery'].hidden);
+ }
+});
+await regression('durable legacy import is explicit and absent-only; durable copies never auto-import',async()=>{
+ const old=state('7',[entry()]);const s=await loaded({durable:true,backup:old},durableState('0',[],nextGen));assert.ok(!s.add.disabled&&!s.els['personal-restore'].hidden);assert.equal(s.requests.length,1);
+ s.els['personal-restore'].emit('click');assert.equal(body(s).action,'restore');assert.equal(body(s).store_id,storeID);assert.equal(body(s).revision,'0');
+ s.requests.at(-1).resolve(200,durableState('1',[entry()],nextGen));await settled();assert.equal(JSON.parse(s.storage.get(s.key)).version,2);assert.ok(s.els['personal-recovery'].hidden);
+ const d=await loaded({durable:true,backup:durableState('7',[entry()])},durableState('0',[],nextGen));assert.ok(d.els['personal-restore'].hidden&&!d.add.disabled);assert.equal(d.requests.length,1);
+});
+await regression('durable uncertainty and unavailable responses never reconfirm stale data or replay',async()=>{
+ for(const error of ['uncertain','unavailable']){
+  const s=await loaded({durable:true,revision:'1'},durableState('1',[entry()]));const saved=s.storage.get(s.key),writes=s.writes;s.edit();fill(s,'Preserved draft');s.send();s.requests.at(-1).resolve(503,{error});await settled();
+  assert.equal(s.storage.get(s.key),saved);assert.equal(s.writes,writes);assert.equal(s.els['personal-editor-name'].value,'Preserved draft');assert.ok(s.add.disabled&&s.els['personal-editor-save'].disabled);assert.equal(s.els['personal-list'].childNodes.length,0);assert.equal(s.requests.length,2);assert.doesNotMatch(msg(s),/Not saved/);
+  s.els['personal-refresh'].emit('click');s.requests.at(-1).resolve(503,{error:'unavailable'});await settled();assert.equal(s.writes,writes);assert.equal(s.requests.filter(r=>r.opts.method==='POST').length,1);
+ }
+});
+await regression('durable lost POST refreshes once without replay and keeps draft for review',async()=>{
+ const s=await loaded({durable:true,revision:'1'},durableState('1',[entry()]));s.edit();fill(s,'Pending');s.send();s.requests.at(-1).reject(new Error('lost'));await settled();assert.equal(s.requests.at(-1).opts.method,'GET');s.requests.at(-1).resolve(200,durableState('2',[entry('Pending')]));await settled();
+ assert.equal(s.requests.filter(r=>r.opts.method==='POST').length,1);assert.equal(s.els['personal-editor-name'].value,'Pending');assert.ok(s.els['personal-editor-save'].disabled);assert.match(msg(s),/uncertain/);
+});
+await regression('durable CSRF refresh does not adopt changed process/store CAS or dirty fields',async()=>{
+ for(const changed of [durableState('1',[entry()],nextGen),durableState('1',[entry()],gen,otherStore)]){
+  const s=await loaded({durable:true,revision:'1'},durableState('1',[entry()]));s.edit();fill(s,'Keep fields');s.advance(31*60000);s.send();s.requests.at(-1).resolve(200,changed);await settled();
+  assert.equal(s.requests.filter(r=>r.opts.method==='POST').length,0);assert.equal(s.els['personal-editor-name'].value,'Keep fields');assert.ok(s.els['personal-editor-save'].disabled);
+ }
+});
+await regression('durable strict wire rejects missing/unknown mode or store bookkeeping',async()=>{
+ for(const value of [state(),{...durableState(),store_id:''},{...durableState(),store_id:null},{...durableState(),durable:false},{...durableState(),user_id:'not-browser-authority'},{...durableState(),namespace:'private'}]){
+  const s=await loaded({durable:true},value);assert.ok(s.add.disabled);assert.ok(!s.storage.has(s.key));
+ }
+ const legacy=await loaded({},durableState());assert.ok(legacy.add.disabled);
+ const s=await loaded({durable:true,revision:'1'},durableState('1',[entry()]));s.edit();fill(s,'Draft');s.poll('1',gen,{'data-personal-durable':'false'});assert.ok(!s.dialog.open&&s.els['personal-manager'].hidden);
+});
+await regression('durable competing copy survives a save and cross-tab events do not rewrite it',async()=>{
+ const old=state('7',[entry('Legacy conflict')]);const s=await loaded({durable:true,revision:'1',backup:old},durableState('1',[entry()]));s.edit();fill(s,'Server update');s.send();s.requests.at(-1).resolve(200,durableState('2',[entry('Server update')]));await settled();
+ assert.equal(s.storage.get(s.key),copy(old));assert.match(s.els['personal-announcement'].textContent,/retained for review/);
+ const other=durableState('12',[entry('Other store')],nextGen,otherStore);s.storage.set(s.key,copy(other));const writes=s.writes;s.events.emit('storage',{key:s.key,newValue:copy(other)});assert.equal(s.writes,writes);assert.equal(s.storage.get(s.key),copy(other));assert.ok(!s.add.disabled&&!s.els['personal-recovery'].hidden);
+});
+await regression('durable final CSRF expiry keeps draft without retry; real denial still clears',async()=>{
+ for(const code of ['csrf_expired','forbidden']){
+  const s=await loaded({durable:true,revision:'1'},durableState('1',[entry()]));s.edit();fill(s,'Slow save draft');const old=s.storage.get(s.key);s.send();s.requests.at(-1).resolve(403,{error:code});await settled();
+  assert.equal(s.requests.filter(r=>r.opts.method==='POST').length,1);assert.equal(s.storage.get(s.key),old);
+  if(code==='csrf_expired'){assert.equal(s.els['personal-editor-name'].value,'Slow save draft');assert.ok(s.dialog.open&&s.els['personal-editor-save'].disabled);assert.match(msg(s),/expired/);}
+  else assert.ok(!s.dialog.open&&s.els['personal-manager'].hidden);
+ }
+});
+await regression('durable equal-revision divergence on disk is never silently overwritten',async()=>{
+ const s=await loaded({durable:true,revision:'2'},durableState('2',[entry('Server')]));const competing=durableState('2',[entry('Divergent browser')]);s.storage.set(s.key,copy(competing));s.events.emit('storage',{key:s.key,newValue:copy(competing)});
+ s.els['personal-refresh'].emit('click');s.requests.at(-1).resolve(200,durableState('2',[entry('Server')]));await settled();assert.equal(s.storage.get(s.key),copy(competing));assert.ok(!s.els['personal-recovery'].hidden&&!s.add.disabled);
+});
+await regression('durable displaced event evidence survives check/write interleaving without restoring or rebasing',async()=>{
+ for(const candidate of [durableState('3',[entry('Displaced newer')]),durableState('9',[entry('Displaced different store')],nextGen,otherStore),state('7',[entry('Displaced legacy')]),durableState('3',[]),durableState('2',[entry('Equal revision divergent')])]){
+  const displaced=copy(candidate);let injected=false;
+  const s=await loaded({durable:true,revision:'1',beforeWrite:(key,value,tab)=>{if(!injected&&JSON.parse(value).revision==='2'){injected=true;tab.storage.set(key,displaced);}}},durableState('1',[entry()]));
+  s.poll('2');s.requests.at(-1).resolve(200,durableState('2',[entry('Current server')]));await settled();assert.ok(injected);
+  const stored=s.storage.get(s.key),writes=s.writes,requests=s.requests.length;
+  s.events.emit('storage',{key:s.key,newValue:displaced});
+  assert.equal(s.storage.get(s.key),stored,'event is review evidence, not disk-write authority');assert.equal(s.writes,writes);assert.equal(s.requests.length,requests);
+  assert.ok(!s.els['personal-recovery'].hidden&&!s.add.disabled&&s.els['personal-restore'].hidden);
+  assert.ok(s.els['personal-recovery-list'].childNodes.some(n=>n.textContent.includes(candidate.document.entries[0]?.name||'Initialized-empty')));
+  assert.equal(s.els['personal-recovery-list'].querySelectorAll('[href]').length,0);assert.match(s.els['personal-recovery-help'].textContent,/only in this tab/);
+  s.edit();fill(s,'Current CAS draft');s.events.emit('storage',{key:s.key,newValue:displaced});assert.equal(s.els['personal-editor-name'].value,'Current CAS draft');assert.ok(s.els['personal-editor-save'].disabled);
+  s.els['personal-editor-reload'].emit('click');s.requests.at(-1).resolve(200,durableState('2',[entry('Current server')]));await settled();s.send();
+  assert.equal(body(s).revision,'2');assert.equal(body(s).store_id,storeID);assert.equal(body(s).generation,gen);
+ }
+});
+await regression('durable API-before-storage-event ordering retains the previously reviewed conflict',async()=>{
+ for(const candidate of [state('7',[entry('Legacy reviewed copy')]),durableState('9',[entry('Other store reviewed copy')],nextGen,otherStore),durableState('8',[])]){
+  const current=durableState('2',[entry('Current server')]),conflict=copy(candidate),replacement=copy(current);
+  const s=await loaded({durable:true,revision:'2',backup:candidate},current);
+  assert.ok(!s.els['personal-recovery'].hidden);s.edit();fill(s,'Keep dirty fields');
+  s.storage.set(s.key,replacement); // Other tab's event has NOT run.
+  s.els['personal-refresh'].emit('click');s.requests.at(-1).resolve(200,current);await settled();
+  assert.ok(!s.els['personal-recovery'].hidden,'API observation alone must retain conflicting C');
+  const rows=()=>s.els['personal-recovery-list'].childNodes.map(n=>n.textContent);
+  const expected=candidate.document.entries[0]?.name||'Initialized-empty';assert.ok(rows().some(t=>t.includes(expected)));
+  const writes=s.writes,requests=s.requests.length;
+  s.events.emit('storage',{key:s.key,oldValue:conflict,newValue:replacement});
+  assert.ok(rows().some(t=>t.includes(expected)),'delivered D event cannot erase C');assert.equal(s.storage.get(s.key),replacement);assert.equal(s.writes,writes);assert.equal(s.requests.length,requests);
+  assert.equal(s.els['personal-editor-name'].value,'Keep dirty fields');assert.ok(s.els['personal-editor-save'].disabled);assert.ok(s.els['personal-restore'].hidden);
+  s.els['personal-editor-reload'].emit('click');s.requests.at(-1).resolve(200,current);await settled();s.send();assert.equal(body(s).revision,'2');assert.equal(body(s).store_id,storeID);assert.equal(body(s).generation,gen);
+ }
+});
+await regression('durable displaced candidates remain bounded and require explicit discard',async()=>{
+ const s=await loaded({durable:true,revision:'2'},durableState('2',[]));const writes=s.writes;
+ for(let i=0;i<6;i++)s.events.emit('storage',{key:s.key,newValue:copy(durableState(String(i+3),[entry('Candidate '+i)],nextGen,otherStore))});
+ assert.equal(s.writes,writes);assert.equal(s.els['personal-recovery-list'].childNodes.length,4);assert.match(s.els['personal-recovery-help'].textContent,/four-copy review limit/);assert.ok(s.els['personal-restore'].hidden);
+ s.events.emit('storage',{key:s.key,newValue:'{"version":2,"document":"invalid"}'});assert.equal(s.els['personal-recovery-list'].childNodes.length,4);
+ s.confirm=false;s.els['personal-adopt'].emit('click');assert.equal(s.els['personal-recovery-list'].childNodes.length,4);
+ s.confirm=true;s.options.saveError=true;s.els['personal-adopt'].emit('click');assert.equal(s.els['personal-recovery-list'].childNodes.length,4,'failed discard write keeps evidence');
+ s.options.saveError=false;s.els['personal-adopt'].emit('click');assert.ok(s.els['personal-recovery'].hidden);assert.equal(s.els['personal-recovery-list'].childNodes.length,0);assert.equal(s.requests.length,1);
+});
+await regression('durable uncertainty poll blocks delayed API completion and real owner changes still clear',async()=>{
+ const s=await loaded({durable:true,revision:'1'},durableState('1',[entry()]));s.edit();fill(s,'Retained through poll');s.send();const pending=s.requests.at(-1),stored=s.storage.get(s.key),writes=s.writes;
+ s.poll('0',gen,{'data-personal-unavailable':'true'});assert.ok(pending.opts.signal.aborted&&s.dialog.open&&s.els['personal-editor-save'].disabled);
+ pending.resolve(200,durableState('2',[entry('Retained through poll')]));await settled();assert.equal(s.storage.get(s.key),stored);assert.equal(s.writes,writes);assert.equal(s.requests.length,2);
+ assert.equal(s.els['personal-editor-name'].value,'Retained through poll');assert.equal(s.els['personal-list'].childNodes.length,0);
+ s.poll('1',nextGen,{'data-personal-unavailable':'false'});s.requests.at(-1).resolve(200,durableState('1',[entry()],nextGen));await settled();assert.ok(s.dialog.open&&s.els['personal-editor-save'].disabled);assert.equal(s.els['personal-editor-name'].value,'Retained through poll');
+ s.poll('1',nextGen,{'data-personal-owner-scope':'8'.repeat(64)});assert.ok(!s.dialog.open&&s.els['personal-manager'].hidden);assert.equal(s.els['personal-editor-name'].value,'');
+});
+// S3: artwork belongs to rendered cards, never authored form/recovery state.
+function displayedPersonalIcon(s, record, iconID) {
+ const card=new Element('personal-card','article');card.attrs['data-personal-service']=record.id;
+ const image=new Element('shared-icon','img');image.attrs.src='/static/service-icons/'+iconID+(iconID==='generic'?'.svg':'.png');card.appendChild(image);s.root.appendChild(card);
+ return image;
+}
+await regression('S3 empty icon previews inheritance without claiming generic or changing authored state',async()=>{
+ for(const durable of [false,true]){
+  const make=durable?durableState:state,record=entry(),initial=make('1',[record]);
+  const s=await loaded({durable,revision:'1'},initial),image=displayedPersonalIcon(s,record,'grafana');
+  const stored=s.storage.get(s.key),writes=s.writes;s.edit();
+  assert.equal(s.els['personal-editor-icon'].value,'');assert.equal(s.els['personal-editor-preview'].hidden,true);
+  s.els['personal-editor-icon'].value='generic';s.els['personal-editor-icon'].emit('change');
+  assert.equal(s.els['personal-editor-preview'].hidden,false);assert.equal(s.els['personal-editor-preview'].src,'/static/service-icons/generic.svg');
+  s.els['personal-editor-icon'].value='';s.els['personal-editor-icon'].emit('change');
+  assert.equal(s.els['personal-editor-preview'].hidden,true);assert.equal(s.els['personal-editor-icon'].value,'');
+  image.attrs.src='/static/service-icons/immich.png';s.poll('1');
+  assert.equal(s.els['personal-editor-icon'].value,'');assert.equal(s.els['personal-editor-preview'].hidden,true);
+  assert.equal(s.requests.length,1,'shared default refresh cannot cause a personal mutation or extra API read');
+  assert.equal(s.storage.get(s.key),stored);assert.equal(s.writes,writes,'preview/poll cannot write recovery data');
+ }
+});
+await regression('S3 create and update send only authored empty or explicit icon and retain that in recovery',async()=>{
+ for(const durable of [false,true]){
+  const make=durable?durableState:state,s=await loaded({durable},make());
+  s.click(s.add);fill(s);assert.equal(s.els['personal-editor-preview'].hidden,true);s.send();
+  assert.equal(body(s).action,'create');assert.equal(body(s).icon,'');
+  s.requests.at(-1).resolve(200,make('1',[entry()]));await settled();
+  assert.deepEqual(JSON.parse(s.storage.get(s.key)).document,make('1',[entry()]).document);
+  displayedPersonalIcon(s,entry(),'grafana');s.edit();
+  s.els['personal-editor-icon'].value='generic';s.els['personal-editor-icon'].emit('change');s.send();
+  assert.equal(body(s).action,'update');assert.equal(body(s).icon,'generic');
+  assert.deepEqual(Object.keys(body(s)).sort(),['action','csrf','generation','icon','id','name','revision','url',...(durable?['store_id']:[])].sort());
+  s.requests.at(-1).resolve(200,make('2',[entry('My tool',{icon:'generic'})]));await settled();
+  assert.equal(JSON.parse(s.storage.get(s.key)).document.entries[0].icon,'generic');
+  s.edit();assert.equal(s.els['personal-editor-icon'].value,'generic');assert.equal(s.els['personal-editor-preview'].hidden,false);
+  s.els['personal-editor-icon'].value='';s.els['personal-editor-icon'].emit('change');s.send();
+  assert.equal(body(s).icon,'','blank removes the personal override rather than saving the displayed shared icon');
+  s.requests.at(-1).resolve(200,make('3',[entry()]));await settled();
+  const backup=JSON.parse(s.storage.get(s.key));assert.deepEqual(backup.document,make('3',[entry()]).document);
+  assert.doesNotMatch(s.storage.get(s.key),/grafana|immich|target_digest|effective_icon|projection|csrf/);
+  assert.equal(s.requests.filter(r=>r.opts.method==='POST').length,3,'one POST per explicit authored operation');
+  const reloaded=await loaded({durable,revision:'3',storage:s.storage},make('3',[entry()]));reloaded.edit();
+  assert.equal(reloaded.els['personal-editor-icon'].value,'');assert.equal(reloaded.els['personal-editor-preview'].hidden,true);
+ }
+});
+await regression('S3 legacy restore and durable import preserve omitted empty and explicit generic icons exactly',async()=>{
+ const records=[entry('Omitted'),entry('Empty',{id:'ps_'+'2'.repeat(32),icon:''}),entry('Explicit generic',{id:'ps_'+'3'.repeat(32),icon:'generic'})];
+ const legacy=state('7',records);
+ for(const durable of [false,true]){
+  const make=durable?durableState:state,s=await loaded({durable,backup:legacy},make('0',[],nextGen));
+  displayedPersonalIcon(s,records[0],'grafana');assert.equal(s.requests.length,1,'no automatic restore');
+  s.els['personal-restore'].emit('click');assert.equal(body(s).action,'restore');assert.deepEqual(body(s).document,legacy.document);
+  assert.ok(!Object.hasOwn(body(s).document.entries[0],'icon'));assert.equal(body(s).document.entries[1].icon,'');assert.equal(body(s).document.entries[2].icon,'generic');
+  assert.ok(!Object.hasOwn(body(s),'icon'),'restore carries a document, not a resolved card icon');
+  s.requests.at(-1).resolve(200,make('1',records,nextGen));await settled();
+  const stored=JSON.parse(s.storage.get(s.key));assert.deepEqual(stored.document,legacy.document);assert.equal(stored.version,durable?2:1);
+  assert.doesNotMatch(s.storage.get(s.key),/grafana|target_digest|effective_icon/);assert.equal(s.requests.filter(r=>r.opts.method==='POST').length,1);
+ }
+});
+await regression('S3 authored wire and browser copies reject shared-default and digest fields',async()=>{
+ for(const extra of [{effective_icon:'grafana'},{target_digest:'sha256:'+'a'.repeat(64)}]){
+  const malformed=entry('Malformed',extra),s=await loaded({},state('1',[malformed]));
+  assert.ok(s.add.disabled);assert.ok(!s.storage.has(s.key),'untrusted projection data cannot become an authored recovery copy');
+  const badCopy=copy(state('7',[malformed])),recovery=await loaded({backup:badCopy},state('0',[],nextGen));
+  assert.equal(recovery.storage.get(recovery.key),badCopy,'invalid stored data is not rewritten');assert.ok(recovery.els['personal-recovery'].hidden);assert.equal(recovery.requests.length,1);
+ }
+});
+if(process.env.VELOCIPORTAL_SHARED_ICON_FIXTURE){
+ await regression('S3 actual Go default-only poll keeps authored form API requests and browser copy separate',async()=>{
+  const f=JSON.parse(fs.readFileSync(process.env.VELOCIPORTAL_SHARED_ICON_FIXTURE,'utf8'));
+  assert.deepEqual(f.state.document,f.refreshed_state.document);assert.equal(f.state.revision,f.refreshed_state.revision);
+  assert.ok(!f.state.document.entries[0].icon);assert.match(f.initial,/Inherit shared default \(otherwise generic\)/);
+  assert.match(f.initial,/<img id="personal-editor-preview"[^>]* hidden>/);
+  const s=await loaded({initialHTML:f.initial,icons:f.state.icons},f.state),record=f.state.document.entries[0];
+  const stored=s.storage.get(s.key),writes=s.writes;s.edit();assert.equal(s.els['personal-editor-icon'].value,'');assert.equal(s.els['personal-editor-preview'].hidden,true);
+  assert.ok(s.fragment(f.refreshed));assert.equal(s.els['personal-editor-icon'].value,'');assert.equal(s.els['personal-editor-preview'].hidden,true);
+  assert.equal(s.storage.get(s.key),stored);assert.equal(s.writes,writes);assert.equal(s.requests.length,1);
+  s.send();assert.equal(body(s).icon,'');assert.equal(body(s).name,record.name);assert.equal(body(s).url,record.url);assert.equal(body(s).revision,f.state.revision);
+  const acknowledged={...f.refreshed_state,revision:String(BigInt(f.state.revision)+1n)};
+  s.requests.at(-1).resolve(200,acknowledged);await settled();
+  assert.equal(s.dialog.open,false);assert.deepEqual(JSON.parse(s.storage.get(s.key)).document,f.state.document);
+  assert.doesNotMatch(s.storage.get(s.key),/immich|grafana|target_digest|effective_icon/);assert.equal(s.requests.filter(r=>r.opts.method==='POST').length,1);
+ });
+}else console.log('SKIP S3 actual shared-icon poll fixture (set VELOCIPORTAL_SHARED_ICON_FIXTURE to generated Go artifact)');
+if(process.env.VELOCIPORTAL_PERSONAL_POLL_FIXTURE){
+ await regression('actual uncertain API response through production portal fragment preserves blocked draft',async()=>{
+  const f=JSON.parse(fs.readFileSync(process.env.VELOCIPORTAL_PERSONAL_POLL_FIXTURE,'utf8'));
+  for(const [kind,fragment] of Object.entries(f.invalid)){
+   const s=await loaded({durable:true,initialHTML:f.healthy,icons:f.state.icons},f.state);s.edit();fill(s,'Uncertain local draft');s.send();
+   const saved=s.storage.get(s.key),writes=s.writes;s.requests.at(-1).resolve(503,f.response);await settled();
+   const card=new Element('stale-card');card.attrs['data-personal-service']=f.state.document.entries[0].id;s.root.appendChild(card);
+   assert.ok(s.fragment(f.uncertain));assert.ok(s.dialog.open&&s.els['personal-editor-save'].disabled);assert.equal(s.els['personal-editor-name'].value,'Uncertain local draft');assert.equal(s.root.querySelectorAll('[data-personal-service]').length,0);assert.equal(s.els['personal-list'].childNodes.length,0);
+   assert.equal(s.storage.get(s.key),saved);assert.equal(s.writes,writes);assert.equal(s.requests.length,2,'poll neither loads unavailable state nor replays');
+   s.fragment(f.uncertain);assert.equal(s.els['personal-editor-name'].value,'Uncertain local draft');
+   s.fragment(fragment);assert.ok(!s.dialog.open&&s.els['personal-manager'].hidden,kind+' must invalidate');assert.equal(s.els['personal-editor-name'].value,'');assert.equal(s.requests.filter(r=>r.opts.method==='POST').length,1);
+  }
+ });
+}else console.log('SKIP production uncertain-poll fixture (set VELOCIPORTAL_PERSONAL_POLL_FIXTURE to generated Go artifact)');
 if(regressions.length){console.error(JSON.stringify({regression_failures:regressions},null,2));process.exitCode=1;}
 else console.log('PASS independent-review regressions');

@@ -5,7 +5,7 @@ This is the canonical, UI-managed TrueNAS SCALE path for one Velociportal contai
 Velociportal remains one non-root container with a read-only root filesystem and read-only upstream APIs. RC.17 optional shared editing adds only a separately approved writable metadata directory, not an upstream administration path. The selected control plane, NPM, and the existing Tailscale app remain separate security boundaries. Headscale mode retains the one-time first API-key bootstrap and HTTPS-only workstation `headscale-ops`; Tailscale mode uses a dedicated externally managed OAuth client and needs neither Headscale nor `headscale-ops`.
 
 !!! warning "Release-candidate path"
-    Published release-candidate artifacts exist, but publication is not deployment acceptance or a public support claim. Select and independently verify an immutable image before deploying. The selected provider still must pass the full two-identity, NPM-control where applicable, restart, reachability and LAN-negative worksheet. Published RC.18 adds browser-local mode and the personal catalog, but enabling personal services or shared editing causes a startup panic. The owner reported the personal-services failure and is leaving the portal off. This source is the RC.19 corrective candidate, not evidence of a recovered deployment. Require a successful immutable Release workflow and independently verified corrected image digest; deployment, restart or enablement remains separately approved and owned by the operator.
+    Published release-candidate artifacts exist, but publication is not deployment acceptance or a public support claim. RC.18 has the optional-API startup panic; published immutable RC.19 contains its correction at commit `a7fd76d807c6a5d608a09634409c1b9cf322edf7`. Neither includes the **RC.20 candidate MCP, durable personal storage or metadata-v4 features** below. Do not enable those knobs against an older binary or infer current deployment on/off state from these docs. Select and independently verify an immutable image with the required features, then obtain separate approval before deployment, restart or storage enablement. All existing two-identity, NPM-control where applicable, reachability and LAN-negative gates remain.
 
 ## Choose the control plane
 
@@ -402,7 +402,7 @@ Keep the existing dataset permissions unchanged: directory `950:950`/`0750`, fil
 
 Metadata changes only display names, browser URLs, categories, order and, in RC.17 v3, finite local icons after policy matching. Once any category/order field is present, categories sort deterministically with uncategorized cards last; explicit order sorts cards only within a category, before name and proxy-host-ID fallbacks. Metadata cannot create, hide, or enable a card, change `forward_host`/`forward_port`, alter health, or grant access. Wildcard-only services without metadata remain visible with `link needed`; they never produce `%2A` links. NPM `nginx_online` is not backend health.
 
-Each user's display name and login also open an accessible settings panel that lets that one browser hide or show the fixed built-in Velociportal logo. That preference lives per exact identity in one browser only, scoped by an opaque SHA-256 digest of the login, and is never sent to or stored by the server; a legacy unscoped key migrates once. The optional `PORTAL_LOGO_DEFAULT=visible|hidden` environment value supplies only the initial deployment default used when no valid browser preference exists yet for that identity. Arbitrary per-service logos, access history, and server-side or account-synchronized personalization remain deferred.
+Each user's display name and login also open an accessible settings panel that lets that one browser hide or show the fixed built-in Velociportal logo. That preference lives per exact identity in one browser only, scoped by an opaque SHA-256 digest of the login, and is never sent to or stored by the server; a legacy unscoped key migrates once. The optional `PORTAL_LOGO_DEFAULT=visible|hidden` environment value supplies only the initial deployment default used when no valid browser preference exists yet for that identity. Arbitrary logo uploads/external logos, access history, and synchronized appearance preferences remain deferred. The separately documented unreleased durable authored catalog and shared v4 artwork do not synchronize those browser preferences.
 
 Tailscale does not provide a standalone browser-SSH session URL. Velociportal renders a machine only when supported SSH policy and Grant TCP/22 evidence match and the exact device reports `sshEnabled=true` plus `blocksIncomingConnections=false` in the full Devices response. Missing or invalid capability fails closed, preventing phones and other non-SSH devices from receiving copy controls. The Tailscale Machines navigation action additionally requires a direct member holding an automatic-admin-equivalent role (Owner, Admin, IT admin, or Network admin). It opens the fixed Machines page with the validated short name/IP plus `property:tailscale-ssh`; it remains navigation, not a session, proxy, enforcement check, health signal, reachability claim, or guarantee that browser SSH will succeed.
 
@@ -434,13 +434,13 @@ Every trusted viewer can use the existing Edit dialog only on currently authoriz
 
 ### Optional personal tailnet services (RC.18)
 
-This feature is **not in RC.17; enabling it on RC.18 caused the owner-reported startup panic**. RC.19 is the corrective candidate; live recovery and feature acceptance remain unconfirmed. With an independently verified corrected RC.19-or-newer image and separate deployment approval, Tailscale mode may set `PORTAL_PERSONAL_SERVICES_ORIGIN="http://portal.tailnet.ts.net:8081"` in its existing provider env file. This is a placeholder: use the exact canonical origin already used to open the portal, including the actual port, with no path or trailing slash. Absence disables it; explicit empty/invalid values or Headscale fail configuration. Do not change Serve, DNS or HTTPS merely to copy this example.
+This RAM feature is **not in RC.17; enabling it on RC.18 caused the owner-reported startup panic**. Published RC.19 corrects startup, not the remaining native-browser/two-device acceptance gaps. With an independently verified corrected RC.19-or-newer image and separate deployment approval, Tailscale mode may set `PORTAL_PERSONAL_SERVICES_ORIGIN="http://portal.tailnet.ts.net:8081"` in its existing provider env file. This is a placeholder: use the exact canonical origin already used to open the portal, including the actual port, with no path or trailing slash. Absence disables it; explicit empty/invalid values or Headscale fail configuration. Do not change Serve, DNS or HTTPS merely to copy this example.
 
 This setting is independent of `PORTAL_EDIT_MODE`; it requires **no metadata file, shared-editor allowlist, writable mount, database or extra container**, and does not initialize the shared writer. Preserve the one-service/two-network, loopback-only topology and all dataset ownership/permissions. No new overlay is needed.
 
 Add service and Your services in account settings manage only this exact login's private catalog. Each active link needs a current unique device's canonical `*.ts.net` hostname plus a positive Grant permitting TCP to the HTTPS ingress port (443 by default), never legacy ACL evidence. Cold/stale evidence suppresses personal cards; unavailable saved entries remain editable without bypass links. Use the ordinary launch address, not pairing URLs/codes; queries, fragments and userinfo are rejected. Cards prove neither app sign-in nor reachability.
 
-Process RAM holds at most 128 initialized collections, each at most 128 entries/64 KiB. Same-login devices receive the latest acknowledged catalog while that process survives, without another browser online. Restart/redeploy loses RAM; **Restore from this browser** is explicit, may restore an older copy, and cannot guarantee newest recovery. Deleting all entries leaves initialized-empty state, not a restore prompt. Conflicts require reload/review; no automatic overwrite/merge, mutation retry, offline queue, iroh or MCP. Browser-local NPM overrides remain unsynchronized. Native-browser and real two-device/restart acceptance require a separately authorized environment; synthetic tests are not that proof. See the [personal-service contract](../reference/service-metadata.md#personal-tailnet-services-unreleased).
+Process RAM holds at most 128 initialized collections, each at most 128 entries/64 KiB. Same-login devices receive the latest acknowledged catalog while that process survives, without another browser online. Restart/redeploy loses RAM; **Restore from this browser** is explicit, may restore an older copy, and cannot guarantee newest recovery. Deleting all entries leaves initialized-empty state, not a restore prompt. Conflicts require reload/review; no automatic overwrite/merge, mutation retry, offline queue or iroh, and no personal MCP tools in file-absent RAM mode. Unreleased durable/MCP behavior is a separate opt-in below. Browser-local NPM overrides remain unsynchronized. Native-browser and real two-device/restart acceptance require a separately authorized environment; synthetic tests are not that proof. See the [personal-service contract](../reference/service-metadata.md#personal-tailnet-services-unreleased).
 
 ### Optional shared service editing
 
@@ -455,6 +455,63 @@ In the selected provider env file, set both exact-login JSON `PORTAL_EDITORS` (a
 Editors receive Edit service on already-visible cards. Name/link/icon blanks restore defaults; reset preserves category/order. First confirmed explicit save preserves the complete document and writes deterministic v3. No metadata field creates access or changes NPM/backend/SSH evidence. Whole-file or current-target changes conflict and require reload/review, never field merging. Drafts survive harmless polling/search, but clear on identity/access loss. No drafts/tokens/search are stored.
 
 **Before first v3 save**, privately review and approve metadata backup/restore and a compatibility rollback path. RC.16 requires compatible v1/v2 metadata and both editor settings removed; image-only rollback is insufficient. For operator edits stop the writer, merge all fields including icons privately, then restart. For an uncertain post-rename directory-sync failure, stop, reconcile actual disk against the reviewed backup/intended save, and restart with a valid known document; old memory is not proof of disk rollback. Never unlink a live lock or blindly retry. See [metadata/editor reference](../reference/service-metadata.md) for ID reuse, optimistic-write and final-freshness limitations.
+
+### RC.20 candidate: private storage and MCP { #unreleased-source-private-storage-and-mcp }
+
+**Candidate template contract—not an instruction to enable features now.** MCP, durable personal storage and metadata v4 are selected for `v0.2.0-rc.20`; a compatible immutable published image is still required and no new digest is asserted here. RC.18/19 and the historical pinned stack example cannot enable them. Keep existing image references until a separately approved deployment change. The owner waived outstanding native-client/live checks as prerelease publication blockers only; [bounded localhost Claude evidence and remaining gaps](../reference/mcp.md) remain explicit. No storage provisioning, deployment or support promotion is authorized.
+
+The base stays mount-free, one service/two existing networks, non-root `65534:65534`, read-only root, and `127.0.0.1:18080:8080`. MCP adds only `/mcp` under the **existing** portal origin/HTTP Serve path; no extra service, port, token, workstation server, HTTPS change or broader OAuth scope. Its origin must equal any enabled shared/personal origin. See the [exact MCP contract](../reference/mcp.md).
+
+#### Separate owner checkpoint before provisioning
+
+Present exact host paths, container paths, effective UID/GID, modes/ACLs, backup locations and restoration/downgrade plan for approval. Do not pick a NAS path from these examples or loosen `/mnt/personal/docker-configs/velociportal` (`950:950`, directory `0750`, files `0640`). Private storage is **independent runtime-owned 0700 directory / 0600 file**, not the existing readable configuration directory. No automatic chmod/chown, named volume, entrypoint initialization or recurring NAS bootstrap is provided.
+
+Only after that checkpoint and a compatible release, the optional **`compose.personal-services.yaml`** adds a directory bind at `/personal-services`, setting `PORTAL_PERSONAL_SERVICES_FILE=/personal-services/personal.json`. Set `VELOCIPORTAL_PERSONAL_SERVICES_DIRECTORY` in the private Compose interpolation workspace to the approved preexisting host directory. This variable has no host-path default. The overlay refuses host-path creation and requires a preexisting schema-valid snapshot; a missing/corrupt/mismatched file fails startup, not RAM fallback. The private validator accepts canonical absolute paths; `/personal-services/personal.json` is this template's convention, not a hardcoded application path.
+
+| Overlay selection | Result |
+|---|---|
+| Base only | No writable mount; personal origin alone retains volatile browser RAM |
+| Base + private directory | Durable Tailscale personal state; no shared writer |
+| Base + private + readonly metadata | Durable personal state plus readonly shared defaults; no shared editor |
+| Base + private + shared-editor directory | Independent private and shared commit domains; optional shared tools with all editor guards |
+| Base + readonly metadata + shared-editor directory | **Forbidden combination**, whether or not private is present; do not stack two authoritative metadata mount modes |
+
+CA and health overlays may combine with each permitted row. The shared-editor target remains **`/service-metadata/services.json`**; private remains **`/personal-services/personal.json`**. Keep host directories distinct and mount targets nonoverlapping; never bind a parent over another target. Existing readonly metadata uses `/velociportal-services.json`; choose it **instead of** the shared directory. Raw Compose does not enforce metadata-mode exclusivity or validate filesystem ownership—inspect the complete rendered model. The existing repository verifier covers its historical overlays; the new private-overlay combinations also require explicit rendering before release.
+
+A short-form include for an **RC.20 candidate template inspection workspace** may select relative files beside the wrapper (not a runnable deployment approval):
+
+```yaml
+include:
+  - path:
+      - ./compose.yaml
+      - ./compose.personal-services.yaml
+      - ./compose.service-editor.yaml
+services: {}
+```
+
+This is Compose's include path-list form for merging overlays; the simple one-file short form remains valid for base-only use. With an already prepared synthetic `stack.env`, inspect without starting anything: `docker compose --env-file stack.env -f include.yaml config --quiet`. Preserve quoted provider env-file values and the existing raw/go-quoted-v1 pipeline. Do not render a real credential-bearing env file into a public log.
+
+In the selected Tailscale provider file, independently opt into the existing personal origin, valid source namespace and, if wanted, MCP origin. The private overlay supplies the file path. These are **synthetic examples, not working client setup or a deployment identity**:
+
+```text
+PORTAL_PERSONAL_SERVICES_ORIGIN="http://portal.tailnet.ts.net:8081"
+PORTAL_MCP_ORIGIN="http://portal.tailnet.ts.net:8081"
+PORTAL_STATE_NAMESPACE="portal-demo-01"
+```
+
+Use the actual existing portal origin and an approved stable source namespace, not these literal placeholders. Shared tools additionally require resolved `shared` mode, exact `PORTAL_EDITORS`, matching `PORTAL_PUBLIC_ORIGIN`, a valid shared document and safe shared writer storage. MCP alone initializes none of them. Headscale must omit both personal origin and personal file/private overlay; it may use a namespace-bound NPM-only v4 metadata file and MCP shared NPM tools.
+
+#### Preexisting files, locks and rollback
+
+The [private initial schema](../reference/service-metadata.md#private-snapshot-schema-and-limits) and [minimal v4 schema](../reference/service-metadata.md#shared-icons-and-metadata-v4-unreleased-source) are validated synthetic examples. Provision through the separately approved private transfer path only; no application initializer is available. A new private StoreID is random/stable, not copied from the example. Existing shared storage may retain valid v1/v2/v3; ordinary browser saves remain v3, while explicit shared icon set/reset can promote to v4. Startup never migrates either document.
+
+Private file/lock are exact 0600 single-link non-symlink files, directory exact 0700, all runtime-owned. Safe root/runtime-owned ancestors, held-directory operations, lifetime locks and configured file/lock collision exclusions are mandatory. Shared storage retains its existing owner-read/write, no group/other-write constraints; newly provisioned 0700/0600 is appropriate but not permission to change protected files. Directory mounts—not single-file writable binds—are required for adjacent temp files/rename. Never unlink a live lock or run a second writer.
+
+Before first save, establish [offline backup/restore and downgrade compatibility](../reference/service-metadata.md#offline-backup-restore-and-downgrade). Browser copies are not durable backups. Uncertainty suppresses authoritative private reads/writes; shared uncertainty independently suppresses shared writes/editable read-back. Stop and reconcile actual disk privately, then validated locked reopen; never replay, claim rollback or automatically repair. Restored old revisions require explicit review. Namespace/source replacement and user-ID reconciliation are offline operator operations, not automatic migration. An old image needs compatible metadata **and** editing-disabled/compatible private/MCP configuration and retained backups **before** downgrade; image-only rollback is insufficient.
+
+#### Additional acceptance, not performed here
+
+Complete the [MCP release/live worksheet](../reference/mcp.md#release-and-live-acceptance-worksheet) in addition to every existing provider gate below: all three actual native clients; two human machines/no workstation server; second-human isolation; header replacement/tagged/raw-port LAN negatives; all-three-card icon parity and permission removal; acknowledged durable state surviving restart with every browser offline; fresh owner evidence before readback; initialized-empty/draft/conflicting-backup preservation; privately tested offline restore. Source tests, temporary store reopen and Compose rendering are not native/live acceptance or a durability guarantee. No current deployment on/off state or live provisioning is inferred.
 
 ### Optional bounded service health
 
@@ -587,7 +644,7 @@ Never deploy `latest`.
 
 The RC.1-to-RC.2 correction is not an ordinary image update: remove only the stopped stateless RC.1 Custom App, verify the old `velociportal-upstreams` network disappeared, and then install RC.2 so Docker creates it with `Internal=false`. Do not attach Headscale or NPM while the old `Internal=true` network exists.
 
-For later updates, first review configuration/schema compatibility as well as immutable Docker-network properties, then select the immutable image and repeat acceptance. Velociportal has no database or persisted authorization cache, but optional shared editing persists its one metadata file. Preserve/review that file and storage mode as part of update/rollback.
+For later updates, first review configuration/schema compatibility as well as immutable Docker-network properties, then select the immutable image and repeat acceptance. Velociportal has no database or persisted authorization cache, but optional shared editing persists its one metadata file; the RC.20 candidate durable opt-in also persists a separate private authored snapshot. Preserve/review complete files, source/owner bindings and storage modes as part of update/rollback. Follow the [offline compatibility procedure](../reference/service-metadata.md#offline-backup-restore-and-downgrade) before switching an image that cannot read those formats.
 
 Before entering a new image reference in TrueNAS, run `velociportal doctor --stack-env stack.env` from the private deployment workspace. This read-only offline preflight rejects `latest`, missing or malformed image pins, subnet/gateway mismatches, and invalid trusted-proxy values without contacting TrueNAS, Docker, the registry, or either upstream. If the provider file is also available from a network context that resolves the private aliases, combine `--env-file velociportal.env --stack-env stack.env` for the normal upstream diagnostics using the exact effective production trusted-proxy value. This does not prove publication, immutability, or live acceptance.
 

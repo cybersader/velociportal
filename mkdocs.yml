@@ -97,6 +97,7 @@ nav:
       - CLI and Make targets: reference/cli.md
       - Known limitations: reference/known-limitations.md
       - Service metadata and editing: reference/service-metadata.md
+      - Service-hosted MCP (RC.20 candidate): reference/mcp.md
       - Headscale API: reference/headscale-api.md
       - Tailscale API: reference/tailscale-api.md
       - NPM API: reference/npm-api.md

@@ -1,11 +1,25 @@
 package main
 
 import (
+	"crypto/sha256"
 	"fmt"
 	"html"
 	"net/http"
 	"strings"
+	"time"
 )
+
+// A DOM-only continuity marker, never a credential, persisted authorization or
+// permission to read disk. It lets an already-open browser distinguish storage
+// uncertainty from login reassignment. Length framing prevents tuple ambiguity;
+// namespace keeps source replacements distinct. No raw ownership ID is exposed.
+func personalDraftScope(namespace, login string, data *CacheData, now time.Time, interval time.Duration) string {
+	owner, err := personalOwner(login, data, now, interval)
+	if err != nil {
+		return ""
+	}
+	return fmt.Sprintf("%x", sha256.Sum256([]byte(fmt.Sprintf("personal-draft-v1:%d:%s%d:%s%d:%s", len(namespace), namespace, len(login), login, len(owner), owner))))
+}
 
 // Navigation permits Sec-Fetch-Mode:navigate, unlike the JSON API. Preserve its
 // exact raw identity/Host guards without treating navigation as an API request.
@@ -29,18 +43,24 @@ func renderPersonalServicesUI(state *PersonalServicesState) (markers, add, manag
 		return `data-personal-enabled="false"`, "", "", ""
 	}
 	markers = fmt.Sprintf(`data-personal-enabled="true" data-personal-generation="%s" data-personal-revision="%s" data-personal-initialized="%t"`, html.EscapeString(state.Generation), html.EscapeString(state.Revision), state.Initialized)
+	storageHelp := "Only for you. Available across your devices while this server runs. After a restart, a browser copy can be restored, but it may not be the newest."
+	if state.Durable {
+		markers += fmt.Sprintf(` data-personal-durable="true" data-personal-store="%s"`, html.EscapeString(state.StoreID))
+		storageHelp = "Only for you. Saved on this server and loaded automatically after restart when current account ownership can be verified. Browser copies are for explicit review, not the authoritative backup."
+	}
 	add = `<button type="button" class="personal-action" data-add-personal aria-haspopup="dialog" aria-controls="personal-editor" hidden>Add service</button>`
 	manager = `<section class="account-panel-section" id="personal-manager" aria-labelledby="personal-manager-title" hidden>
 <h3 class="account-panel-heading" id="personal-manager-title">Your services</h3>
 <p class="personal-hint" id="personal-manager-status" role="status" aria-live="polite">Loading your services…</p>
 <ul id="personal-list" class="personal-list"></ul>
 <div id="personal-recovery" hidden><p class="personal-hint" id="personal-recovery-help"></p>
+<details><summary>Review browser copy</summary><ul id="personal-recovery-list" class="personal-list"></ul></details>
 <button type="button" class="personal-action" id="personal-restore" hidden>Restore from this browser</button>
 <button type="button" class="personal-action" id="personal-adopt" hidden>Use current server copy</button></div>
 <button type="button" class="personal-action" id="personal-refresh" hidden>Reload current services</button>
 </section>`
 	var choices strings.Builder
-	choices.WriteString(`<option value="" data-icon-path="/static/service-icons/generic.svg">Default (generic service)</option>`)
+	choices.WriteString(`<option value="" data-icon-path="/static/service-icons/generic.svg">Inherit shared default (otherwise generic)</option>`)
 	for _, icon := range serviceIcons {
 		fmt.Fprintf(&choices, `<option value="%s" data-icon-path="%s">%s</option>`, icon.ID, icon.Path, html.EscapeString(icon.Label))
 	}
@@ -48,7 +68,7 @@ func renderPersonalServicesUI(state *PersonalServicesState) (markers, add, manag
 <dialog id="personal-editor" class="service-editor" aria-labelledby="personal-editor-title" aria-describedby="personal-editor-help">
 <form id="personal-editor-form">
 <h2 id="personal-editor-title" tabindex="-1" autofocus>Add service</h2>
-<p id="personal-editor-help">Only for you. Available across your devices while this server runs. After a restart, a browser copy can be restored, but it may not be the newest.</p>
+<p id="personal-editor-help">` + storageHelp + `</p>
 <p id="personal-editor-status" role="status" aria-live="polite"></p>
 <fieldset id="personal-editor-fields" disabled>
 <label for="personal-editor-name">Display name</label>
@@ -57,7 +77,7 @@ func renderPersonalServicesUI(state *PersonalServicesState) (markers, add, manag
 <input id="personal-editor-url" type="text" inputmode="url" maxlength="2048" autocomplete="off" spellcheck="false" autocapitalize="none" placeholder="https://device.tailnet.ts.net" aria-describedby="personal-url-help" required>
 <p id="personal-url-help" class="service-editor-hint">Use the normal HTTPS launch address, with an optional port and path. No query strings or pairing links. A saved link appears only when current policy evidence permits it; reachability is not checked.</p>
 <label for="personal-editor-icon">Local icon</label>
-<div class="service-icon-picker"><img id="personal-editor-preview" src="/static/service-icons/generic.svg" width="40" height="40" alt=""><select id="personal-editor-icon">` + choices.String() + `</select></div>
+<div class="service-icon-picker"><img id="personal-editor-preview" src="/static/service-icons/generic.svg" width="40" height="40" alt="" hidden><select id="personal-editor-icon">` + choices.String() + `</select></div>
 </fieldset>
 <div class="service-editor-actions"><button type="submit" class="service-editor-primary" id="personal-editor-save" disabled>Save</button><button type="button" id="personal-editor-cancel">Cancel</button></div>
 <div class="service-editor-secondary"><button type="button" id="personal-editor-delete" hidden>Delete service</button><button type="button" id="personal-editor-reload" hidden>Reload for review</button></div>

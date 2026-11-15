@@ -205,6 +205,9 @@ func TestTailscaleLoadHostnameSuggestionsCollectsNameAndHostname(t *testing.T) {
 	if len(result.Nodes) != 1 || result.Nodes[0].Name != "device.tailnet.ts.net" {
 		t.Fatalf("result nodes = %#v", result.Nodes)
 	}
+	if got, want := result.TailscaleUsersByLogin, map[string]TailscaleUserIdentity{"owner@example.com": {ID: "user-1", DirectMember: true}}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("hostname-suggestion identity evidence = %#v, want %#v", got, want)
+	}
 	if got, want := names, []string{"device.tailnet.ts.net", "service.internal.example.com"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("candidate names = %#v, want %#v", got, want)
 	}
@@ -272,6 +275,7 @@ func TestTailscaleLoadFeedsGrantBackedMachineEvaluator(t *testing.T) {
 	snapshot := &CacheData{
 		Policy:                    result.Policy,
 		Nodes:                     result.Nodes,
+		TailscaleUsersByLogin:     result.TailscaleUsersByLogin,
 		GrantRoleSelectorsByLogin: result.GrantRoleSelectorsByLogin,
 		MachineSSHCapableByID:     result.MachineSSHCapableByID,
 		ControlPlane:              result.Metadata,
@@ -340,6 +344,19 @@ func TestTailscaleUserRolesBuildGrantMembership(t *testing.T) {
 	if _, exists := result.GrantRoleSelectorsByLogin["shared@example.com"]; exists {
 		t.Fatalf("shared user received Grant role selectors: %#v", result.GrantRoleSelectorsByLogin)
 	}
+	wantIdentities := map[string]TailscaleUserIdentity{
+		"owner@example.com":   {ID: "1", DirectMember: true},
+		"admin@example.com":   {ID: "2", DirectMember: true},
+		"member@example.com":  {ID: "3", DirectMember: true},
+		"it@example.com":      {ID: "4", DirectMember: true},
+		"network@example.com": {ID: "5", DirectMember: true},
+		"billing@example.com": {ID: "6", DirectMember: true},
+		"auditor@example.com": {ID: "7", DirectMember: true},
+		"shared@example.com":  {ID: "8", DirectMember: false},
+	}
+	if !reflect.DeepEqual(result.TailscaleUsersByLogin, wantIdentities) {
+		t.Fatalf("TailscaleUsersByLogin = %#v, want %#v", result.TailscaleUsersByLogin, wantIdentities)
+	}
 }
 
 func TestTailscaleEmptyUsersBuildCompleteEmptyGrantMembership(t *testing.T) {
@@ -352,6 +369,56 @@ func TestTailscaleEmptyUsersBuildCompleteEmptyGrantMembership(t *testing.T) {
 	}
 	if result.GrantRoleSelectorsByLogin == nil || len(result.GrantRoleSelectorsByLogin) != 0 {
 		t.Fatalf("GrantRoleSelectorsByLogin = %#v, want complete empty mapping", result.GrantRoleSelectorsByLogin)
+	}
+	if result.TailscaleUsersByLogin == nil || len(result.TailscaleUsersByLogin) != 0 {
+		t.Fatalf("TailscaleUsersByLogin = %#v, want complete empty mapping", result.TailscaleUsersByLogin)
+	}
+}
+
+func TestTailscaleIdentityPreservesReferenceNormalizationAndExactLogin(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		id   string
+		want string
+	}{
+		{name: "numeric", id: `42`, want: "42"},
+		{name: "padded string", id: `"  user-1  "`, want: "user-1"},
+		{name: "opaque string", id: `"opaque/id:!"`, want: "opaque/id:!"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			client, closeServer := tailscaleClientWithBodies(t,
+				`{"users":[{"id":`+test.id+`,"loginName":"Alice@Example.com","type":"member","role":"member"}]}`,
+				`{"devices":[]}`, "")
+			defer closeServer()
+			result, err := client.Load(context.Background(), nil)
+			if err != nil {
+				t.Fatalf("Load() error = %v", err)
+			}
+			want := map[string]TailscaleUserIdentity{"Alice@Example.com": {ID: test.want, DirectMember: true}}
+			if !reflect.DeepEqual(result.TailscaleUsersByLogin, want) {
+				t.Fatalf("identity mapping = %#v, want %#v", result.TailscaleUsersByLogin, want)
+			}
+		})
+	}
+}
+
+func TestTailscaleIdentityEvidenceIsNotJSON(t *testing.T) {
+	client, closeServer := tailscaleClientWithBodies(t,
+		`{"users":[{"id":"identity-id-canary","loginName":"identity-login-canary@example.com","type":"shared","role":"admin"}]}`,
+		`{"devices":[]}`, "")
+	defer closeServer()
+	result, err := client.Load(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	for _, value := range []any{result, &CacheData{TailscaleUsersByLogin: result.TailscaleUsersByLogin}} {
+		encoded, err := json.Marshal(value)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(encoded), "identity-") || strings.Contains(string(encoded), "TailscaleUsersByLogin") {
+			t.Fatalf("identity evidence serialized: %s", encoded)
+		}
 	}
 }
 
@@ -377,11 +444,15 @@ func TestTailscaleRejectsInvalidUserTypeAndRole(t *testing.T) {
 	}
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
-			client, closeServer := tailscaleClientWithBodies(t, `{"users":[`+test.user+`]}`, `{"devices":[]}`, "")
+			client, closeServer := tailscaleClientWithBodies(t, `{"users":[{"id":"valid","loginName":"valid@example.com","type":"member","role":"owner"},`+test.user+`]}`, `{"devices":[]}`, "")
 			defer closeServer()
-			_, err := client.Load(context.Background(), nil)
+			result, err := client.Load(context.Background(), nil)
 			if err == nil || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("Load() error = %v, want %q", err, test.want)
+			}
+			var loadErr *controlPlaneLoadError
+			if result != nil || !errors.As(err, &loadErr) || loadErr.Stage != controlPlaneStageUsers {
+				t.Fatalf("Load() returned partial evidence or wrong stage: result=%#v err=%v", result, err)
 			}
 			if strings.Contains(err.Error(), "alice@example.com") {
 				t.Fatalf("Load() error exposed login: %v", err)

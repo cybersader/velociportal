@@ -138,23 +138,25 @@ func (c *TailscaleClient) load(ctx context.Context, progress controlPlaneProgres
 	}
 	reportControlPlaneProgress(progress, controlPlaneStagePolicy, policyResult.Policy.accessRuleCount())
 
-	users, grantRoleSelectorsByLogin, err := c.fetchUsers(ctx)
+	users, err := c.fetchUsers(ctx)
 	if err != nil {
 		return nil, nil, &controlPlaneLoadError{Provider: c.Provider(), Stage: controlPlaneStageUsers, Err: err}
 	}
-	reportControlPlaneProgress(progress, controlPlaneStageUsers, len(users))
+	reportControlPlaneProgress(progress, controlPlaneStageUsers, len(users.Users))
 
-	deviceLoad, err := c.fetchDevices(ctx, users, includeCandidateNames)
+	deviceLoad, err := c.fetchDevices(ctx, users.Users, includeCandidateNames)
 	if err != nil {
 		return nil, nil, &controlPlaneLoadError{Provider: c.Provider(), Stage: controlPlaneStageDevices, Err: err}
 	}
 	reportControlPlaneProgress(progress, controlPlaneStageDevices, len(deviceLoad.Nodes))
 
 	return &ControlPlaneResult{
-		Policy:                    policyResult.Policy,
-		Nodes:                     deviceLoad.Nodes,
-		GrantRoleSelectorsByLogin: grantRoleSelectorsByLogin,
-		MachineSSHCapableByID:     deviceLoad.SSHCapableByID,
+		Policy:                        policyResult.Policy,
+		Nodes:                         deviceLoad.Nodes,
+		TailscaleUsersByLogin:         users.TailscaleUsersByLogin,
+		GrantRoleSelectorsByLogin:     users.GrantRoleSelectorsByLogin,
+		MachineSSHCapableByID:         deviceLoad.SSHCapableByID,
+		PresentationDeviceIDsByNodeID: deviceLoad.PresentationDeviceIDsByNodeID,
 		Metadata: ControlPlaneMetadata{
 			Provider:     c.Provider(),
 			PolicyMode:   policyResult.PolicyMode,
@@ -175,50 +177,75 @@ func (c *TailscaleClient) fetchPolicy(ctx context.Context) (*validatedPolicy, er
 	return validated, nil
 }
 
-func (c *TailscaleClient) fetchUsers(ctx context.Context) ([]tailscaleUserDTO, map[string][]string, error) {
+type tailscaleUserLoad struct {
+	Users                     []tailscaleUserDTO
+	TailscaleUsersByLogin     map[string]TailscaleUserIdentity
+	GrantRoleSelectorsByLogin map[string][]string
+}
+
+func (c *TailscaleClient) fetchUsers(ctx context.Context) (*tailscaleUserLoad, error) {
 	body, header, err := c.doAPI(ctx, http.MethodGet, "/tailnet/-/users")
 	if err != nil {
-		return nil, nil, fmt.Errorf("fetch users: %w", err)
+		return nil, fmt.Errorf("fetch users: %w", err)
 	}
-	var envelope map[string]json.RawMessage
-	if err := json.Unmarshal(body, &envelope); err != nil {
-		return nil, nil, fmt.Errorf("fetch users: decode response: %w", err)
+	if !losslessTailscaleUsersJSON(body) {
+		return nil, errors.New("fetch users: invalid JSON or Unicode")
+	}
+	envelope, err := tailscaleUsersObject(body, "users")
+	if err != nil {
+		return nil, fmt.Errorf("fetch users: decode response: %w", err)
 	}
 	if err := rejectPartialTailscaleResponse(envelope, header); err != nil {
-		return nil, nil, fmt.Errorf("fetch users: %w", err)
+		return nil, fmt.Errorf("fetch users: %w", err)
 	}
 	rawUsers, ok := envelope["users"]
 	if !ok {
-		return nil, nil, fmt.Errorf("fetch users: response is missing users")
+		return nil, fmt.Errorf("fetch users: response is missing users")
 	}
 	if bytes.Equal(bytes.TrimSpace(rawUsers), []byte("null")) {
-		return nil, nil, fmt.Errorf("fetch users: users must be an array")
+		return nil, fmt.Errorf("fetch users: users must be an array")
 	}
-	var users []tailscaleUserDTO
-	if err := json.Unmarshal(rawUsers, &users); err != nil {
-		return nil, nil, fmt.Errorf("fetch users: decode users: %w", err)
+	var records []json.RawMessage
+	if err := json.Unmarshal(rawUsers, &records); err != nil {
+		return nil, errors.New("fetch users: users must be an array")
 	}
-	grantRoleSelectorsByLogin, err := validateTailscaleUsers(users)
+	users := make([]tailscaleUserDTO, len(records))
+	for i, raw := range records {
+		if _, err := tailscaleUsersObject(raw, "id", "loginName", "type", "role"); err != nil {
+			return nil, fmt.Errorf("fetch users: user %d has ambiguous or invalid fields", i)
+		}
+		if err := json.Unmarshal(raw, &users[i]); err != nil {
+			return nil, fmt.Errorf("fetch users: user %d has invalid identity fields", i)
+		}
+	}
+	validated, err := validateTailscaleUsers(users)
 	if err != nil {
-		return nil, nil, fmt.Errorf("fetch users: %w", err)
+		return nil, fmt.Errorf("fetch users: %w", err)
 	}
-	return users, grantRoleSelectorsByLogin, nil
+	return validated, nil
 }
 
-func validateTailscaleUsers(users []tailscaleUserDTO) (map[string][]string, error) {
+func validateTailscaleUsers(users []tailscaleUserDTO) (*tailscaleUserLoad, error) {
 	ids := make(map[string]int, len(users))
 	logins := make(map[string]int, len(users))
-	grantRoleSelectorsByLogin := make(map[string][]string)
+	loaded := &tailscaleUserLoad{
+		Users:                     users,
+		TailscaleUsersByLogin:     make(map[string]TailscaleUserIdentity, len(users)),
+		GrantRoleSelectorsByLogin: make(map[string][]string),
+	}
 	for index, user := range users {
-		id, err := tailscaleReference(user.ID)
-		if err != nil || id == "" {
+		if !losslessTailscaleUsersJSON(user.ID) {
 			return nil, fmt.Errorf("user %d has a blank or invalid id", index)
 		}
-		login := strings.TrimSpace(user.LoginName)
-		if login == "" {
+		id, err := tailscaleReference(user.ID)
+		if err != nil || !validTailscaleUserID(id) {
+			return nil, fmt.Errorf("user %d has a blank or invalid id", index)
+		}
+		login := user.LoginName
+		if strings.TrimSpace(login) == "" {
 			return nil, fmt.Errorf("user %d has a blank loginName", index)
 		}
-		if login != user.LoginName {
+		if !validPersonalLogin(login) {
 			return nil, fmt.Errorf("user %d has a non-canonical loginName", index)
 		}
 		userType, err := tailscaleUserString(user.Type, index, "type")
@@ -243,6 +270,9 @@ func validateTailscaleUsers(users []tailscaleUserDTO) (map[string][]string, erro
 		}
 		ids[id] = index
 		logins[login] = index
+		loaded.TailscaleUsersByLogin[login] = TailscaleUserIdentity{
+			ID: id, DirectMember: userType == tailscaleUserTypeMember,
+		}
 		if userType == tailscaleUserTypeMember {
 			selectors := []string{
 				"autogroup:member",
@@ -251,7 +281,7 @@ func validateTailscaleUsers(users []tailscaleUserDTO) (map[string][]string, erro
 			if role == "owner" {
 				selectors = append(selectors, "autogroup:admin")
 			}
-			grantRoleSelectorsByLogin[login] = normalizeStrings(selectors)
+			loaded.GrantRoleSelectorsByLogin[login] = normalizeStrings(selectors)
 		}
 	}
 	for id, idIndex := range ids {
@@ -259,7 +289,7 @@ func validateTailscaleUsers(users []tailscaleUserDTO) (map[string][]string, erro
 			return nil, fmt.Errorf("users %d and %d create an ambiguous owner reference", idIndex, loginIndex)
 		}
 	}
-	return grantRoleSelectorsByLogin, nil
+	return loaded, nil
 }
 
 func tailscaleUserString(raw json.RawMessage, index int, field string) (string, error) {
@@ -281,9 +311,10 @@ func tailscaleUserString(raw json.RawMessage, index int, field string) (string, 
 }
 
 type tailscaleDeviceLoad struct {
-	Nodes          []Node
-	CandidateNames []string
-	SSHCapableByID map[string]bool
+	Nodes                         []Node
+	CandidateNames                []string
+	SSHCapableByID                map[string]bool
+	PresentationDeviceIDsByNodeID map[string]ProviderDeviceID `json:"-"`
 }
 
 func (c *TailscaleClient) fetchDevices(ctx context.Context, users []tailscaleUserDTO, includeCandidateNames bool) (tailscaleDeviceLoad, error) {
@@ -370,6 +401,7 @@ func (c *TailscaleClient) fetchDevices(ctx context.Context, users []tailscaleUse
 			loaded.CandidateNames = append(loaded.CandidateNames, device.Name, device.Hostname)
 		}
 	}
+	loaded.PresentationDeviceIDsByNodeID = presentationDeviceIDsByNodeID(loaded.Nodes, tailscalePresentationDeviceIDs(body, len(devices)))
 	return loaded, nil
 }
 

@@ -47,6 +47,8 @@ type PersonalServicesDocument struct {
 // without number rounding. An absent collection has revision "0", not an
 // initialized empty document. Every successful mutation increments it once.
 type PersonalServicesState struct {
+	Durable     bool                     `json:"durable,omitempty"`
+	StoreID     string                   `json:"store_id,omitempty"`
 	Generation  string                   `json:"generation"`
 	Revision    string                   `json:"revision"`
 	Initialized bool                     `json:"initialized"`
@@ -57,6 +59,7 @@ type PersonalServicesState struct {
 // Create has Name/URL/Icon, update additionally ID, delete only ID, and restore
 // only Document. Every action requires Generation and Revision, even the first.
 type PersonalServicesMutation struct {
+	StoreID    string                    `json:"store_id,omitempty"`
 	Action     string                    `json:"action"`
 	Generation string                    `json:"generation"`
 	Revision   string                    `json:"revision"`
@@ -73,8 +76,9 @@ type personalCollection struct {
 	document PersonalServicesDocument
 }
 
-// PersonalServicesStore is deliberately only a bounded volatile map. There is
-// no filesystem, eviction, background work, upstream I/O or storage adapter.
+// PersonalServicesStore owns either a bounded volatile map or one private
+// backend, never both catalogs. Lock order is application mu -> backend mu.
+// Backend final checks must not reenter either lock. There is no background writer.
 type PersonalServicesStore struct {
 	mu          sync.Mutex
 	config      PersonalServicesConfig
@@ -82,6 +86,8 @@ type PersonalServicesStore struct {
 	secret      [32]byte
 	collections map[string]personalCollection
 	requests    chan struct{}
+	storage     *personalSnapshotStorage
+	closed      bool
 }
 
 func NewPersonalServicesStore(config *PersonalServicesConfig) (*PersonalServicesStore, error) {
@@ -99,6 +105,18 @@ func NewPersonalServicesStore(config *PersonalServicesConfig) (*PersonalServices
 	s.generation, err = personalRandomID("")
 	if err != nil {
 		return nil, err
+	}
+	if config.File != "" {
+		if !validPersonalFile(config.File) || !validPersonalNamespace(config.Namespace) {
+			return nil, errPersonalInvalid
+		}
+		s.storage, err = newPersonalSnapshotStorage(config.File, config.Namespace, config.ForbiddenPaths)
+		if err != nil {
+			return nil, err
+		}
+		s.collections = nil
+	} else if config.Namespace != "" {
+		return nil, errPersonalInvalid
 	}
 	return s, nil
 }
@@ -155,6 +173,9 @@ func (s *PersonalServicesStore) Read(login string) (PersonalServicesState, error
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.closed || s.storage != nil {
+		return PersonalServicesState{}, errPersonalUnavailable
+	}
 	return s.readLocked(login), nil
 }
 
@@ -170,8 +191,15 @@ func (s *PersonalServicesStore) Mutate(login string, request PersonalServicesMut
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.closed || s.storage != nil {
+		return PersonalServicesState{}, errPersonalUnavailable
+	}
+	return s.mutateRAMLocked(login, request)
+}
+
+func (s *PersonalServicesStore) mutateRAMLocked(login string, request PersonalServicesMutation) (PersonalServicesState, error) {
 	current, initialized := s.collections[login]
-	if request.Generation != s.generation || request.Revision != strconv.FormatUint(current.revision, 10) {
+	if request.StoreID != "" || request.Generation != s.generation || request.Revision != strconv.FormatUint(current.revision, 10) {
 		return PersonalServicesState{}, errPersonalConflict
 	}
 	if current.revision == math.MaxUint64 {
@@ -180,23 +208,33 @@ func (s *PersonalServicesStore) Mutate(login string, request PersonalServicesMut
 	if !initialized && len(s.collections) >= maxPersonalCollections {
 		return PersonalServicesState{}, errPersonalCapacity
 	}
-	document := copyPersonalDocument(current.document)
+	document, err := mutatePersonalDocument(current.document, initialized, request)
+	if err != nil {
+		return PersonalServicesState{}, err
+	}
+	s.collections[login] = personalCollection{revision: current.revision + 1, document: copyPersonalDocument(document)}
+	return s.readLocked(login), nil
+}
+
+// Pure bounded authored-data operation shared by volatile and durable commits.
+func mutatePersonalDocument(current PersonalServicesDocument, initialized bool, request PersonalServicesMutation) (PersonalServicesDocument, error) {
+	document := copyPersonalDocument(current)
 	switch request.Action {
 	case "create":
 		if request.ID != "" || request.Document != nil {
-			return PersonalServicesState{}, errPersonalInvalid
+			return PersonalServicesDocument{}, errPersonalInvalid
 		}
 		if len(document.Entries) >= maxPersonalEntries {
-			return PersonalServicesState{}, errPersonalCapacity
+			return PersonalServicesDocument{}, errPersonalCapacity
 		}
 		id, err := personalRandomID("ps_")
 		if err != nil {
-			return PersonalServicesState{}, err
+			return PersonalServicesDocument{}, err
 		}
 		document.Entries = append(document.Entries, PersonalService{ID: id, Name: request.Name, URL: request.URL, Icon: request.Icon})
 	case "update", "delete":
 		if !validPersonalID(request.ID) || request.Document != nil || request.Action == "delete" && (request.Name != "" || request.URL != "" || request.Icon != "") {
-			return PersonalServicesState{}, errPersonalInvalid
+			return PersonalServicesDocument{}, errPersonalInvalid
 		}
 		index := -1
 		for i, entry := range document.Entries {
@@ -206,7 +244,7 @@ func (s *PersonalServicesStore) Mutate(login string, request PersonalServicesMut
 			}
 		}
 		if index < 0 {
-			return PersonalServicesState{}, errPersonalConflict
+			return PersonalServicesDocument{}, errPersonalConflict
 		}
 		if request.Action == "delete" {
 			document.Entries = append(document.Entries[:index], document.Entries[index+1:]...)
@@ -215,21 +253,19 @@ func (s *PersonalServicesStore) Mutate(login string, request PersonalServicesMut
 		}
 	case "restore":
 		if initialized {
-			return PersonalServicesState{}, errPersonalConflict
+			return PersonalServicesDocument{}, errPersonalConflict
 		}
 		if request.Document == nil || request.ID != "" || request.Name != "" || request.URL != "" || request.Icon != "" {
-			return PersonalServicesState{}, errPersonalInvalid
+			return PersonalServicesDocument{}, errPersonalInvalid
 		}
 		document = *request.Document
 	default:
-		return PersonalServicesState{}, errPersonalInvalid
+		return PersonalServicesDocument{}, errPersonalInvalid
 	}
 	if err := validatePersonalDocument(document); err != nil {
-		return PersonalServicesState{}, err
+		return PersonalServicesDocument{}, err
 	}
-	// Never retain a caller-owned restore slice.
-	s.collections[login] = personalCollection{revision: current.revision + 1, document: copyPersonalDocument(document)}
-	return s.readLocked(login), nil
+	return copyPersonalDocument(document), nil
 }
 
 func validatePersonalDocument(document PersonalServicesDocument) error {
@@ -312,43 +348,84 @@ type PersonalServiceStatus struct {
 	Status string `json:"status"`
 }
 
+// Internal, current match evidence only. Nothing here is authored state or a
+// public response field. A zero value is not evidence of an active destination.
+type personalServiceEvidence struct {
+	node        Node
+	hostname    string
+	port        int
+	escapedPath string
+}
+
+type personalServiceEvaluator struct {
+	data       *CacheData
+	ids, roles map[string]bool
+	mc         *matchContext
+}
+
+func newPersonalServiceEvaluator(identity *Identity, data *CacheData, now time.Time, interval time.Duration) personalServiceEvaluator {
+	available := identity != nil && validPersonalLogin(identity.Login) && data != nil && data.Policy != nil && data.ControlPlane.Provider == controlPlaneTailscale && interval > 0 && !data.UpdatedAt.IsZero() && !data.UpdatedAt.After(now) && now.Sub(data.UpdatedAt) <= interval*3
+	// Preserve the existing exact authoritative membership and freshness rules.
+	if available {
+		_, available = data.GrantRoleSelectorsByLogin[identity.Login]
+		if available {
+			return personalServiceEvaluator{data: data, ids: buildSSHIdentitySet(identity.Login, data.Policy), roles: grantRoleSelectorSet(identity.Login, data), mc: buildMatchContext(identity.Login, data)}
+		}
+	}
+	return personalServiceEvaluator{}
+}
+
+// Rendering and future application-target derivation use this one evaluator,
+// never a second hostname/Grant matcher. Stable presentation IDs do not grant or
+// suppress activity. The caller separately owns the private collection read.
+func (e personalServiceEvaluator) evaluate(entry PersonalService) (personalServiceEvidence, bool) {
+	name, port, err := validatePersonalURL(entry.URL)
+	if e.data == nil || err != nil {
+		return personalServiceEvidence{}, false
+	}
+	var selected Node
+	matches := 0
+	for _, node := range e.data.Nodes {
+		if normalized, valid := normalizeMachineTargetName(node.Name); valid && normalized == name {
+			selected = node
+			matches++
+		}
+	}
+	if matches != 1 {
+		return personalServiceEvidence{}, false
+	}
+	if _, _, _, granted := nodeTCPGrantEvidence(selected, e.data.Policy.Grants, e.ids, e.roles, e.mc, port); !granted {
+		return personalServiceEvidence{}, false
+	}
+	// The URL already passed canonical validation above. Preserve its escaped
+	// path exactly; neither path cleaning nor Unicode normalization is permitted.
+	u, _ := url.Parse(entry.URL)
+	path := u.EscapedPath()
+	if path == "" {
+		path = "/"
+	}
+	return personalServiceEvidence{node: selected, hostname: name, port: port, escapedPath: path}, true
+}
+
 // ProjectPersonalServices uses the SAME complete snapshot as the normal portal.
 // Only returned cards may be linked. The authored document must remain separate
 // for editing/recovery. The UI must not pass personal cards to NPM metadata,
 // numeric-ID editing or health joins (PersonalID != "", ID == 0).
 func ProjectPersonalServices(identity *Identity, data *CacheData, state PersonalServicesState, now time.Time, interval time.Duration) ([]ServiceCard, []PersonalServiceStatus) {
+	return projectPersonalServices(identity, data, state, now, interval, serviceMetadataBinding{})
+}
+
+// Only portal presentation supplies the common binding. API authored documents
+// and activity statuses do not need artwork and retain the undecorated wrapper.
+func projectPersonalServices(identity *Identity, data *CacheData, state PersonalServicesState, now time.Time, interval time.Duration, binding serviceMetadataBinding) ([]ServiceCard, []PersonalServiceStatus) {
 	cards := []ServiceCard{}
 	statuses := make([]PersonalServiceStatus, 0, len(state.Document.Entries))
-	available := identity != nil && validPersonalLogin(identity.Login) && data != nil && data.Policy != nil && data.ControlPlane.Provider == controlPlaneTailscale && interval > 0 && !data.UpdatedAt.IsZero() && !data.UpdatedAt.After(now) && now.Sub(data.UpdatedAt) <= interval*3
-	// Only the authoritative exact member map can confer human role membership.
-	var ids, roles map[string]bool
-	var mc *matchContext
-	if available {
-		_, available = data.GrantRoleSelectorsByLogin[identity.Login]
-		if available {
-			ids = buildSSHIdentitySet(identity.Login, data.Policy)
-			roles = grantRoleSelectorSet(identity.Login, data)
-			mc = buildMatchContext(identity.Login, data)
-		}
-	}
+	evaluator := newPersonalServiceEvaluator(identity, data, now, interval)
 	for _, entry := range state.Document.Entries {
 		status := PersonalServiceStatus{ID: entry.ID, Status: "unavailable"}
-		name, port, err := validatePersonalURL(entry.URL)
-		if available && err == nil {
-			var selected Node
-			matches := 0
-			for _, node := range data.Nodes {
-				if normalized, valid := normalizeMachineTargetName(node.Name); valid && normalized == name {
-					selected = node
-					matches++
-				}
-			}
-			if matches == 1 {
-				if _, _, _, granted := nodeTCPGrantEvidence(selected, data.Policy.Grants, ids, roles, mc, port); granted {
-					status.Status = "active"
-					cards = append(cards, ServiceCard{PersonalID: entry.ID, Name: entry.Name, URL: entry.URL, Domain: name, Icon: entry.Icon, LinkState: serviceLinkReady})
-				}
-			}
+		if evidence, active := evaluator.evaluate(entry); active {
+			status.Status = "active"
+			cards = append(cards, ServiceCard{PersonalID: entry.ID, Name: entry.Name, URL: entry.URL, Domain: evidence.hostname, Icon: personalPresentationIcon(entry.Icon, data, binding, evidence), LinkState: serviceLinkReady})
 		}
 		statuses = append(statuses, status)
 	}

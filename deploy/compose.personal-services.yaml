@@ -1,0 +1,18 @@
+# RC.20 CANDIDATE ONLY: not supported by immutable RC.18/RC.19.
+# Tailscale-only alternative to volatile personal RAM. The provider env must set
+# PORTAL_PERSONAL_SERVICES_ORIGIN and PORTAL_STATE_NAMESPACE. The private snapshot
+# must already exist and match that namespace: no bootstrap or permission repair.
+# Independent of metadata: may combine with ONE of compose.service-metadata.yaml
+# (readonly) or compose.service-editor.yaml (writable /service-metadata).
+# Never combine those two metadata overlays. Keep their host directories separate.
+services:
+  velociportal:
+    environment:
+      PORTAL_PERSONAL_SERVICES_FILE: /personal-services/personal.json
+    volumes:
+      - type: bind
+        source: ${VELOCIPORTAL_PERSONAL_SERVICES_DIRECTORY:?set VELOCIPORTAL_PERSONAL_SERVICES_DIRECTORY to a preprovisioned runtime-owned private directory}
+        target: /personal-services
+        read_only: false
+        bind:
+          create_host_path: false

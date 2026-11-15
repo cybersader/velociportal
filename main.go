@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -45,9 +46,11 @@ type Config struct {
 	NPMEmail                    string
 	NPMPassword                 string
 	ServiceMetadataFile         string
+	StateNamespace              string
 	ServiceMetadataEditor       *ServiceMetadataEditorConfig
 	PortalEditMode              serviceEditMode
 	PersonalServices            *PersonalServicesConfig
+	MCP                         *MCPConfig
 	ServiceHealthFile           string
 	ListenAddr                  string
 	PollInterval                time.Duration
@@ -208,7 +211,22 @@ func loadConfigFrom(lookup configLookup) (*Config, error) {
 		return nil, fmt.Errorf("loadConfig: %w", err)
 	}
 
-	personalServices, err := loadPersonalServicesConfig(lookup, provider)
+	stateNamespace, err := loadStateNamespace(lookup)
+	if err != nil {
+		return nil, fmt.Errorf("loadConfig: %w", err)
+	}
+	personalServices, err := loadPersonalServicesConfig(lookup, provider, stateNamespace)
+	if err != nil {
+		return nil, fmt.Errorf("loadConfig: %w", err)
+	}
+	if stateNamespace != "" && serviceMetadataFile == "" && (personalServices == nil || personalServices.File == "") {
+		return nil, fmt.Errorf("loadConfig: PORTAL_STATE_NAMESPACE requires SERVICE_METADATA_FILE or PORTAL_PERSONAL_SERVICES_FILE")
+	}
+	if serviceMetadataEditor != nil {
+		serviceMetadataEditor.Binding = serviceMetadataBinding{ControlPlane: provider, Namespace: stateNamespace}
+	}
+
+	mcp, err := loadMCPConfig(lookup, serviceMetadataEditor, personalServices)
 	if err != nil {
 		return nil, fmt.Errorf("loadConfig: %w", err)
 	}
@@ -249,9 +267,11 @@ func loadConfigFrom(lookup configLookup) (*Config, error) {
 		NPMEmail:                    strings.TrimSpace(values["NPM_EMAIL"]),
 		NPMPassword:                 values["NPM_PASSWORD"],
 		ServiceMetadataFile:         serviceMetadataFile,
+		StateNamespace:              stateNamespace,
 		ServiceMetadataEditor:       serviceMetadataEditor,
 		PortalEditMode:              portalEditMode,
 		PersonalServices:            personalServices,
+		MCP:                         mcp,
 		ServiceHealthFile:           serviceHealthFile,
 		ListenAddr:                  listenAddr,
 		PollInterval:                interval,
@@ -507,6 +527,57 @@ func runWithLookup(lookup configLookup) error {
 	return runServer(cfg)
 }
 
+// Validate/open private storage first so a collision cannot create a shared
+// lock. On subsequent startup failure release every successfully acquired lock.
+func newPresentationStores(cfg *Config) (*ServiceMetadataEditor, *PersonalServicesStore, error) {
+	personalConfig := cfg.PersonalServices
+	if personalConfig != nil {
+		copy := *personalConfig
+		copy.ForbiddenPaths = append([]string{}, personalConfig.ForbiddenPaths...)
+		if copy.File != "" {
+			if cfg.ControlPlane != controlPlaneTailscale {
+				return nil, nil, errPersonalUnavailable
+			}
+			for _, path := range []string{cfg.ServiceMetadataFile, cfg.ServiceHealthFile} {
+				if path == "" {
+					continue
+				}
+				// Cleaning symlink/../file can change the actual target. Reject
+				// ambiguous spellings rather than exclude the wrong private inode.
+				if filepath.Clean(path) != path {
+					return nil, nil, errPersonalUnavailable
+				}
+				absolute, err := filepath.Abs(path)
+				if err != nil {
+					return nil, nil, errPersonalUnavailable
+				}
+				copy.ForbiddenPaths = append(copy.ForbiddenPaths, absolute)
+			}
+		}
+		personalConfig = &copy
+	}
+	personal, err := NewPersonalServicesStore(personalConfig)
+	if err != nil {
+		return nil, nil, errPersonalUnavailable
+	}
+	if err := preflightServiceMetadataBinding(cfg.ServiceMetadataFile, cfg.metadataBinding()); err != nil {
+		_ = personal.Close()
+		return nil, nil, err
+	}
+	editorConfig := cfg.ServiceMetadataEditor
+	if editorConfig != nil {
+		copy := *editorConfig
+		copy.Binding = cfg.metadataBinding()
+		editorConfig = &copy
+	}
+	editor, err := newServiceMetadataEditor(cfg.ServiceMetadataFile, editorConfig)
+	if err != nil {
+		_ = personal.Close()
+		return nil, nil, err
+	}
+	return editor, personal, nil
+}
+
 func runServer(cfg *Config) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -517,17 +588,14 @@ func runServer(cfg *Config) error {
 	if len(cfg.InactiveControlPlaneKeys) > 0 {
 		slog.Warn("inactive control-plane configuration is ignored", "keys", strings.Join(cfg.InactiveControlPlaneKeys, ","))
 	}
-	editor, err := newServiceMetadataEditor(cfg.ServiceMetadataFile, cfg.ServiceMetadataEditor)
+	editor, personalServices, err := newPresentationStores(cfg)
 	if err != nil {
 		return fmt.Errorf("run: %w", err)
 	}
+	defer personalServices.Close()
 	defer editor.Close()
-	personalServices, err := NewPersonalServicesStore(cfg.PersonalServices)
-	if err != nil {
-		return fmt.Errorf("run: personal services unavailable")
-	}
 	controlPlane, npm := newUpstreamClients(cfg)
-	metadataLoader := serviceMetadataLoaderForPath(cfg.ServiceMetadataFile)
+	metadataLoader := boundServiceMetadataLoaderForPath(cfg.ServiceMetadataFile, cfg.metadataBinding())
 	if editor != nil {
 		// Editing owns the single file. Polling reads the confirmed immutable view;
 		// request-local substitution also defeats an in-flight older poll pointer.
@@ -609,9 +677,14 @@ func newServerMux(cfg *Config, cache *Cache, health *ServiceHealthStore, editor 
 	portal.editMode = cfg.PortalEditMode
 	portal.personal = personalServices
 	portal.pollInterval = cfg.PollInterval
+	portal.metadataBinding = cfg.metadataBinding()
 	portalHandler := IdentityMiddleware(cfg.TrustedProxyCIDR, portal)
-	mountServiceMetadataEditor(mux, editor, cache, cfg.TrustedProxyCIDR, cfg.PollInterval)
+	shared := newSharedIconOperations(cfg, editor, cache, personalServices)
+	mountServiceMetadataEditor(mux, shared)
 	mountPersonalServices(mux, personalServices, cache, cfg.TrustedProxyCIDR, cfg.PollInterval)
+	if cfg.MCP != nil {
+		mountMCP(mux, cfg.MCP, cfg.TrustedProxyCIDR, newMCPApplicationTools(cfg, shared, cache, personalServices))
+	}
 	// Keep the portal root exact: a GET subtree conflicts with the narrower
 	// methodless APIs, which retain their own guarded method rejection.
 	mux.Handle("GET /{$}", portalHandler)

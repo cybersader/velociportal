@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"html"
 	"io"
@@ -21,6 +22,7 @@ type PortalHandler struct {
 	editMode           serviceEditMode
 	personal           *PersonalServicesStore
 	pollInterval       time.Duration
+	metadataBinding    serviceMetadataBinding
 }
 
 func NewPortalHandler(cache *Cache) *PortalHandler {
@@ -51,7 +53,7 @@ func (h *PortalHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	data := h.editor.requestData(h.cache.Get())
+	data := presentationData(h.editor.requestData(h.cache.Get()), h.metadataBinding)
 	if data == nil {
 		http.Error(w, "portal unavailable", http.StatusServiceUnavailable)
 		return
@@ -60,12 +62,19 @@ func (h *PortalHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	cards := MatchServices(identity, data)
 	var personalState *PersonalServicesState
+	var personalRecoveryScope string
+	var personalUnavailable bool
 	if personalRenderIdentity(h.personal, r, identity) {
-		if state, err := h.personal.Read(identity.Login); err == nil {
+		state, err := h.personal.ReadForSnapshot(identity.Login, data, h.pollInterval, time.Now)
+		if err == nil {
 			personalState = &state
 			// Presentation boundary only: existing NPM evaluation and health stay separate.
-			personalCards, _ := ProjectPersonalServices(identity, data, state, start, h.pollInterval)
+			personalCards, _ := projectPersonalServices(identity, data, state, time.Now(), h.pollInterval, h.metadataBinding)
 			cards = append(cards, personalCards...)
+		}
+		if h.personal.storage != nil && (err == nil || errors.Is(err, errPersonalStorageUncertain) || errors.Is(err, errPersonalStorage)) {
+			personalRecoveryScope = personalDraftScope(h.personal.config.Namespace, identity.Login, data, time.Now(), h.pollInterval)
+			personalUnavailable = err != nil && personalRecoveryScope != ""
 		}
 	}
 	machinesAvailable := machineProjectionAvailable(data)
@@ -84,6 +93,7 @@ func (h *PortalHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	opts := portalRenderOptions{
 		Machines:                  machines,
+		MachineIconsByID:          machinePresentationIcons(machines, data, h.metadataBinding),
 		MachinesAvailable:         machinesAvailable,
 		ConsoleEligible:           consoleEligible,
 		MachineConsoleCapableByID: consoleCapableByID,
@@ -94,6 +104,8 @@ func (h *PortalHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		ServiceEditorAvailable:    h.editor != nil || h.editMode == serviceEditBrowser,
 		ServiceEditMode:           h.editMode,
 		Personal:                  personalState,
+		PersonalRecoveryScope:     personalRecoveryScope,
+		PersonalUnavailable:       personalUnavailable,
 	}
 	if err := renderPortalWithOptions(w, identity, cards, opts); err != nil {
 		slog.Error("render portal", "err", err)
@@ -108,6 +120,7 @@ func (h *PortalHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // the complete set derived from the current snapshot and viewer.
 type portalRenderOptions struct {
 	Machines                  []MachineCard
+	MachineIconsByID          map[string]string
 	MachinesAvailable         bool
 	ConsoleEligible           bool
 	MachineConsoleCapableByID map[string]bool
@@ -118,6 +131,8 @@ type portalRenderOptions struct {
 	ServiceEditorAvailable    bool
 	ServiceEditMode           serviceEditMode
 	Personal                  *PersonalServicesState
+	PersonalRecoveryScope     string
+	PersonalUnavailable       bool
 }
 
 func renderPortal(w io.Writer, id *Identity, cards []ServiceCard, healthStores ...*ServiceHealthStore) error {
@@ -172,7 +187,7 @@ func renderPortalWithOptions(w io.Writer, id *Identity, cards []ServiceCard, opt
 		var machinesBody strings.Builder
 		for index, machine := range machines {
 			showConsole := opts.ConsoleEligible && opts.MachineConsoleCapableByID[machine.ID]
-			renderMachineCard(&machinesBody, machine, index+1, showConsole)
+			renderMachineCard(&machinesBody, machine, index+1, showConsole, opts.MachineIconsByID[machine.ID])
 		}
 		if len(machines) == 0 {
 			machinesBody.WriteString(`<div class="empty machine-empty">` +
@@ -212,6 +227,14 @@ func renderPortalWithOptions(w io.Writer, id *Identity, cards []ServiceCard, opt
 		refreshTrigger += ", personal-services-saved from:body"
 	}
 	personalMarkers, personalAdd, personalManager, personalEditor := renderPersonalServicesUI(opts.Personal)
+	if opts.PersonalUnavailable && opts.PersonalRecoveryScope != "" {
+		// No document, version, cards or new editor is supplied on uncertainty.
+		// An already-open same-owner browser can retain its own blocked draft.
+		personalMarkers = `data-personal-enabled="true" data-personal-durable="true" data-personal-unavailable="true"`
+	}
+	if opts.PersonalRecoveryScope != "" {
+		personalMarkers += ` data-personal-owner-scope="` + html.EscapeString(opts.PersonalRecoveryScope) + `"`
+	}
 	page := strings.NewReplacer(
 		"{{USER_NAME}}", html.EscapeString(displayName),
 		"{{USER_LOGIN}}", html.EscapeString(id.Login),
@@ -375,7 +398,7 @@ func renderServiceCard(body *strings.Builder, card ServiceCard, health *ServiceH
 	}
 }
 
-func renderMachineCard(body *strings.Builder, machine MachineCard, index int, consoleEligible bool) {
+func renderMachineCard(body *strings.Builder, machine MachineCard, index int, consoleEligible bool, icon string) {
 	machineID := fmt.Sprintf("machine-%d", index)
 	selectID := machineID + "-user"
 	accountID := machineID + "-account"
@@ -399,12 +422,17 @@ func renderMachineCard(body *strings.Builder, machine MachineCard, index int, co
 		}
 	}
 	mixedAccounts := hasNonroot && len(literalAccess) > 0
+	iconMarkup := ""
+	if validServiceIcon(icon) {
+		iconMarkup = fmt.Sprintf(`<img class="machine-icon" src="%s" width="32" height="32" alt="">`, serviceIconForID(icon).Path)
+	}
 
 	fmt.Fprintf(body,
 		`<article class="machine-row" data-machine="%s" aria-labelledby="%s-name">`+
-			`<div class="machine-identity"><h3 class="machine-name" id="%s-name">%s</h3>`,
+			`<div class="machine-identity">%s<h3 class="machine-name" id="%s-name">%s</h3>`,
 		html.EscapeString(machine.Target),
 		machineID,
+		iconMarkup,
 		machineID,
 		html.EscapeString(shortName),
 	)
@@ -821,6 +849,7 @@ a.card:hover, a.card:focus-visible { border-color: var(--accent); background: va
 .machine-list { display: grid; gap: .55rem; }
 .machine-row { display: grid; grid-template-columns: minmax(14rem, .7fr) minmax(18rem, 1.3fr) 20rem; grid-template-areas: "identity connect actions" "details details details"; gap: .4rem 1rem; align-items: center; min-width: 0; padding: .7rem 1rem; border: 1px solid var(--border); border-radius: 12px; background: var(--card-bg); }
 .machine-identity { grid-area: identity; min-width: 0; }
+.machine-icon { float: left; margin: 0 .65rem .25rem 0; object-fit: contain; }
 .machine-name { margin: 0; color: var(--text); font-size: 1rem; line-height: 1.3; font-weight: 650; overflow-wrap: anywhere; }
 .machine-target { margin: .18rem 0 0; color: var(--muted); font-size: .76rem; line-height: 1.35; overflow-wrap: anywhere; }
 .machine-connect { grid-area: connect; display: grid; grid-template-columns: minmax(0, 1fr); gap: .3rem; min-width: 0; }

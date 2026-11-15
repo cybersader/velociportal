@@ -38,12 +38,22 @@ type ControlPlaneMetadata struct {
 	SupportLevel controlPlaneSupportLevel
 }
 
+// TailscaleUserIdentity retains authoritative Users API evidence, not device ownership.
+// ID uses the existing tailscaleReference normalization; login keys remain exact.
+type TailscaleUserIdentity struct {
+	ID           string
+	DirectMember bool
+}
+
 type ControlPlaneResult struct {
-	Policy                    *Policy
-	Nodes                     []Node
-	GrantRoleSelectorsByLogin map[string][]string
-	MachineSSHCapableByID     map[string]bool
-	Metadata                  ControlPlaneMetadata
+	Policy *Policy
+	Nodes  []Node
+	// Allocated for a complete Tailscale users response, including empty; nil for Headscale.
+	TailscaleUsersByLogin         map[string]TailscaleUserIdentity `json:"-"`
+	GrantRoleSelectorsByLogin     map[string][]string
+	MachineSSHCapableByID         map[string]bool
+	PresentationDeviceIDsByNodeID map[string]ProviderDeviceID `json:"-"`
+	Metadata                      ControlPlaneMetadata
 }
 
 type controlPlaneLoadStage string
