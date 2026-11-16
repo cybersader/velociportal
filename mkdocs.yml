@@ -8,7 +8,7 @@ copyright: Velociportal is a visibility layer, not an authentication or enforcem
 
 theme:
   name: material
-  logo: assets/logo-card.svg
+  logo: assets/pixel-raptor.svg
   favicon: assets/logo-card.svg
   font: false
   palette:
@@ -33,7 +33,6 @@ theme:
     - navigation.footer
     - navigation.indexes
     - navigation.sections
-    - navigation.tabs
     - navigation.top
     - search.highlight
     - search.share

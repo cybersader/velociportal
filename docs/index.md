@@ -1,16 +1,25 @@
-<div class="vp-hero" markdown>
+<div class="vp-field-heading" markdown>
 
-<div class="vp-hero__content" markdown>
+# Velociportal
 
-<span class="vp-kicker">Self-hosted · identity-aware · visibility only</span>
+<img class="vp-field-art" src="assets/pixel-field-guide.svg" alt="" width="192" height="64">
 
-# Your network policy is your dashboard policy.
+</div>
 
-<p class="vp-hero__lede">Velociportal reads one selected Headscale or Tailscale SaaS policy source plus Nginx Proxy Manager proxy hosts, then renders server-filtered service cards and, for an available Tailscale SSH projection, separate machine cards for the human identity supplied by Tailscale Serve.</p>
+<div class="vp-intro" markdown>
+
+<p class="vp-intro__premise" id="your-network-policy-is-your-dashboard-policy">Your network policy is your dashboard policy.</p>
+
+Velociportal reads one selected Headscale or Tailscale SaaS policy source plus Nginx Proxy Manager proxy hosts, then renders server-filtered service cards and, for an available Tailscale SSH projection, separate machine cards for the human identity supplied by Tailscale Serve.
+
+<p class="vp-scope">Self-hosted · identity-aware · visibility only</p>
 
 <div class="vp-actions" markdown>
-[Start the TrueNAS Quickstart](guides/truenas-scale.md){ .md-button .md-button--primary }
-[See how trust works](reference/tailscale-headers.md){ .md-button }
+
+[Start the TrueNAS Quickstart](guides/truenas-scale.md)
+
+[See how trust works](reference/tailscale-headers.md)
+
 </div>
 
 <div class="vp-chip-row" aria-label="Project status">
@@ -18,12 +27,6 @@
 <span class="vp-chip vp-chip--validation">Tailscale SaaS preview</span>
 <span class="vp-chip vp-chip--validation">Live acceptance pending</span>
 <span class="vp-chip vp-chip--security">Identity: tailnet Serve</span>
-</div>
-
-</div>
-
-<div class="vp-hero__art">
-<img src="assets/logo-card.svg" alt="Velociportal raptor logo" width="256" height="256">
 </div>
 
 </div>
@@ -58,45 +61,45 @@ In Headscale mode, existing NPM provides the trusted HTTPS endpoint needed befor
 
 ## Follow one operator journey
 
-<div class="grid cards" markdown>
+<div class="vp-directory" markdown>
 
--   :material-server-network: **Start with the TrueNAS Quickstart**
+-   **Start with the TrueNAS Quickstart**
 
     Create the private bridge, attach Headscale and NPM one at a time through TrueNAS UI settings while verifying egress and health, configure the trusted NPM control proxy, bootstrap separate keys, configure policy and Serve, deploy one container, and run acceptance.
 
     [Open the Quickstart →](guides/truenas-scale.md)
 
--   :material-router-network: **Understand Headscale + NPM**
+-   **Understand Headscale + NPM**
 
     See the separate pre-tailnet control path, direct runtime path, NPM trust boundary, exact aliases, and backup requirements.
 
     [Review the architecture →](guides/headscale-npm.md)
 
--   :material-cloud-outline: **Use Tailscale SaaS preview**
+-   **Use Tailscale SaaS preview**
 
     Configure a dedicated four-scope OAuth client, fixed verified API origin, strict owner mapping, the shared legacy ACL boundary, and the unchanged NPM/Serve deployment shape. Keep the preview label until live acceptance passes.
 
     [Open the SaaS preview →](guides/tailscale-saas-npm.md)
 
--   :material-shield-account-outline: **Understand identity trust**
+-   **Understand identity trust**
 
     Learn why HTTP Serve over WireGuard is the canonical browser path, why NPM cannot assert the portal identity, and how bypass attempts are handled.
 
     [Review identity headers →](reference/tailscale-headers.md)
 
--   :material-test-tube: **Validate a real deployment**
+-   **Validate a real deployment**
 
     Compare two users, NPM joins, card URLs, restart persistence, LAN-negative results, and actual selected-control-plane reachability before making a support claim.
 
     [Open the validation worksheet →](getting-started/validation.md)
 
--   :material-certificate-outline: **Use optional native Headscale TLS**
+-   **Use optional native Headscale TLS**
 
     Native Headscale HTTPS with a private CA remains an alternative. It is not required by the canonical NPM-control-proxy path and adds no PKI service.
 
     [Review the optional overlay →](guides/private-tls.md)
 
--   :material-tools: **Develop or diagnose from source**
+-   **Develop or diagnose from source**
 
     Use repository commands for contributors and advanced diagnostics, not as the normal NAS installation path.
 
