@@ -1,0 +1,12 @@
+{#- Home page only (docs/index.md sets `template: home.html`). Adds one
+    illustration above the unchanged page content and its local motion script;
+    Material's header, navigation, search and footer stay inherited. -#}
+{% extends "main.html" %}
+{% block content %}
+  {% include "partials/vp-home-scene.html" %}
+  {{ super() }}
+{% endblock %}
+{% block scripts %}
+  {{ super() }}
+  <script src="{{ 'assets/javascripts/home-scene.js' | url }}"></script>
+{% endblock %}

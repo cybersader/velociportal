@@ -1,10 +1,8 @@
-<div class="vp-field-heading" markdown>
+---
+template: home.html
+---
 
 # Velociportal
-
-<img class="vp-field-art" src="assets/pixel-field-guide.svg" alt="" width="192" height="64">
-
-</div>
 
 <div class="vp-intro" markdown>
 
