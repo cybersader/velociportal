@@ -19,6 +19,10 @@ validation-*.txt
 # Local agent memory contains user-specific workflow context, not project source.
 .claude/agent-memory/
 
+# Private machine-specific agent guidance (release state, local paths). Shared
+# project rules live in AGENTS.md.
+/CLAUDE.local.md
+
 # Private-PKI material stays outside the repository. Public roots and leaf
 # certificates can still disclose private infrastructure names.
 *.key
