@@ -61,11 +61,11 @@ vet:
 lint: fmt-check vet
 
 # One portable contributor command. It runs, in order, the same targets that the
-# CI test, build and docker jobs call. It needs Go, a C toolchain for -race,
-# Docker with Compose v2 and python3. It reads only tracked example files and
-# needs no credentials, .env file, registry login or live upstream services.
-# The strict documentation build is separate (docs-check) because it needs MkDocs.
-check: fmt-check vet test cli-smoke compose-check image-check
+# CI test, build, docker and docs jobs call. It needs Go, a C toolchain for -race,
+# Docker with Compose v2, python3 and the pinned documentation dependencies.
+# It reads only tracked example files and needs no credentials, .env file,
+# registry login or live upstream services.
+check: fmt-check vet test cli-smoke compose-check image-check docs-check
 
 # Render the contributor and production Compose bundles from tracked examples.
 compose-check:
