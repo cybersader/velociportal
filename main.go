@@ -51,6 +51,7 @@ type Config struct {
 	PortalEditMode              serviceEditMode
 	PersonalServices            *PersonalServicesConfig
 	MCP                         *MCPConfig
+	CustomIcons                 bool
 	ServiceHealthFile           string
 	ListenAddr                  string
 	PollInterval                time.Duration
@@ -230,6 +231,10 @@ func loadConfigFrom(lookup configLookup) (*Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("loadConfig: %w", err)
 	}
+	customIcons, err := loadCustomIconsConfig(lookup, portalEditMode, serviceMetadataEditor, mcp, stateNamespace)
+	if err != nil {
+		return nil, fmt.Errorf("loadConfig: %w", err)
+	}
 
 	serviceHealthFile, err := lookupOr(lookup, "SERVICE_HEALTH_FILE", "")
 	if err != nil {
@@ -272,6 +277,7 @@ func loadConfigFrom(lookup configLookup) (*Config, error) {
 		PortalEditMode:              portalEditMode,
 		PersonalServices:            personalServices,
 		MCP:                         mcp,
+		CustomIcons:                 customIcons,
 		ServiceHealthFile:           serviceHealthFile,
 		ListenAddr:                  listenAddr,
 		PollInterval:                interval,
@@ -678,6 +684,7 @@ func newServerMux(cfg *Config, cache *Cache, health *ServiceHealthStore, editor 
 	portal.personal = personalServices
 	portal.pollInterval = cfg.PollInterval
 	portal.metadataBinding = cfg.metadataBinding()
+	portal.customIcons = cfg.CustomIcons
 	portalHandler := IdentityMiddleware(cfg.TrustedProxyCIDR, portal)
 	shared := newSharedIconOperations(cfg, editor, cache, personalServices)
 	mountServiceMetadataEditor(mux, shared)

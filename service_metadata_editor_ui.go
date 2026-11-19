@@ -55,14 +55,23 @@ func renderServiceEditor(enabled bool, modes ...serviceEditMode) string {
 ` + adapter + `<script src="/static/service-editor.js" defer></script>`
 }
 
+const editServicePencil = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="m14.5 5.5 4 4M4 20l4.9-1.1L20 7.8a2.8 2.8 0 0 0-4-4L4.9 15z"/></svg>`
+
 const serviceEditorCSS = `
 .service-icon { display: block; width: 32px; height: 32px; object-fit: contain; }
 .service-domain { display: block; color: var(--muted); font-size: .8rem; overflow-wrap: anywhere; }
-.card-editable { padding: 0; gap: 0; overflow: hidden; }
+.card-editable { position: relative; padding: 0; gap: 0; overflow: hidden; }
 .service-main { display: flex; flex: 1; flex-direction: column; gap: .55rem; min-width: 0; min-height: 44px; padding: 1rem 1.1rem; color: inherit; text-decoration: none; }
 a.service-main:hover, a.service-main:focus-visible { background: var(--card-hover-bg); }
-.service-edit-button { min-height: 44px; padding: .5rem 1.1rem; border: 0; border-top: 1px solid var(--border); background: var(--card-bg); color: var(--muted); text-align: left; font: inherit; font-size: .82rem; cursor: pointer; }
-.service-edit-button:hover { background: var(--card-hover-bg); color: var(--text); }
+/* The pencil sits across from the service icon, outside the launch link. */
+.service-edit-button { position: absolute; inset-block-start: 4px; inset-inline-end: 4px; display: grid; place-items: center; width: 44px; height: 44px; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--muted); cursor: pointer; }
+.service-edit-button:hover, .service-edit-button:focus-visible { background: var(--card-hover-bg); color: var(--text); }
+.service-edit-button:disabled { cursor: default; }
+/* Keep touch and hybrid devices discoverable, even with a mouse attached. */
+@media (hover: hover) and (pointer: fine) and (not (any-pointer: coarse)) {
+  .service-edit-button { inset-block-start: 8px; inset-inline-end: 8px; width: 30px; height: 30px; opacity: 0; pointer-events: none; }
+  .card-editable:hover .service-edit-button, .card-editable:focus-within .service-edit-button { opacity: 1; pointer-events: auto; }
+}
 .service-edit-button:focus-visible, .service-editor button:focus-visible, .service-editor input:focus-visible, .service-editor select:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .service-editor-announcement { margin: 0 1rem; color: var(--muted); font-size: .85rem; }
 .service-editor-announcement:empty { display: none; }

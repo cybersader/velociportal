@@ -20,7 +20,7 @@ func (cfg *Config) metadataBinding() serviceMetadataBinding {
 // Pure contextual validation, separate from syntax and the closed rollout gate.
 // Legacy documents remain explicitly unbound. No mutation, adoption, or pruning.
 func validateServiceMetadataBinding(document serviceMetadataDocument, binding serviceMetadataBinding) error {
-	if document.Version != serviceMetadataVersionV4 {
+	if !serviceMetadataBoundVersion(document.Version) {
 		return nil
 	}
 	if !validStateNamespace(binding.Namespace) || document.Namespace != binding.Namespace ||
@@ -63,7 +63,7 @@ func preflightServiceMetadataBinding(path string, binding serviceMetadataBinding
 	// version and turn an invalid legacy refresh into a new startup failure.
 	var header map[string]json.RawMessage
 	var version int
-	if json.Unmarshal(data, &header) != nil || json.Unmarshal(header["version"], &version) != nil || version != serviceMetadataVersionV4 {
+	if json.Unmarshal(data, &header) != nil || json.Unmarshal(header["version"], &version) != nil || !serviceMetadataBoundVersion(version) {
 		return nil
 	}
 	_, err = parseBoundRuntimeServiceMetadata(data, binding)

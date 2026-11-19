@@ -192,6 +192,70 @@ Ordinary browser NPM save/reset keeps legacy→v3 and v4→v4. Only an explicit 
 
 Configured v4 binding mismatch fails preflight when a readable v4 document is recognized, including off/browser mode; the bound runtime reader also rejects mismatched/invalid reloads without publishing a partial snapshot. Ordinary unreadable/malformed readonly metadata follows complete-refresh failure semantics, not automatic repair or empty fallback. Shared writer startup requires a valid bound document. A valid readonly v4 file does not initialize a lock or writer. Operator hostname proposals remain v1 fragments: merge offline while the writer is stopped, preserving the **entire** v4 document, never replacing it with a proposal.
 
+## Custom PNG logos and metadata v5 (unreleased source) { #custom-png-logos-and-metadata-v5-unreleased-source }
+
+!!! warning "Unreleased source, opt-in, not verified deployment"
+    This is local source only. No published image contains it, and no deployment, live test or native-client run has exercised it. Leave `PORTAL_CUSTOM_ICONS` absent unless a separately approved compatible image and backup exist.
+
+An authorized shared maintainer can import a small PNG once through MCP, receive a reusable content ID, then assign, read back or clear that ID on a **currently visible NPM service card**. There is no browser upload control, URL ingestion, network fetch, filesystem path, logo discovery, per-application fingerprinting or SVG. Machines, personal applications and personal cards keep the finite icon behavior. Existing finite icon assignments, including shared icons on every kind, are unchanged.
+
+### Enablement and authority
+
+| Setting | Behavior |
+|---|---|
+| `PORTAL_CUSTOM_ICONS` absent | Off. MCP discovery, tools, rendering and file versions are unchanged. |
+| `PORTAL_CUSTOM_ICONS=enabled` | Exact lowercase value only; any other supplied value fails configuration. Also requires `PORTAL_EDIT_MODE=shared` (or the inferred shared editor), `PORTAL_MCP_ORIGIN` and `PORTAL_STATE_NAMESPACE`. |
+
+The three tools appear only when enabled **and** the caller already passes the existing shared-tool capability: trusted-source exact human login on the `PORTAL_EDITORS` allowlist, exact Host/Origin rules, a held shared writer, a fresh complete snapshot and a valid binding. Every call repeats those checks; import and assignment also repeat them at the final pre-rename check. Non-editors see no tools and receive no catalog. No new route, listener, mount, writable directory, credential or database exists.
+
+### Import, assignment and rendering
+
+1. `custom_icon_import` accepts standard padded base64 of one PNG plus the current shared document `revision` (read it with `custom_icon_get` or `shared_target_get`). The encoded string is length-checked **before** decoding. The PNG header is checked for dimensions before the full decode.
+2. The pixels are decoded, normalized to 8-bit RGBA and re-encoded. No source chunk survives: text, EXIF, ICC, timestamps, palettes and APNG animation (only the first frame is decoded) are discarded. The ID is `sha256:` plus the SHA-256 of the canonical bytes. Importing the same image again returns the same ID without writing, even with an old revision, so a retry after a lost response is safe. An authorized editor who has the exact image can distinguish an existing image from a new one with a stale revision: only the new import returns a conflict.
+3. Import alone stores an image. It assigns nothing and grants no visibility. `custom_icon_set` assigns a stored ID to one visible NPM target using document and target CAS; an empty ID clears the assignment. A missing ID fails with `invalid_request`. Name, link, finite icon, category and order are preserved.
+4. The portal inlines each assigned image as a `data:image/png;base64,` source **only inside markup for a card the viewer is already authorized to see**. There is no image URL, so there is nothing to fetch without authorization, and the content ID never appears in markup. A viewer who cannot see the card receives neither bytes nor ID. Changes appear on the next poll without a restart.
+
+In shared mode, a visible NPM card uses its assigned custom PNG before its bundled icon or existing fallback, within the page's image budget. Browser-local editing is a separate deployment mode and does not render custom PNGs. The shared editor dialog's preview still shows the finite icon; its save and reset deliberately **keep** the custom reference, so legacy dialogs cannot strip it. Use `custom_icon_set` with an empty ID to clear it.
+
+### Limits
+
+| Limit | Value |
+|---|---|
+| Encoded import argument | 10,924 base64 characters, checked before decoding; a maximal import request still fits the unchanged 16 KiB MCP request limit |
+| Decoded input | 8 KiB |
+| Dimensions | 1–128 pixels each way |
+| Canonical stored image | 8 KiB. Re-encoding can be larger than an optimized source; simplify or shrink the image if import returns `invalid_request` |
+| Stored images | 64, referenced or not. Enough for a separate image per card for about 45 cards, with headroom |
+| Aggregate stored image bytes | 384 KiB; exceeding a quota returns `capacity` without writing |
+| Images inlined per portal response | 512 KiB of data-URI text; cards beyond the budget deterministically fall back to their finite icon |
+| v5 file size | 1 MiB in total, and the non-image remainder is still limited to the existing 256 KiB |
+
+Other MCP request and response limits are unchanged. Typical small logos (64×64 or smaller, few colors) are a few KiB. Detailed photographs or noisy images usually exceed the per-image limit.
+
+### Metadata v5 format
+
+V5 is v4 plus one required root array and one optional NPM service field. V4 files are never silently changed: a file becomes v5 only through an explicit `custom_icon_import` or `custom_icon_set` write. A legacy v1–v3 file can be promoted directly to v5 the same way, under the configured binding. Once v5, every writer keeps v5. There is no downcast, rebinding or startup rewrite.
+
+```json
+{
+  "version": 5,
+  "namespace": "portal-demo-01",
+  "control_plane": "tailscale",
+  "services": [{"proxy_host_id": 3, "icon": "grafana", "custom_icon": "sha256:<64 lowercase hex>"}],
+  "machines": [],
+  "applications": [],
+  "custom_icons": [{"id": "sha256:<64 lowercase hex>", "png": "<canonical standard padded base64>"}]
+}
+```
+
+`custom_icons` rows have exactly `id` and `png`. The loader requires canonical base64, an ID that matches the bytes, strict canonical chunk structure (IHDR, IDAT, IEND only, 8-bit RGB/RGBA, no interlace, valid CRCs, no trailing bytes), the dimension bounds and a successful decode. Every `custom_icon` reference must resolve to a stored image, and duplicate IDs are rejected. Any violation rejects the whole document. Startup then fails closed, and a running poller keeps its previous snapshot. Nothing is repaired, pruned or deleted automatically. Headscale v5 supports NPM custom icons, with empty `machines` and `applications`.
+
+A v5 file is accepted when the opt-in is off: images then do not render and the tools are absent, but finite fields keep working and writers keep the file as v5. There is no cleanup tool. To remove unreferenced images, stop the writer and edit the file offline, keeping every rule above. The ID is computed by this build's PNG encoder. A different toolchain may produce a different ID for the same source image. Stored IDs remain valid because they are verified against the stored bytes, not recomputed.
+
+### Backup and downgrade { #custom-png-backup-and-downgrade }
+
+Back up the complete shared file before enabling the opt-in and before the first import. **Every older release rejects version 5**, including RC.20-candidate source without this feature. Rolling back the image without a compatible document makes the shared metadata unreadable: refreshes keep failing and shared-writer startup fails. Before downgrading, stop the writer and restore a reviewed v4 (or older) backup, or prepare an offline copy without `custom_icons` and `custom_icon` fields, set version 4, and remove `PORTAL_CUSTOM_ICONS`. Never simply edit the version number while keeping v5 fields. Keep the v5 backup for a later return.
+
 ## Durable personal storage (RC.20 candidate) { #durable-personal-storage-unreleased-source }
 
 `PORTAL_PERSONAL_SERVICES_FILE` is an independent persistence opt-in. **Absent retains the existing browser-managed RAM mode**, including explicit possibly stale browser restoration after restart. A supplied file requires Tailscale, enabled canonical `PORTAL_PERSONAL_SERVICES_ORIGIN`, a valid common `PORTAL_STATE_NAMESPACE`, and a canonical absolute file path (no padding, controls, `..`, or root path). Missing, corrupt, wrong-bound or unsafe configured private storage **fails startup; no RAM fallback** occurs. MCP personal read/create/update/delete require durable mode. No new upstream endpoint or OAuth scope is used.
@@ -245,5 +309,7 @@ No backup or provisioning is performed by the application or these docs. Before 
 4. **Treat backup rollback as possible data loss.** It can lower persisted collection revisions or reintroduce old authored rows. Ordinary same-store restore retains its namespace/StoreID; the new process generation rejects old in-flight CAS. Preserve conflicting browser copies/drafts for review instead of automatically importing them or claiming newest recovery. Restore tests belong in a separately approved isolated environment; fsync alone is not backup validation.
 5. **Source replacement is not an ordinary restart.** Changing tailnet/control-plane source or NPM database requires stop, deliberate namespace rotation and explicit offline mapping reconciliation. Check NPM IDs and typed Machine IDs against the new source; never copy by display name. Namespace-only editing cannot migrate application digests because their preimages are absent: recreate defaults from current authorized owners' entries or omit them in a reviewed replacement. Private login/User-ID reconciliation is a separate reviewed operation, never automatic adoption, account merge or deletion. Do not bypass mismatches by blindly rewriting binding fields.
 6. **Prepare compatibility before image downgrade.** Older RC.18/19 readers cannot read v4 or provide durable personal/MCP behavior. Use a separately reviewed compatible metadata backup/document, disable editing, remove unsupported MCP/private-file/namespace settings as appropriate for the exact older binary, and preserve the durable private snapshot offline with its compatible configuration. Removing only the file knob deliberately selects volatile mode and does not migrate disk data to RAM. Do not lower a JSON version while retaining new fields, downgrade only the image, delete the private file, or promise lossless recovery through browser storage. RC.16 additionally requires v1/v2 metadata and removal of shared editor settings. Retain the forward-compatible backups and immutable image records before proceeding.
+
+Custom PNG logos add metadata v5, which every older reader rejects. See [custom PNG backup and downgrade](#custom-png-backup-and-downgrade) before rolling back an image that wrote v5.
 
 See the [MCP release/live worksheet](mcp.md#release-and-live-acceptance-worksheet) for pending native-client, genuine identity, browser, restart and permission-removal evidence. Temporary-file tests and static review are not installed-storage recovery acceptance.

@@ -123,6 +123,12 @@ func (t *mcpApplicationTools) List(r *http.Request) ([]any, error) {
 		for _, name := range []string{"shared_targets_list", "shared_target_get", "shared_icon_set", "shared_icon_reset"} {
 			tools = append(tools, mcpApplicationTool(name))
 		}
+		// Opt-in only: when disabled, discovery is byte-for-byte unchanged.
+		if t.customIconsEnabled() {
+			for _, name := range mcpCustomIconToolNames {
+				tools = append(tools, mcpApplicationTool(name))
+			}
+		}
 	}
 	// Do not return even general descriptors if the actual request lost admission
 	// during a blocking owned read. The operations recheck all authority on Call.
@@ -132,7 +138,21 @@ func (t *mcpApplicationTools) List(r *http.Request) ([]any, error) {
 	return tools, nil
 }
 
+var mcpCustomIconToolNames = []string{"custom_icon_import", "custom_icon_get", "custom_icon_set"}
+
+func mcpCustomIconTool(name string) bool {
+	return name == "custom_icon_import" || name == "custom_icon_get" || name == "custom_icon_set"
+}
+
+func (t *mcpApplicationTools) customIconsEnabled() bool {
+	return t != nil && t.shared.customIconsEnabled()
+}
+
 func (t *mcpApplicationTools) Call(r *http.Request, name string, arguments json.RawMessage) (mcpToolResult, error) {
+	// Disabled custom tools are exactly as unknown as any other unknown name.
+	if mcpCustomIconTool(name) && !t.customIconsEnabled() {
+		return mcpToolResult{}, errMCPInvalidParams
+	}
 	fields, err := mcpApplicationArguments(name, arguments)
 	if err != nil {
 		return mcpToolResult{}, errMCPInvalidParams
@@ -194,6 +214,26 @@ func (t *mcpApplicationTools) Call(r *http.Request, name string, arguments json.
 			operationErr = t.shared.ResetMCPIcon(r, mcpSharedResetRequest{Target: ref, sharedMutationCAS: cas})
 			data = map[string]string{"status": "saved"}
 		}
+	case "custom_icon_import", "custom_icon_get", "custom_icon_set":
+		mutation = name != "custom_icon_get"
+		if operationErr = t.sharedCapability(r); operationErr != nil {
+			break
+		}
+		ref := sharedTargetRef{}
+		if raw, present := fields["target"]; present {
+			_ = json.Unmarshal(raw, &ref)
+		}
+		switch name {
+		case "custom_icon_import":
+			var id string
+			id, operationErr = t.shared.ImportMCPCustomIcon(r, mcpCustomIconImportRequest{PNG: value("png_base64"), Revision: value("revision")})
+			data = map[string]string{"status": "saved", "custom_icon": id}
+		case "custom_icon_get":
+			data, operationErr = t.shared.GetMCPCustomIcon(r, ref)
+		case "custom_icon_set":
+			operationErr = t.shared.SetMCPCustomIcon(r, ref, sharedMutationCAS{Revision: value("revision"), TargetRevision: value("target_revision")}, value("custom_icon"))
+			data = map[string]string{"status": "saved"}
+		}
 	}
 	return mcpApplicationResult(data, operationErr, mutation), nil
 }
@@ -218,6 +258,12 @@ func mcpApplicationFields(name string) (required, optional []string, known bool)
 		return []string{"target", "revision", "target_revision", "icon"}, nil, true
 	case "shared_icon_reset":
 		return []string{"target", "revision", "target_revision"}, nil, true
+	case "custom_icon_import":
+		return []string{"png_base64", "revision"}, nil, true
+	case "custom_icon_get":
+		return []string{"target"}, nil, true
+	case "custom_icon_set":
+		return []string{"target", "revision", "target_revision", "custom_icon"}, nil, true
 	default:
 		return nil, nil, false
 	}
@@ -286,6 +332,15 @@ func mcpApplicationArguments(name string, raw json.RawMessage) (map[string]json.
 			if !validServiceIcon(value) && (value != "" || name == "shared_icon_set") {
 				return nil, errMCPInvalidParams
 			}
+		case "png_base64":
+			// Length bound before any base64 decode; content is validated later.
+			if value == "" || len(value) > maxCustomIconInputBase64 {
+				return nil, errMCPInvalidParams
+			}
+		case "custom_icon":
+			if value != "" && !validCustomIconID(value) {
+				return nil, errMCPInvalidParams
+			}
 		}
 	}
 	if name == "personal_create" || name == "personal_update" || name == "personal_delete" {
@@ -307,7 +362,7 @@ func mcpApplicationErrorCode(err error) string {
 		return "conflict"
 	case errors.Is(err, errPersonalStorageUncertain), errors.Is(err, errMetadataUncertain):
 		return "uncertain"
-	case errors.Is(err, errPersonalCapacity):
+	case errors.Is(err, errPersonalCapacity), errors.Is(err, errCustomIconCapacity):
 		return "capacity"
 	case errors.Is(err, errPersonalInvalid), errors.Is(err, errMetadataInvalidFields):
 		return "invalid_request"
@@ -450,6 +505,10 @@ func mcpApplicationTool(name string) map[string]any {
 			properties[key] = mcpApplicationString(256)
 		case "limit":
 			properties[key] = map[string]any{"type": "integer", "minimum": 1, "maximum": 64, "default": 64}
+		case "png_base64":
+			properties[key] = map[string]any{"type": "string", "minLength": 1, "maxLength": maxCustomIconInputBase64, "description": "Standard padded base64 of one PNG, at most 8 KiB decoded and 128x128 pixels."}
+		case "custom_icon":
+			properties[key] = map[string]any{"type": "string", "pattern": "^(sha256:[0-9a-f]{64})?$", "description": "Stored custom icon ID; empty clears the assignment."}
 		}
 	}
 	var output map[string]any
@@ -477,6 +536,18 @@ func mcpApplicationTool(name string) map[string]any {
 	case "shared_icon_set", "shared_icon_reset":
 		output = mcpApplicationObject(map[string]any{"status": map[string]any{"type": "string", "const": "saved"}}, "status")
 		description = "Change only the selected shared finite icon using current document and target CAS. Preserves other presentation fields; never grants access. Lost responses require read-back, not replay."
+	case "custom_icon_import":
+		output = mcpApplicationObject(map[string]any{"status": map[string]any{"type": "string", "const": "saved"}, "custom_icon": map[string]any{"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}}, "status", "custom_icon")
+		description = "Store one small PNG as a reusable shared custom icon and return its content ID. Re-encoded without metadata; identical images return the same ID. Grants no card visibility."
+	case "custom_icon_get":
+		output = mcpApplicationObject(map[string]any{"target": mcpApplicationTargetSchema(), "name": mcpApplicationString(120),
+			"custom_icon": map[string]any{"type": "string", "pattern": "^(sha256:[0-9a-f]{64})?$"}, "revision": mcpApplicationString(256), "target_revision": mcpApplicationString(256)},
+			"target", "name", "custom_icon", "revision", "target_revision")
+		readOnly = true
+		description = "Read one currently visible NPM target's custom icon ID and opaque CAS. NPM targets only."
+	case "custom_icon_set":
+		output = mcpApplicationObject(map[string]any{"status": map[string]any{"type": "string", "const": "saved"}}, "status")
+		description = "Assign a stored custom icon ID to one visible NPM target, or clear it with an empty ID, using document and target CAS. Lost responses require read-back, not replay."
 	}
 	return map[string]any{"name": name, "description": description, "inputSchema": mcpApplicationObject(properties, required...), "outputSchema": output,
 		"annotations": map[string]bool{"readOnlyHint": readOnly, "destructiveHint": !readOnly, "idempotentHint": readOnly, "openWorldHint": false}}

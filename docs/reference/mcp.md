@@ -22,6 +22,7 @@ A client must support this non-localhost plain-HTTP path, stateless JSON respons
 | `PORTAL_PERSONAL_SERVICES_FILE` | Absent retains browser-managed volatile RAM mode. Present requires Tailscale, personal origin, valid namespace and preexisting valid private storage. Personal MCP tools require this durable mode. |
 | `PORTAL_STATE_NAMESPACE` | Canonical `[a-z0-9][a-z0-9_-]{0,63}` source binding. Required for durable storage and every v4 reader/writer; supplied empty/invalid always fails. Requires a metadata file or private file consumer, not merely MCP. |
 | `PORTAL_EDIT_MODE=shared`, `PORTAL_EDITORS`, `PORTAL_PUBLIC_ORIGIN`, `SERVICE_METADATA_FILE` | Existing shared-editor prerequisites remain necessary for shared target/icon tools; add a valid namespace. Exact editor allowlist, not automatic administrator-role permission. |
+| `PORTAL_CUSTOM_ICONS` | **Unreleased source only.** Absent keeps everything below unchanged. Exactly `enabled` adds three [custom PNG logo tools](#opt-in-custom-png-logo-tools-unreleased-source) and requires shared editing, `PORTAL_MCP_ORIGIN` and a namespace. Writes metadata v5. |
 
 MCP alone creates neither a personal store nor a shared writer/lock and does not change edit mode. Readonly/off/browser metadata can render v4 defaults without enabling shared tools. RAM personal entries can supply the editor's **own active application target** for shared icon operations, but cannot be read or mutated through personal MCP tools. Headscale has finite icons and eligible NPM shared targets only; it gains no personal or SSH Machine support. The generic shared tool schema may still list `machine`/`application` kinds: Headscale Machine listing is empty; Application without a personal store is unavailable as `not_found`.
 
@@ -70,6 +71,18 @@ Discovery is recomputed per request and may advertise fewer tools when storage/o
 Personal results contain own authored document, `durable`, stable `store_id`, process `generation`, collection `revision`, initialized state and coarse projection—not a whole private file, browser CSRF token, foreign collection or policy snapshot. There is no MCP restore/import tool. No tool accepts an arbitrary shared destination URL/path/digest/provider-ID tuple. Icons are finite embedded IDs, never uploads, external logos or filesystem paths.
 
 Shared target selection uses actual current card evidence: policy-matched NPM service; full supported SSH + independent Grant TCP/22 + current device capability for a Machine; or the maintainer's **own active personal entry** for an application. It never enumerates foreign personal records, the global digest map, matching-user counts or backend topology. No icon creates a card or supplies authorization.
+
+### Opt-in custom PNG logo tools (unreleased source) { #opt-in-custom-png-logo-tools-unreleased-source }
+
+With `PORTAL_CUSTOM_ICONS=enabled`, discovery appends three tools after the shared tools, under the same shared-editor capability. With it absent, discovery and calls are unchanged and these names are unknown tools (`-32602`).
+
+| Tool | Arguments | Result / authority |
+|---|---|---|
+| `custom_icon_import` | `png_base64` (standard padded base64, at most 10,924 characters), `revision` | `{"status":"saved","custom_icon":"sha256:…"}`. Stores one canonical re-encoded PNG. Identical images return the same ID without writing. Assigns nothing. |
+| `custom_icon_get` | `target` exactly `{kind, handle}`; NPM only | Name, current `custom_icon` (empty when none), opaque `revision` and `target_revision` |
+| `custom_icon_set` | `target`, `revision`, `target_revision`, `custom_icon` (stored ID, or empty to clear) | `{"status":"saved"}` after a confirmed shared commit; an unchanged assignment does not write |
+
+Machine and application targets return the unavailable-target response. There is no listing of stored images, gallery, delete or cleanup tool. The image renders only inside markup for authorized cards. Formats, limits, versioning and downgrade: [custom PNG logos](service-metadata.md#custom-png-logos-and-metadata-v5-unreleased-source).
 
 ### Pages and optimistic concurrency
 

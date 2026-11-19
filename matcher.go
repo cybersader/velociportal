@@ -28,6 +28,11 @@ type ServiceCard struct {
 	Order      *int             `json:"order,omitempty"`
 	Icon       string           `json:"icon,omitempty"`
 	LinkState  serviceLinkState `json:"link_state"`
+
+	// CustomIcon is a v5 content ID; CustomIconSrc is the request-local data URI
+	// set only by the opt-in portal renderer. Neither is ever serialized.
+	CustomIcon    string `json:"-"`
+	CustomIconSrc string `json:"-"`
 }
 
 type destinationMatchKind string
@@ -407,6 +412,7 @@ func resolveServiceCard(proxyHost ProxyHost, metadata *ServiceMetadata) (Service
 			}
 			card.Category = override.Category
 			card.Icon = override.Icon
+			card.CustomIcon = override.CustomIcon
 			if override.Order != nil {
 				order := *override.Order
 				card.Order = &order

@@ -42,7 +42,7 @@ func parseRuntimeServiceMetadata(data []byte) (*ServiceMetadata, error) {
 	if err != nil {
 		return nil, err
 	}
-	if !serviceMetadataV4RuntimeEnabled && metadata.document.Version == serviceMetadataVersionV4 {
+	if !serviceMetadataV4RuntimeEnabled && serviceMetadataBoundVersion(metadata.document.Version) {
 		return nil, errors.New("service metadata version is not enabled")
 	}
 	return metadata, nil
@@ -115,10 +115,23 @@ func validApplicationTargetDigest(value string) bool {
 // replacement of malformed Unicode from silently changing persisted values.
 func validateServiceMetadataV4Fields(data []byte, fields map[string]json.RawMessage) error {
 	invalid := errors.New("service metadata version 4 document is invalid")
-	if len(fields) != 6 || !containsOnlyJSONFields(fields, "version", "namespace", "control_plane", "services", "machines", "applications") || !utf8.Valid(data) || !json.Valid(data) || !personalJSONScalars(data) {
+	if !utf8.Valid(data) || !json.Valid(data) || !personalJSONScalars(data) {
 		return invalid
 	}
-	if !bytes.Equal(bytes.TrimSpace(fields["version"]), []byte("4")) {
+	// v4 keeps its exact six fields; v5 adds exactly one custom_icons array.
+	switch version := bytes.TrimSpace(fields["version"]); {
+	case bytes.Equal(version, []byte("4")):
+		if len(fields) != 6 || !containsOnlyJSONFields(fields, "version", "namespace", "control_plane", "services", "machines", "applications") {
+			return invalid
+		}
+	case bytes.Equal(version, []byte("5")):
+		if len(fields) != 7 || !containsOnlyJSONFields(fields, "version", "namespace", "control_plane", "services", "machines", "applications", "custom_icons") {
+			return invalid
+		}
+		if err := validateCustomIconRows(fields["custom_icons"]); err != nil {
+			return err
+		}
+	default:
 		return invalid
 	}
 	for _, name := range []string{"namespace", "control_plane"} {
@@ -169,6 +182,9 @@ func validateServiceMetadataV4Fields(data []byte, fields map[string]json.RawMess
 func indexServiceMetadataV4(metadata *ServiceMetadata) error {
 	d := metadata.document
 	invalid := errors.New("service metadata version 4 document is invalid")
+	if d.Version == serviceMetadataVersionV4 && d.CustomIcons != nil || d.Version == serviceMetadataVersionV5 && d.CustomIcons == nil {
+		return invalid
+	}
 	if !validMetadataNamespace(d.Namespace) || (d.ControlPlane != controlPlaneHeadscale && d.ControlPlane != controlPlaneTailscale) || d.Machines == nil || d.Applications == nil || len(d.Services)+len(d.Machines)+len(d.Applications) > maxServiceMetadataEntries {
 		return invalid
 	}
@@ -196,11 +212,23 @@ func indexServiceMetadataV4(metadata *ServiceMetadata) error {
 		}
 		metadata.ApplicationIcons[row.TargetDigest] = row.Icon
 	}
+	if d.Version == serviceMetadataVersionV5 {
+		icons, err := indexCustomIcons(d)
+		if err != nil {
+			return err
+		}
+		metadata.CustomIcons = icons
+	}
 	return nil
 }
 
 func serviceMetadataHasV4Fields(d serviceMetadataDocument) bool {
-	return d.Namespace != "" || d.ControlPlane != "" || d.Machines != nil || d.Applications != nil
+	return d.Namespace != "" || d.ControlPlane != "" || d.Machines != nil || d.Applications != nil || d.CustomIcons != nil
+}
+
+// v4 and v5 share the bound namespace/control-plane contract.
+func serviceMetadataBoundVersion(version int) bool {
+	return version == serviceMetadataVersionV4 || version == serviceMetadataVersionV5
 }
 
 func cloneServiceMetadataDocument(d serviceMetadataDocument) serviceMetadataDocument {
@@ -210,7 +238,7 @@ func cloneServiceMetadataDocument(d serviceMetadataDocument) serviceMetadataDocu
 	}
 	for i := range out.Services {
 		row := &out.Services[i]
-		for _, field := range []**string{&row.Name, &row.URL, &row.Category, &row.Icon} {
+		for _, field := range []**string{&row.Name, &row.URL, &row.Category, &row.Icon, &row.CustomIcon} {
 			if *field != nil {
 				value := **field
 				*field = &value
@@ -227,6 +255,10 @@ func cloneServiceMetadataDocument(d serviceMetadataDocument) serviceMetadataDocu
 	if d.Applications != nil {
 		out.Applications = append([]applicationIconEntry{}, d.Applications...)
 	}
+	if d.CustomIcons != nil {
+		// PNG strings are immutable; only the slice header is copied.
+		out.CustomIcons = append([]customIconEntry{}, d.CustomIcons...)
+	}
 	return out
 }
 
@@ -236,16 +268,19 @@ func cloneServiceMetadataDocument(d serviceMetadataDocument) serviceMetadataDocu
 // subject to canonical encoded size validation in the serializer below.
 func validateServiceMetadataDocumentModel(d serviceMetadataDocument) error {
 	invalid := errors.New("service metadata candidate is invalid")
-	if d.Version < 1 || d.Version > 4 || d.Services == nil || len(d.Services)+len(d.Machines)+len(d.Applications) > maxServiceMetadataEntries {
+	if d.Version < 1 || d.Version > 5 || d.Services == nil || len(d.Services)+len(d.Machines)+len(d.Applications) > maxServiceMetadataEntries {
 		return invalid
 	}
-	if d.Version != serviceMetadataVersionV4 && serviceMetadataHasV4Fields(d) {
+	if !serviceMetadataBoundVersion(d.Version) && serviceMetadataHasV4Fields(d) {
 		return invalid
 	}
-	if d.Version == serviceMetadataVersionV4 {
-		if err := indexServiceMetadataV4(&ServiceMetadata{document: d}); err != nil {
+	var customIcons map[string]string
+	if serviceMetadataBoundVersion(d.Version) {
+		metadata := &ServiceMetadata{document: d}
+		if err := indexServiceMetadataV4(metadata); err != nil {
 			return err
 		}
+		customIcons = metadata.CustomIcons
 	}
 	ids := make(map[int]bool, len(d.Services))
 	for _, row := range d.Services {
@@ -256,7 +291,11 @@ func validateServiceMetadataDocumentModel(d serviceMetadataDocument) error {
 		if d.Version == serviceMetadataVersionV1 && (row.Category != nil || row.Order != nil) || d.Version < serviceMetadataVersionV3 && row.Icon != nil {
 			return invalid
 		}
-		if row.Name == nil && row.URL == nil && row.Category == nil && row.Order == nil && row.Icon == nil && !(d.Version == serviceMetadataVersionV4 && (row.NameNull || row.URLNull)) {
+		if row.Name == nil && row.URL == nil && row.Category == nil && row.Order == nil && row.Icon == nil && row.CustomIcon == nil && !(serviceMetadataBoundVersion(d.Version) && (row.NameNull || row.URLNull)) {
+			return invalid
+		}
+		// Every reference must resolve; a dangling ID never renders or is repaired.
+		if row.CustomIcon != nil && (d.Version != serviceMetadataVersionV5 || customIcons[*row.CustomIcon] == "") {
 			return invalid
 		}
 		if row.Name != nil {
@@ -301,6 +340,7 @@ func serializeServiceMetadataDocument(d serviceMetadataDocument) ([]byte, error)
 		return a.DeviceID < b.DeviceID
 	})
 	sort.Slice(d.Applications, func(i, j int) bool { return d.Applications[i].TargetDigest < d.Applications[j].TargetDigest })
+	sort.Slice(d.CustomIcons, func(i, j int) bool { return d.CustomIcons[i].ID < d.CustomIcons[j].ID })
 	type wireEntry struct {
 		ProxyHostID int             `json:"proxy_host_id"`
 		Name        json.RawMessage `json:"name,omitempty"`
@@ -308,6 +348,7 @@ func serializeServiceMetadataDocument(d serviceMetadataDocument) ([]byte, error)
 		Category    *string         `json:"category,omitempty"`
 		Order       *int            `json:"order,omitempty"`
 		Icon        *string         `json:"icon,omitempty"`
+		CustomIcon  *string         `json:"custom_icon,omitempty"`
 	}
 	optional := func(value *string, null bool) json.RawMessage {
 		if null {
@@ -321,10 +362,20 @@ func serializeServiceMetadataDocument(d serviceMetadataDocument) ([]byte, error)
 	}
 	services := make([]wireEntry, 0, len(d.Services))
 	for _, row := range d.Services {
-		services = append(services, wireEntry{row.ProxyHostID, optional(row.Name, row.NameNull), optional(row.URL, row.URLNull), row.Category, row.Order, row.Icon})
+		services = append(services, wireEntry{row.ProxyHostID, optional(row.Name, row.NameNull), optional(row.URL, row.URLNull), row.Category, row.Order, row.Icon, row.CustomIcon})
 	}
 	var wire any
-	if d.Version == serviceMetadataVersionV4 {
+	if d.Version == serviceMetadataVersionV5 {
+		wire = struct {
+			Version      int                    `json:"version"`
+			Namespace    string                 `json:"namespace"`
+			ControlPlane controlPlaneProvider   `json:"control_plane"`
+			Services     []wireEntry            `json:"services"`
+			Machines     []machineIconEntry     `json:"machines"`
+			Applications []applicationIconEntry `json:"applications"`
+			CustomIcons  []customIconEntry      `json:"custom_icons"`
+		}{d.Version, d.Namespace, d.ControlPlane, services, d.Machines, d.Applications, d.CustomIcons}
+	} else if d.Version == serviceMetadataVersionV4 {
 		wire = struct {
 			Version      int                    `json:"version"`
 			Namespace    string                 `json:"namespace"`
@@ -353,7 +404,7 @@ func serializeServiceMetadataDocument(d serviceMetadataDocument) ([]byte, error)
 // Pure document operations only: no handler, authority, runtime upgrade or I/O.
 // An icon reset differs deliberately from the legacy full-dialog reset.
 func mutateServiceMetadataIcon(d serviceMetadataDocument, id int, icon string) (serviceMetadataDocument, error) {
-	if d.Version != serviceMetadataVersionV4 || id <= 0 || icon != "" && !validServiceIcon(icon) {
+	if !serviceMetadataBoundVersion(d.Version) || id <= 0 || icon != "" && !validServiceIcon(icon) {
 		return serviceMetadataDocument{}, errors.New("invalid icon target")
 	}
 	if err := validateServiceMetadataDocumentModel(d); err != nil {
@@ -371,7 +422,7 @@ func mutateServiceMetadataIcon(d serviceMetadataDocument, id int, icon string) (
 		if icon != "" {
 			row.Icon = &icon
 		}
-		if row.Name == nil && row.URL == nil && row.Category == nil && row.Order == nil && row.Icon == nil && !row.NameNull && !row.URLNull {
+		if row.Name == nil && row.URL == nil && row.Category == nil && row.Order == nil && row.Icon == nil && row.CustomIcon == nil && !row.NameNull && !row.URLNull {
 			out.Services = append(out.Services[:i], out.Services[i+1:]...)
 		}
 		break
@@ -385,7 +436,7 @@ func mutateServiceMetadataIcon(d serviceMetadataDocument, id int, icon string) (
 	return out, nil
 }
 func mutateMachineMetadataIcon(d serviceMetadataDocument, key ProviderDeviceID, icon string) (serviceMetadataDocument, error) {
-	if d.Version != serviceMetadataVersionV4 || d.ControlPlane != controlPlaneTailscale || key.Provider != controlPlaneTailscale || !validPresentationDeviceID(key.Kind, key.Value) || icon != "" && !validServiceIcon(icon) {
+	if !serviceMetadataBoundVersion(d.Version) || d.ControlPlane != controlPlaneTailscale || key.Provider != controlPlaneTailscale || !validPresentationDeviceID(key.Kind, key.Value) || icon != "" && !validServiceIcon(icon) {
 		return serviceMetadataDocument{}, errors.New("invalid icon target")
 	}
 	if err := validateServiceMetadataDocumentModel(d); err != nil {
@@ -414,7 +465,7 @@ func mutateMachineMetadataIcon(d serviceMetadataDocument, key ProviderDeviceID, 
 	return out, nil
 }
 func mutateApplicationMetadataIcon(d serviceMetadataDocument, digest, icon string) (serviceMetadataDocument, error) {
-	if d.Version != serviceMetadataVersionV4 || d.ControlPlane != controlPlaneTailscale || !validApplicationTargetDigest(digest) || icon != "" && !validServiceIcon(icon) {
+	if !serviceMetadataBoundVersion(d.Version) || d.ControlPlane != controlPlaneTailscale || !validApplicationTargetDigest(digest) || icon != "" && !validServiceIcon(icon) {
 		return serviceMetadataDocument{}, errors.New("invalid icon target")
 	}
 	if err := validateServiceMetadataDocumentModel(d); err != nil {
