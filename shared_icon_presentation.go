@@ -6,7 +6,7 @@ package main
 // this defensive boundary neither loads files nor bypasses that runtime gate.
 // A mismatched v4 view cannot decorate any source, including incumbent NPM fields.
 func presentationData(data *CacheData, binding serviceMetadataBinding) *CacheData {
-	if data == nil || data.ServiceMetadata == nil || data.ServiceMetadata.document.Version != serviceMetadataVersionV4 {
+	if data == nil || data.ServiceMetadata == nil || !serviceMetadataBoundVersion(data.ServiceMetadata.document.Version) {
 		return data
 	}
 	if data.ControlPlane.Provider == binding.ControlPlane && validateServiceMetadataBinding(data.ServiceMetadata.document, binding) == nil {
@@ -19,7 +19,7 @@ func presentationData(data *CacheData, binding serviceMetadataBinding) *CacheDat
 
 func sharedIconMetadata(data *CacheData, binding serviceMetadataBinding) *ServiceMetadata {
 	data = presentationData(data, binding)
-	if data == nil || data.ServiceMetadata == nil || data.ServiceMetadata.document.Version != serviceMetadataVersionV4 {
+	if data == nil || data.ServiceMetadata == nil || !serviceMetadataBoundVersion(data.ServiceMetadata.document.Version) {
 		return nil
 	}
 	return data.ServiceMetadata

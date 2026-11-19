@@ -191,12 +191,12 @@ func (e *ServiceMetadataEditor) readFile() ([]byte, *os.File, error) {
 	}
 	file := os.NewFile(uintptr(fd), e.base)
 	info, err := file.Stat()
-	if err != nil || !safeEditorFile(info) || info.Size() > maxServiceMetadataBytes {
+	if err != nil || !safeEditorFile(info) || info.Size() > maxServiceMetadataReadBytes {
 		_ = file.Close()
 		return nil, nil, errMetadataStorage
 	}
-	data, err := io.ReadAll(io.LimitReader(file, maxServiceMetadataBytes+1))
-	if err != nil || len(data) > maxServiceMetadataBytes {
+	data, err := io.ReadAll(io.LimitReader(file, maxServiceMetadataReadBytes+1))
+	if err != nil || len(data) > maxServiceMetadataReadBytes {
 		_ = file.Close()
 		return nil, nil, errMetadataStorage
 	}
@@ -278,7 +278,7 @@ func mutateServiceMetadata(document serviceMetadataDocument, id int, name, link,
 		return serviceMetadataDocument{}, err
 	}
 	updated := cloneServiceMetadataDocument(document)
-	if updated.Version != serviceMetadataVersionV4 {
+	if !serviceMetadataBoundVersion(updated.Version) {
 		updated.Version = serviceMetadataVersionV3
 	}
 	entries := updated.Services
@@ -291,6 +291,8 @@ func mutateServiceMetadata(document serviceMetadataDocument, id int, name, link,
 			updated.Services = append(updated.Services, entry)
 		}
 	}
+	// Name/link/finite icon only. A v5 custom_icon reference is deliberately
+	// preserved by both save and reset: legacy dialogs cannot strip it.
 	selected.Name, selected.URL, selected.Icon = nil, nil, nil
 	selected.NameNull, selected.URLNull = false, false
 	if !reset {
@@ -304,7 +306,7 @@ func mutateServiceMetadata(document serviceMetadataDocument, id int, name, link,
 			selected.Icon = &icon
 		}
 	}
-	if selected.Name != nil || selected.URL != nil || selected.Icon != nil || selected.Category != nil || selected.Order != nil {
+	if selected.Name != nil || selected.URL != nil || selected.Icon != nil || selected.Category != nil || selected.Order != nil || selected.CustomIcon != nil {
 		updated.Services = append(updated.Services, selected)
 	}
 	sort.Slice(updated.Services, func(i, j int) bool { return updated.Services[i].ProxyHostID < updated.Services[j].ProxyHostID })
@@ -319,13 +321,15 @@ type serviceMetadataWriteKind uint8
 const (
 	serviceMetadataWriteNPM serviceMetadataWriteKind = iota + 1
 	serviceMetadataWriteIcon
+	// Only explicit custom-logo operations may produce or promote to v5.
+	serviceMetadataWriteCustomIcon
 )
 
 // commit runs under the writer mutex. finalCheck uses only the current in-memory
 // complete authorization snapshot, immediately before rename. No cache lock or
 // upstream call participates, and no transactional revocation guarantee exists.
 func (e *ServiceMetadataEditor) commit(expected string, document serviceMetadataDocument, kind serviceMetadataWriteKind, finalCheck func() error) error {
-	if kind != serviceMetadataWriteNPM && kind != serviceMetadataWriteIcon {
+	if kind != serviceMetadataWriteNPM && kind != serviceMetadataWriteIcon && kind != serviceMetadataWriteCustomIcon {
 		return errMetadataStorage
 	}
 	if e == nil || e.config == nil {
@@ -350,8 +354,12 @@ func (e *ServiceMetadataEditor) commit(expected string, document serviceMetadata
 	}
 	// No downgrade or rebind. Ordinary full-dialog saves never opt legacy files
 	// into v4; only an explicit icon operation can promote under a valid binding.
-	if prior.Version == serviceMetadataVersionV4 {
-		if document.Version != serviceMetadataVersionV4 || document.Namespace != prior.Namespace || document.ControlPlane != prior.ControlPlane {
+	if prior.Version == serviceMetadataVersionV5 {
+		if document.Version != serviceMetadataVersionV5 || document.Namespace != prior.Namespace || document.ControlPlane != prior.ControlPlane {
+			return errMetadataStorage
+		}
+	} else if prior.Version == serviceMetadataVersionV4 {
+		if !(document.Version == serviceMetadataVersionV4 || kind == serviceMetadataWriteCustomIcon && document.Version == serviceMetadataVersionV5) || document.Namespace != prior.Namespace || document.ControlPlane != prior.ControlPlane {
 			return errMetadataStorage
 		}
 	} else if kind == serviceMetadataWriteNPM {
@@ -359,7 +367,10 @@ func (e *ServiceMetadataEditor) commit(expected string, document serviceMetadata
 			return errMetadataStorage
 		}
 	}
-	if kind == serviceMetadataWriteIcon && (!serviceMetadataV4RuntimeEnabled || document.Version != serviceMetadataVersionV4 || validateServiceMetadataBinding(document, e.config.Binding) != nil) {
+	if kind == serviceMetadataWriteIcon && (!serviceMetadataV4RuntimeEnabled || !serviceMetadataBoundVersion(document.Version) || validateServiceMetadataBinding(document, e.config.Binding) != nil) {
+		return errMetadataStorage
+	}
+	if kind == serviceMetadataWriteCustomIcon && (!serviceMetadataV4RuntimeEnabled || document.Version != serviceMetadataVersionV5 || validateServiceMetadataBinding(document, e.config.Binding) != nil) {
 		return errMetadataStorage
 	}
 	contents, err := serializeServiceMetadataDocument(document)

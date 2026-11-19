@@ -250,9 +250,12 @@ func (o *SharedIconOperations) sharedNPMSummary(identity *Identity, data *CacheD
 	if card.Order != nil {
 		order = strconv.Itoa(*card.Order)
 	}
-	revision := o.sharedTargetDigest("shared-target-revision-v1", identity.Login, sharedTargetNPM,
-		o.editor.targetRevision(selected.ProxyHost), override.Name, override.URL, override.Icon,
-		card.Name, card.URL, card.Domain, string(card.LinkState), card.Icon, card.Category, order)
+	evidence := []string{o.editor.targetRevision(selected.ProxyHost), override.Name, override.URL, override.Icon,
+		card.Name, card.URL, card.Domain, string(card.LinkState), card.Icon, card.Category, order}
+	if override.CustomIcon != "" {
+		evidence = append(evidence, "custom_icon", override.CustomIcon)
+	}
+	revision := o.sharedTargetDigest("shared-target-revision-v1", identity.Login, sharedTargetNPM, evidence...)
 	return sharedSelectedTarget{kind: sharedTargetNPM, npm: selected.ProxyHost, summary: summary, targetRevision: revision}, nil
 }
 

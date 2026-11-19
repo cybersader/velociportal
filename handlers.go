@@ -23,6 +23,7 @@ type PortalHandler struct {
 	personal           *PersonalServicesStore
 	pollInterval       time.Duration
 	metadataBinding    serviceMetadataBinding
+	customIcons        bool
 }
 
 func NewPortalHandler(cache *Cache) *PortalHandler {
@@ -61,6 +62,12 @@ func (h *PortalHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	start := time.Now()
 	cards := MatchServices(identity, data)
+	if h.customIcons {
+		// Only already-authorized NPM cards receive image bytes, inline.
+		for i, src := range customIconRenderSources(cards, data.ServiceMetadata) {
+			cards[i].CustomIconSrc = src
+		}
+	}
 	var personalState *PersonalServicesState
 	var personalRecoveryScope string
 	var personalUnavailable bool
@@ -365,7 +372,9 @@ func renderServiceCard(body *strings.Builder, card ServiceCard, health *ServiceH
 		attrs += fmt.Sprintf(` data-default-name="%s" data-default-url="%s" data-default-icon="%s" data-default-link-state="%s" data-default-hostname="%s" data-default-scheme="%s"`, html.EscapeString(card.Name), html.EscapeString(defaultURL), html.EscapeString(card.Icon), html.EscapeString(string(card.LinkState)), html.EscapeString(hostname), html.EscapeString(scheme))
 	}
 	iconMarkup := ""
-	if personal || card.Icon != "" || (len(editing) > 0 && editing[0]) || (len(editing) > 1 && editing[1]) {
+	if !personal && strings.HasPrefix(card.CustomIconSrc, "data:image/png;base64,") {
+		iconMarkup = fmt.Sprintf(`<img class="service-icon" src="%s" data-custom-icon width="32" height="32" alt="">`, html.EscapeString(card.CustomIconSrc))
+	} else if personal || card.Icon != "" || (len(editing) > 0 && editing[0]) || (len(editing) > 1 && editing[1]) {
 		icon := serviceIconForID(card.Icon)
 		iconMarkup = fmt.Sprintf(`<img class="service-icon" src="%s" width="32" height="32" alt="">`, icon.Path)
 	}

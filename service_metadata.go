@@ -18,6 +18,9 @@ const (
 	serviceMetadataVersionV2 = 2
 	serviceMetadataVersionV3 = 3
 	serviceMetadataVersionV4 = 4
+	// v5 is v4 plus opt-in custom PNG logos. Older binaries reject it instead of
+	// silently dropping custom references; only an explicit import promotes to it.
+	serviceMetadataVersionV5 = 5
 
 	maxServiceMetadataBytes    = 256 * 1024
 	maxServiceMetadataEntries  = 1024
@@ -31,6 +34,11 @@ type ServiceMetadata struct {
 	Overrides        map[int]ServiceOverride
 	MachineIcons     map[ProviderDeviceID]string
 	ApplicationIcons map[string]string
+
+	// CustomIcons maps a validated content ID to its canonical standard-base64
+	// PNG (v5 only). Values are immutable strings, safe to share after publish.
+	CustomIcons map[string]string
+
 	// document retains validated version, untouched entries and optional/null
 	// presence. Neither this document nor Overrides may be mutated after publish.
 	document serviceMetadataDocument
@@ -42,6 +50,9 @@ type ServiceOverride struct {
 	Category string
 	Order    *int
 	Icon     string
+
+	// CustomIcon is a v5 content-ID reference; finite Icon is retained beside it.
+	CustomIcon string
 }
 
 type serviceMetadataDocument struct {
@@ -51,6 +62,7 @@ type serviceMetadataDocument struct {
 	Services     []serviceMetadataEntry `json:"services"`
 	Machines     []machineIconEntry     `json:"machines,omitempty"`
 	Applications []applicationIconEntry `json:"applications,omitempty"`
+	CustomIcons  []customIconEntry      `json:"custom_icons,omitempty"`
 }
 
 type serviceMetadataEntry struct {
@@ -60,6 +72,7 @@ type serviceMetadataEntry struct {
 	Category    *string `json:"category,omitempty"`
 	Order       *int    `json:"order,omitempty"`
 	Icon        *string `json:"icon,omitempty"`
+	CustomIcon  *string `json:"custom_icon,omitempty"`
 	NameNull    bool    `json:"-"`
 	URLNull     bool    `json:"-"`
 }
@@ -104,8 +117,8 @@ func readServiceMetadataFile(path string) ([]byte, error) {
 	if !info.Mode().IsRegular() {
 		return nil, errors.New("service metadata path is not a regular file")
 	}
-	if info.Size() > maxServiceMetadataBytes {
-		return nil, fmt.Errorf("service metadata file exceeds %d bytes", maxServiceMetadataBytes)
+	if info.Size() > maxServiceMetadataReadBytes {
+		return nil, fmt.Errorf("service metadata file exceeds %d bytes", maxServiceMetadataReadBytes)
 	}
 
 	file, err := os.Open(path)
@@ -114,12 +127,12 @@ func readServiceMetadataFile(path string) ([]byte, error) {
 	}
 	defer file.Close()
 
-	data, err := io.ReadAll(io.LimitReader(file, maxServiceMetadataBytes+1))
+	data, err := io.ReadAll(io.LimitReader(file, maxServiceMetadataReadBytes+1))
 	if err != nil {
 		return nil, errors.New("service metadata file could not be read")
 	}
-	if len(data) > maxServiceMetadataBytes {
-		return nil, fmt.Errorf("service metadata file exceeds %d bytes", maxServiceMetadataBytes)
+	if len(data) > maxServiceMetadataReadBytes {
+		return nil, fmt.Errorf("service metadata file exceeds %d bytes", maxServiceMetadataReadBytes)
 	}
 	return data, nil
 }
@@ -142,7 +155,7 @@ func serializeServiceMetadataDocumentV1(services []serviceMetadataEntry) ([]byte
 	// Proposal-only v1 fragment, never a whole-document downcast. Keep its
 	// established field/entry order and reject fields the fragment cannot carry.
 	for _, entry := range services {
-		if entry.Category != nil || entry.Order != nil || entry.Icon != nil || entry.NameNull || entry.URLNull {
+		if entry.Category != nil || entry.Order != nil || entry.Icon != nil || entry.CustomIcon != nil || entry.NameNull || entry.URLNull {
 			return nil, errors.New("service metadata proposal has unsupported fields")
 		}
 	}
@@ -184,7 +197,8 @@ func serializeServiceMetadataDocumentV3(document serviceMetadataDocument) ([]byt
 }
 
 func parseServiceMetadata(data []byte) (*ServiceMetadata, error) {
-	if len(data) > maxServiceMetadataBytes {
+	// Only v5 may use the larger custom-logo budget; rechecked after decode.
+	if len(data) > maxServiceMetadataReadBytes {
 		return nil, errors.New("service metadata exceeds size limit")
 	}
 	if len(bytes.TrimSpace(data)) == 0 {
@@ -212,8 +226,11 @@ func parseServiceMetadata(data []byte) (*ServiceMetadata, error) {
 	if err := requireJSONEOF(decoder); err != nil {
 		return nil, err
 	}
-	if document.Version != serviceMetadataVersionV1 && document.Version != serviceMetadataVersionV2 && document.Version != serviceMetadataVersionV3 && document.Version != serviceMetadataVersionV4 {
-		return nil, errors.New("service metadata version must be 1, 2, 3, or 4")
+	if document.Version != serviceMetadataVersionV1 && document.Version != serviceMetadataVersionV2 && document.Version != serviceMetadataVersionV3 && document.Version != serviceMetadataVersionV4 && document.Version != serviceMetadataVersionV5 {
+		return nil, errors.New("service metadata version must be 1, 2, 3, 4, or 5")
+	}
+	if document.Version != serviceMetadataVersionV5 && len(data) > maxServiceMetadataBytes {
+		return nil, errors.New("service metadata exceeds size limit")
 	}
 	if document.Services == nil {
 		return nil, errors.New("service metadata services must be an array")
@@ -242,7 +259,7 @@ func parseServiceMetadata(data []byte) (*ServiceMetadata, error) {
 		if _, exists := metadata.Overrides[entry.ProxyHostID]; exists {
 			return nil, fmt.Errorf("service metadata entry %d duplicates a proxy_host_id", index)
 		}
-		if entry.Name == nil && entry.URL == nil && entry.Category == nil && entry.Order == nil && entry.Icon == nil && !(document.Version == serviceMetadataVersionV4 && (entry.NameNull || entry.URLNull)) {
+		if entry.Name == nil && entry.URL == nil && entry.Category == nil && entry.Order == nil && entry.Icon == nil && entry.CustomIcon == nil && !(serviceMetadataBoundVersion(document.Version) && (entry.NameNull || entry.URLNull)) {
 			if document.Version == serviceMetadataVersionV1 {
 				return nil, fmt.Errorf("service metadata entry %d must set name or url", index)
 			}
@@ -284,11 +301,30 @@ func parseServiceMetadata(data []byte) (*ServiceMetadata, error) {
 			}
 			override.Icon = *entry.Icon
 		}
+		if entry.CustomIcon != nil {
+			if document.Version != serviceMetadataVersionV5 || !validCustomIconID(*entry.CustomIcon) {
+				return nil, fmt.Errorf("service metadata entry %d has an invalid custom_icon", index)
+			}
+			override.CustomIcon = *entry.CustomIcon
+		}
 		metadata.Overrides[entry.ProxyHostID] = override
 	}
-	if document.Version == serviceMetadataVersionV4 {
+	if serviceMetadataBoundVersion(document.Version) {
 		if err := indexServiceMetadataV4(metadata); err != nil {
 			return nil, err
+		}
+	}
+	// Images alone may use the larger v5 budget; the rest keeps the incumbent cap.
+	if document.Version == serviceMetadataVersionV5 {
+		images := 0
+		for _, row := range document.CustomIcons {
+			if !validStoredCustomIcon(row) {
+				return nil, errors.New("service metadata custom icons are invalid")
+			}
+			images += len(row.PNG)
+		}
+		if len(data)-images > maxServiceMetadataBytes {
+			return nil, errors.New("service metadata exceeds size limit")
 		}
 	}
 	return metadata, nil
@@ -372,7 +408,7 @@ func rejectNonCanonicalServiceMetadataFields(data []byte) error {
 	if versionData, exists := document["version"]; exists {
 		_ = json.Unmarshal(versionData, &version)
 	}
-	if version == serviceMetadataVersionV4 {
+	if serviceMetadataBoundVersion(version) {
 		if err := validateServiceMetadataV4Fields(data, document); err != nil {
 			return err
 		}
@@ -395,10 +431,19 @@ func rejectNonCanonicalServiceMetadataFields(data []byte) error {
 			continue
 		}
 		allowedFields := []string{"proxy_host_id", "name", "url"}
-		if version == serviceMetadataVersionV2 || version == serviceMetadataVersionV3 || version == serviceMetadataVersionV4 {
+		if version == serviceMetadataVersionV2 || version == serviceMetadataVersionV3 || serviceMetadataBoundVersion(version) {
 			allowedFields = append(allowedFields, "category", "order")
 		}
-		if version == serviceMetadataVersionV3 || version == serviceMetadataVersionV4 {
+		if version == serviceMetadataVersionV5 {
+			allowedFields = append(allowedFields, "custom_icon")
+			if raw, exists := service["custom_icon"]; exists {
+				var ref string
+				if trimmed := bytes.TrimSpace(raw); len(trimmed) == 0 || trimmed[0] != '"' || json.Unmarshal(trimmed, &ref) != nil {
+					return errors.New("service metadata document is invalid")
+				}
+			}
+		}
+		if version == serviceMetadataVersionV3 || serviceMetadataBoundVersion(version) {
 			allowedFields = append(allowedFields, "icon")
 			if iconData, exists := service["icon"]; exists && bytes.Equal(bytes.TrimSpace(iconData), []byte("null")) {
 				return errors.New("service metadata document is invalid")
@@ -407,7 +452,7 @@ func rejectNonCanonicalServiceMetadataFields(data []byte) error {
 		if !containsOnlyJSONFields(service, allowedFields...) {
 			return errors.New("service metadata document is invalid")
 		}
-		if version == serviceMetadataVersionV2 || version == serviceMetadataVersionV3 || version == serviceMetadataVersionV4 {
+		if version == serviceMetadataVersionV2 || version == serviceMetadataVersionV3 || serviceMetadataBoundVersion(version) {
 			if categoryData, exists := service["category"]; exists {
 				var category string
 				if bytes.Equal(bytes.TrimSpace(categoryData), []byte("null")) || !utf8.Valid(categoryData) || json.Unmarshal(categoryData, &category) != nil {

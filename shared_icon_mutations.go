@@ -27,7 +27,7 @@ func sharedIconDocumentV4(document serviceMetadataDocument, binding serviceMetad
 		return serviceMetadataDocument{}, err
 	}
 	out := cloneServiceMetadataDocument(document)
-	if out.Version != serviceMetadataVersionV4 {
+	if !serviceMetadataBoundVersion(out.Version) {
 		out.Version = serviceMetadataVersionV4
 		out.Namespace, out.ControlPlane = binding.Namespace, binding.ControlPlane
 		out.Machines = []machineIconEntry{}

@@ -30,6 +30,9 @@ type SharedIconOperations struct {
 	origin   string
 	host     string
 	mcp      *MCPConfig
+
+	// customIcons is the PORTAL_CUSTOM_ICONS opt-in; it adds no authority.
+	customIcons bool
 }
 
 // Capture resolved values without I/O, validation, defaults or new authority.
@@ -40,6 +43,7 @@ func newSharedIconOperations(cfg *Config, editor *ServiceMetadataEditor, cache *
 		return o
 	}
 	o.mode, o.binding, o.interval = cfg.PortalEditMode, cfg.metadataBinding(), cfg.PollInterval
+	o.customIcons = cfg.CustomIcons
 	if cfg.TrustedProxyCIDR != nil {
 		o.trusted = &net.IPNet{IP: append(net.IP(nil), cfg.TrustedProxyCIDR.IP...), Mask: append(net.IPMask(nil), cfg.TrustedProxyCIDR.Mask...)}
 	}
