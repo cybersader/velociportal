@@ -1032,6 +1032,8 @@ func TestPortalHandler_LocalLogoControlAndHTMXRefresh(t *testing.T) {
 		`<div class="user-name">alice@example.com</div>`,
 		`id="portal-content" hx-get="/portal" hx-trigger="every 60s" hx-target="#portal-content" hx-select="#portal-content" hx-swap="outerHTML"`,
 		`.grid { grid-template-columns: minmax(0, 1fr); }`,
+		`:is(.card, .service-main):has(> .service-icon) { grid-template-columns: auto minmax(0, 1fr); }`,
+		`.card-editable:has(> .service-edit-button:not([hidden])) .service-main { padding-inline-end: var(--edit-space, 3rem); }`,
 		`.card-name { display: block; color: var(--text); font-weight: 600; line-height: 1.3; overflow-wrap: anywhere; }`,
 		`.card-meta { display: flex; align-items: center; gap: .5rem; min-width: 0; margin-top: auto; flex-wrap: wrap; }`,
 		`.card-meta { align-items: flex-start; }`,

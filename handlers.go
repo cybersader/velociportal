@@ -819,15 +819,18 @@ main { max-width: 1200px; margin: 0 auto; padding: 1rem 1.5rem 2.5rem; }
 .services-organized { display: grid; gap: 1.75rem; }
 .service-category { min-width: 0; }
 .service-category-title { margin: 0 0 .75rem; font-size: 1rem; line-height: 1.3; color: var(--muted); overflow-wrap: anywhere; }
-.grid { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); }
-.card { display: flex; flex-direction: column; gap: .55rem; padding: 1rem 1.1rem; border: 1px solid var(--border); border-radius: 12px; background: var(--card-bg); color: inherit; text-decoration: none; transition: border-color .15s, transform .15s, background-color .15s; }
+.grid { display: grid; gap: .5rem; grid-template-columns: repeat(auto-fill, minmax(min(100%, 13.5rem), 1fr)); }
+.card, .service-main { display: grid; grid-template-columns: minmax(0, 1fr); align-content: center; gap: .2rem .65rem; min-width: 0; min-height: 3.75rem; padding: .55rem .75rem; }
+:is(.card, .service-main):has(> .service-icon) { grid-template-columns: auto minmax(0, 1fr); }
+:is(.card, .service-main) > .service-icon { grid-row: 1 / span 2; align-self: center; }
+.card { border: 1px solid var(--border); border-radius: 10px; background: var(--card-bg); color: inherit; text-decoration: none; transition: border-color .15s, transform .15s, background-color .15s; }
 a.card:hover, a.card:focus-visible { border-color: var(--accent); background: var(--card-hover-bg); transform: translateY(-2px); }
 .card-unlinked { color: var(--muted); }
 .card-head { display: block; min-width: 0; }
 .card-name { display: block; color: var(--text); font-weight: 600; line-height: 1.3; overflow-wrap: anywhere; }
 .card-meta { display: flex; align-items: center; gap: .5rem; min-width: 0; margin-top: auto; flex-wrap: wrap; }
 .badge { align-self: flex-start; padding: .1rem .5rem; border-radius: 999px; font-size: .72rem; font-weight: 600; letter-spacing: .02em; text-transform: uppercase; background: var(--badge-bg); color: var(--badge-text); }
-.health-status { margin-left: auto; flex-shrink: 0; font-size: .72rem; font-weight: 650; line-height: 1.2; text-align: right; }
+.health-status { min-width: 0; overflow-wrap: anywhere; font-size: .72rem; font-weight: 650; line-height: 1.2; }
 .health-reachable { color: var(--health-reachable); }
 .health-auth-required { color: var(--health-auth); }
 .health-response-error { color: var(--health-response); }
@@ -893,8 +896,6 @@ a.card:hover, a.card:focus-visible { border-color: var(--accent); background: va
 .bottom-nav { display: none; }
 @media (min-width: 601px) {
   .portal-content { padding-top: 1.25rem; }
-  .card-meta { flex-direction: column; align-items: flex-start; flex-wrap: nowrap; }
-  .health-status { margin-left: 0; text-align: left; }
 }
 @media (max-width: 900px) {
   .machine-row { grid-template-columns: minmax(11rem, .75fr) minmax(18rem, 1.25fr); grid-template-areas: "identity connect" "details actions"; align-items: start; }
