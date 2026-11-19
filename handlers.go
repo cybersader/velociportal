@@ -391,10 +391,10 @@ func renderServiceCard(body *strings.Builder, card ServiceCard, health *ServiceH
 			fmt.Fprintf(body, `<div class="service-main card-unlinked">%s</div>`, content)
 		}
 		if personal {
-			fmt.Fprintf(body, `<button type="button" class="service-edit-button" data-edit-personal="%s" aria-label="Edit service: %s" aria-haspopup="dialog" aria-controls="personal-editor" hidden>Edit service</button></article>`, html.EscapeString(card.PersonalID), html.EscapeString(card.Name))
+			fmt.Fprintf(body, `<button type="button" class="service-edit-button" data-edit-personal="%s" aria-label="Edit service: %s" aria-haspopup="dialog" title="Edit service" aria-controls="personal-editor" hidden>`+editServicePencil+`</button></article>`, html.EscapeString(card.PersonalID), html.EscapeString(card.Name))
 			return
 		}
-		fmt.Fprintf(body, `<button type="button" class="service-edit-button" data-edit-service="%d" aria-label="Edit service: %s" aria-haspopup="dialog" aria-controls="service-editor">Edit service</button></article>`, card.ID, html.EscapeString(card.Name))
+		fmt.Fprintf(body, `<button type="button" class="service-edit-button" data-edit-service="%d" aria-label="Edit service: %s" aria-haspopup="dialog" aria-controls="service-editor" title="Edit service">`+editServicePencil+`</button></article>`, card.ID, html.EscapeString(card.Name))
 		return
 	}
 	if linkable {
