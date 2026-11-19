@@ -60,8 +60,9 @@ const editServicePencil = `<svg width="16" height="16" viewBox="0 0 24 24" fill=
 const serviceEditorCSS = `
 .service-icon { display: block; width: 32px; height: 32px; object-fit: contain; }
 .service-domain { display: block; color: var(--muted); font-size: .8rem; overflow-wrap: anywhere; }
-.card-editable { position: relative; padding: 0; gap: 0; overflow: hidden; }
-.service-main { display: flex; flex: 1; flex-direction: column; gap: .55rem; min-width: 0; min-height: 44px; padding: 1rem 1.1rem; color: inherit; text-decoration: none; }
+.card-editable { display: flex; flex-direction: column; position: relative; padding: 0; gap: 0; overflow: hidden; }
+.service-main { flex: 1; color: inherit; text-decoration: none; }
+.card-editable:has(> .service-edit-button:not([hidden])) .service-main { padding-inline-end: var(--edit-space, 3rem); }
 a.service-main:hover, a.service-main:focus-visible { background: var(--card-hover-bg); }
 /* The pencil sits across from the service icon, outside the launch link. */
 .service-edit-button { position: absolute; inset-block-start: 4px; inset-inline-end: 4px; display: grid; place-items: center; width: 44px; height: 44px; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--muted); cursor: pointer; }
@@ -69,6 +70,7 @@ a.service-main:hover, a.service-main:focus-visible { background: var(--card-hove
 .service-edit-button:disabled { cursor: default; }
 /* Keep touch and hybrid devices discoverable, even with a mouse attached. */
 @media (hover: hover) and (pointer: fine) and (not (any-pointer: coarse)) {
+  .card-editable { --edit-space: 2.5rem; }
   .service-edit-button { inset-block-start: 8px; inset-inline-end: 8px; width: 30px; height: 30px; opacity: 0; pointer-events: none; }
   .card-editable:hover .service-edit-button, .card-editable:focus-within .service-edit-button { opacity: 1; pointer-events: auto; }
 }
