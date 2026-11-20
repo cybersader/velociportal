@@ -222,6 +222,7 @@ No CA state lives on pfSense/the router. Router replacement restores ordinary DN
 | Compare identities and joins | [Real deployment validation](https://cybersader.github.io/velociportal/getting-started/validation/) | Tooling implemented; live worksheet pending |
 | Use native private Headscale TLS | [Optional private TLS](https://cybersader.github.io/velociportal/guides/private-tls/) | Alternative only |
 | Build and diagnose from source | [Local-source workflow](https://cybersader.github.io/velociportal/getting-started/setup/) | Contributor/advanced diagnostics only |
+| Contribute a change | [CONTRIBUTING.md](CONTRIBUTING.md) | One `make check` command mirrors PR CI |
 | Review trust and spoofing controls | [Tailscale identity headers](https://cybersader.github.io/velociportal/reference/tailscale-headers/) | Required reading |
 
 ## Roadmap

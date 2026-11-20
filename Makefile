@@ -1,7 +1,8 @@
-.PHONY: build fmt-check test vet lint check run docker validate-env-file docker-run setup observe-proxy doctor validate validate-json up logs health down production-compose-check verify clean
+.PHONY: build cli-smoke fmt-check test vet lint check compose-check image-check docs-check run docker validate-env-file docker-run setup observe-proxy doctor validate validate-json up logs health down production-compose-check verify clean
 .NOTPARALLEL: check verify
 
 PYTHON ?= python3
+MKDOCS ?= mkdocs
 IMAGE ?= velociportal:latest
 BUILD_VERSION ?= dev
 GIT_REVISION ?= $(shell git rev-parse --verify HEAD 2>/dev/null || printf unknown)
@@ -35,8 +36,14 @@ SETUP_COMPOSE = ENV_FILE=".env.example" $(COMPOSE_ENV) docker compose -f docker-
 WORKSPACE_VOLUME = $(CURDIR):/workspace
 CONTAINER_STACK_ENV_ARGS = $(if $(strip $(STACK_ENV_FILE)),--stack-env "/workspace/$(STACK_ENV_FILE)")
 
+# Static binary with the same flags as the Dockerfile and CI build job.
 build:
-	go build -ldflags="$(BUILD_LDFLAGS)" -o velociportal .
+	CGO_ENABLED=0 go build -ldflags="$(BUILD_LDFLAGS)" -o velociportal .
+
+cli-smoke: build
+	./velociportal healthcheck --help >/dev/null
+	./velociportal validate --help >/dev/null
+	./velociportal suggest-hostnames --help >/dev/null
 
 fmt-check:
 	@unformatted="$$(gofmt -l *.go)"; \
@@ -53,7 +60,37 @@ vet:
 
 lint: fmt-check vet
 
-check: fmt-check vet test
+# One portable contributor command. It runs, in order, the same targets that the
+# CI test, build, docker and docs jobs call. It needs Go, a C toolchain for -race,
+# Docker with Compose v2, python3 and the pinned documentation dependencies.
+# It reads only tracked example files and needs no credentials, .env file,
+# registry login or live upstream services.
+check: fmt-check vet test cli-smoke compose-check image-check docs-check
+
+# Render the contributor and production Compose bundles from tracked examples.
+compose-check:
+	ENV_FILE=.env.example docker compose -f docker-compose.yml --profile tools config --quiet
+	ENV_FILE=.env.example PRIVATE_CA_FILE="$(CURDIR)/.env.example" docker compose -f docker-compose.yml -f docker-compose.private-ca.yml --profile tools config --quiet
+	$(PYTHON) scripts/verify-production-compose.py
+
+# Build the image locally (never pushed) and check its runtime contract.
+image-check: docker
+	docker run --rm --read-only --security-opt no-new-privileges "$(IMAGE)" healthcheck --help >/dev/null
+	docker run --rm --read-only --security-opt no-new-privileges "$(IMAGE)" validate --help >/dev/null
+	docker run --rm --read-only --security-opt no-new-privileges "$(IMAGE)" suggest-hostnames --help >/dev/null
+	@test "$$(docker image inspect --format '{{json .Config.Healthcheck.Test}}' "$(IMAGE)")" = \
+		'["CMD","/velociportal","healthcheck"]' || { \
+		printf 'image %s does not contain the expected healthcheck command\n' "$(IMAGE)"; \
+		exit 1; \
+	}
+	@test "$$(docker image inspect --format '{{.Config.User}}' "$(IMAGE)")" = '65534:65534' || { \
+		printf 'image %s does not run as the expected non-root user\n' "$(IMAGE)"; \
+		exit 1; \
+	}
+
+# Strict documentation build, as run by CI. Needs: pip install -r docs/requirements.txt
+docs-check:
+	$(MKDOCS) build --strict
 
 # Run locally without executing the environment file as shell code.
 run:
