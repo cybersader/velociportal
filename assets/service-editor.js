@@ -117,7 +117,6 @@
       document.getElementById("service-editor-defaults").textContent = "Empty fields use defaults: " + data.defaults.name + (data.defaults.url ? " — " + data.defaults.url : " — no concrete link") + (browser ? ". Icon uses the current server default." : ". Icon defaults to generic.");
       name.placeholder = data.defaults.name; url.placeholder = data.defaults.url || "https://service.example.com";
       session.baseline = JSON.stringify(values()); session.loaded = true; previewIcon(); controls(true); message("");
-      if (document.activeElement === document.getElementById("service-editor-title")) name.focus();
     } catch (error) {
       if (browser && session) { session.baseline = JSON.stringify(values()); session.loaded = true; }
       explain(error, false);

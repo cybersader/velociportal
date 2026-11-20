@@ -380,7 +380,7 @@
   function populate(entry) {
     name.value = entry ? entry.name : ""; url.value = entry ? entry.url : ""; icon.value = entry ? entry.icon || "" : "";
     draft.generation = state.generation; draft.revision = state.revision; draft.store_id = state.store_id || ""; draft.blocked = false; draft.baseline = JSON.stringify(values());
-    remove.hidden = !entry; reload.hidden = true; preview(); message(""); controls(); name.focus();
+    remove.hidden = !entry; reload.hidden = true; preview(); message(""); controls();
   }
   function open(id, opener) {
     if (dialog.open || !state || posting || loading || choiceBlocksEditing() || recoveryChoice || !compatible(root())) return;
@@ -393,6 +393,7 @@
     var account = byID("account-panel"), accountTrigger = byID("account-trigger");
     if (account && !account.hidden && accountTrigger) accountTrigger.click();
     dialog.showModal(); populate(entry);
+    if (!entry) name.focus();
   }
   async function mutate(action) {
     if (!state || posting || loading || invalid || (action !== "restore" && (!draft || draft.blocked || choiceBlocksEditing() || recoveryChoice))) return;

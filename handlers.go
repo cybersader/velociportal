@@ -382,13 +382,23 @@ func renderServiceCard(body *strings.Builder, card ServiceCard, health *ServiceH
 	if linkable {
 		badge = scheme
 	}
-	content := fmt.Sprintf(`%s<span class="card-head"><span class="card-name">%s</span></span><span class="card-meta"><span class="badge">%s</span>%s</span>`, iconMarkup, html.EscapeString(card.Name), badge, healthMarkup)
-	if personal && len(editing) > 3 && editing[3] || !personal && len(editing) > 0 && editing[0] {
-		fmt.Fprintf(body, `<article class="card card-editable" %s>`, attrs)
+	content := fmt.Sprintf(`%s<span class="card-head"><span class="card-name">%s</span></span><span class="card-meta"><span class="badge">%s</span></span>`, iconMarkup, html.EscapeString(card.Name), badge)
+	editable := personal && len(editing) > 3 && editing[3] || !personal && len(editing) > 0 && editing[0]
+	if editable || healthMarkup != "" {
+		class := "card-monitored"
+		if editable {
+			class = "card-editable"
+		}
+		fmt.Fprintf(body, `<article class="card %s" %s>`, class, attrs)
 		if linkable {
 			fmt.Fprintf(body, `<a class="service-main" href="%s">%s</a>`, html.EscapeString(card.URL), content)
 		} else {
 			fmt.Fprintf(body, `<div class="service-main card-unlinked">%s</div>`, content)
+		}
+		body.WriteString(healthMarkup)
+		if !editable {
+			body.WriteString(`</article>`)
+			return
 		}
 		if personal {
 			fmt.Fprintf(body, `<button type="button" class="service-edit-button" data-edit-personal="%s" aria-label="Edit service: %s" aria-haspopup="dialog" title="Edit service" aria-controls="personal-editor" hidden>`+editServicePencil+`</button></article>`, html.EscapeString(card.PersonalID), html.EscapeString(card.Name))
@@ -623,7 +633,7 @@ func renderServiceHealthStatus(store *ServiceHealthStore, proxyHostID int) strin
 		className = "stale"
 	}
 	return fmt.Sprintf(
-		`<span class="health-status health-%s" aria-label="Backend service check: %s">%s</span>`,
+		`<details class="health-status health-%s"><summary aria-label="Backend service check: %s"></summary><span class="health-copy">%s</span></details>`,
 		className,
 		html.EscapeString(label),
 		html.EscapeString(label),
@@ -665,16 +675,16 @@ func renderServiceHealthHelp(hasHealth, hasUnlinkedCards bool) string {
 	var title string
 	switch {
 	case hasHealth && hasUnlinkedCards:
-		title = "About links and backend checks"
+		title = "Link &amp; status guide"
 	case hasHealth:
-		title = "What does a service check mean?"
+		title = "Status guide"
 	default:
 		title = `What does "link needed" mean?`
 	}
 
 	var body strings.Builder
 	if hasHealth {
-		body.WriteString(`<p>Each label describes a backend check run from this server, not what your browser will see. ` +
+		body.WriteString(`<p>Select a status dot to see the backend check result. This check runs from the portal server, not your browser. ` +
 			`A TCP check only confirms a connection could be opened; it says nothing about the page behind it. ` +
 			`An HTTP check accepts a configured range of status codes as a pass, but an accepted status does not prove a usable page, ` +
 			`and a denial (401/403) is always treated as a denial regardless of that range.</p>` +
@@ -798,7 +808,8 @@ body { margin: 0; font: 16px/1.5 system-ui, sans-serif; background: var(--bg); c
 header { max-width: 1200px; margin: 0 auto; padding: 2rem 1.5rem 1rem; display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
 .brand { display: flex; align-items: center; gap: .6rem; min-width: 0; }
 .brand-logo { width: 32px; height: 32px; flex-shrink: 0; }
-:root[data-logo="hidden"] .brand-logo { display: none; }
+:root[data-logo="hidden"] .brand { display: none; }
+:root[data-logo="hidden"] .header-side { margin-inline-start: auto; }
 .brand-name { font-size: 1.25rem; font-weight: 700; letter-spacing: -.01em; }
 .header-side { display: flex; align-items: center; justify-content: flex-end; gap: 1rem; min-width: 0; }
 .account { position: relative; min-width: 0; }
@@ -806,7 +817,9 @@ header { max-width: 1200px; margin: 0 auto; padding: 2rem 1.5rem 1rem; display: 
 .account-trigger:hover, .account-trigger:focus-visible { border-color: var(--border); background: var(--card-bg); }
 .user { text-align: right; min-width: 0; }
 .user-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.user .login { color: var(--muted); font-size: .85rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.account-trigger[hidden] { display: none; }
+.account-trigger .user-name { display: block; }
+.account-panel .login { color: var(--muted); font-size: .85rem; overflow-wrap: anywhere; }
 .account-panel { position: absolute; top: calc(100% + .5rem); right: 0; z-index: 20; width: max-content; min-width: 14rem; max-width: min(20rem, calc(100vw - 2rem)); padding: .9rem 1rem; border: 1px solid var(--border); border-radius: 12px; background: var(--card-bg); box-shadow: 0 12px 30px rgba(0, 0, 0, .25); text-align: left; }
 .account-panel-title { margin: 0 0 .6rem; font-size: 1rem; }
 .account-panel-section + .account-panel-section { margin-top: .75rem; }
@@ -838,7 +851,11 @@ a.card:hover, a.card:focus-visible { border-color: var(--accent); background: va
 .health-stale { color: var(--health-stale); }
 .health-unknown { color: var(--health-unknown); }
 .service-health-help { margin: -.35rem 0 1rem; color: var(--muted); font-size: .82rem; }
-.service-health-help summary { width: fit-content; cursor: pointer; color: var(--muted); font-weight: 600; }
+.service-health-help summary { display: flex; align-items: center; gap: .35rem; min-height: 28px; width: fit-content; list-style: none; cursor: pointer; font-weight: 400; }
+.service-health-help summary::-webkit-details-marker, .health-status summary::-webkit-details-marker { display: none; }
+.service-health-help summary::after { content: ""; width: .4rem; height: .4rem; border: solid currentColor; border-width: 1px 1px 0 0; transform: rotate(45deg); }
+.service-health-help[open] summary::after { transform: rotate(135deg); }
+.service-health-help summary:focus-visible, .health-status summary:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: 5px; }
 .service-health-help summary:hover, .service-health-help summary:focus-visible { color: var(--text); }
 .service-health-help-body { display: grid; gap: .5rem; margin-top: .5rem; max-width: 68ch; }
 .service-health-help-body p { margin: 0; }
@@ -906,6 +923,7 @@ a.card:hover, a.card:focus-visible { border-color: var(--accent); background: va
   main { padding: .75rem 1rem 2rem; }
   .portal-content { gap: 1.5rem; }
   .portal-search { margin-bottom: .6rem; }
+  .portal-search-label { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
   .header-side { flex: 1 1 auto; min-width: 0; justify-content: flex-end; }
   .user { text-align: right; max-width: 100%; }
   .grid { grid-template-columns: minmax(0, 1fr); }
@@ -981,12 +999,10 @@ a.card:hover, a.card:focus-visible { border-color: var(--accent); background: va
 <div class="header-side">
 <div class="account" id="account">
 <button class="account-trigger" id="account-trigger" type="button" aria-label="Account settings for {{USER_LOGIN}}" aria-haspopup="dialog" aria-expanded="false" aria-controls="account-panel" hidden>
-<div class="user-name">{{USER_NAME}}</div>
-<div class="login">{{USER_LOGIN}}</div>
+<span class="user-name">{{USER_NAME}}</span>
 </button>
 <div class="user" id="account-fallback">
 <div class="user-name">{{USER_NAME}}</div>
-<div class="login">{{USER_LOGIN}}</div>
 </div>
 <div class="account-panel" id="account-panel" role="dialog" aria-labelledby="account-panel-title" hidden>
 <h2 class="account-panel-title" id="account-panel-title">Account settings</h2>
@@ -999,7 +1015,7 @@ a.card:hover, a.card:focus-visible { border-color: var(--accent); background: va
 <div class="account-panel-heading">Appearance</div>
 <label class="account-panel-checkbox">
 <input type="checkbox" id="logo-visible-checkbox">
-Show Velociportal logo
+Show Velociportal logo and name
 </label>
 </div>
 <div class="account-panel-section">
@@ -1040,6 +1056,14 @@ Show Velociportal logo
 <datalist id="ssh-account-suggestions"></datalist>
 <script src="/static/htmx.min.js"></script>
 <script>
+// Let the clicked control act normally; dismiss only the other status bubbles.
+// Delegate from the page so this also works on cards replaced by polling.
+document.addEventListener("click", function (event) {
+  document.querySelectorAll("details.health-status[open]").forEach(function (bubble) {
+    if (!bubble.contains(event.target)) bubble.open = false;
+  });
+}, true);
+
 (function () {
   "use strict";
   var root = document.documentElement;

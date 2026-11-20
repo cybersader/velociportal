@@ -60,9 +60,30 @@ const editServicePencil = `<svg width="16" height="16" viewBox="0 0 24 24" fill=
 const serviceEditorCSS = `
 .service-icon { display: block; width: 32px; height: 32px; object-fit: contain; }
 .service-domain { display: block; color: var(--muted); font-size: .8rem; overflow-wrap: anywhere; }
-.card-editable { display: flex; flex-direction: column; position: relative; padding: 0; gap: 0; overflow: hidden; }
+.card-editable, .card-monitored { display: flex; flex-direction: column; position: relative; padding: 0; gap: 0; overflow: hidden; }
+/* A separate target, never an interactive child of the launch link. */
+.card:has(> .health-status) { --dot-target: 44px; --dot-end: 4px; }
+.card:has(> .health-status):has(> .service-edit-button:not([hidden])) { --dot-end: var(--edit-space, 3rem); }
+.card:has(> .health-status) { --controls-space: calc(var(--dot-target) + var(--dot-end)); }
+.card-monitored > .service-main { padding-inline-end: var(--controls-space); }
+.health-status summary { position: absolute; inset-block-start: 6px; inset-inline-end: var(--dot-end); display: grid; place-items: center; width: var(--dot-target); height: var(--dot-target); list-style: none; cursor: pointer; border-radius: 6px; }
+.health-status summary::before { content: ""; width: 7px; height: 7px; border-radius: 50%; border: 1px solid currentColor; background: currentColor; }
+.health-unknown summary::before, .health-stale summary::before { background: transparent; }
+.health-status summary:hover, .health-status summary:focus-visible { background: var(--card-hover-bg); }
+.health-copy { display: block; position: relative; width: fit-content; margin: .25rem var(--dot-end) .55rem auto; max-width: calc(100% - var(--dot-end) - .75rem); padding: .35rem .65rem; border-radius: .85rem; background: var(--card-hover-bg); color: var(--muted); text-align: start; font-size: .8rem; font-weight: 500; }
+.health-copy::before, .health-copy::after { content: ""; position: absolute; border-radius: 50%; background: var(--card-hover-bg); }
+.health-copy::before { width: 6px; height: 6px; top: -5px; right: calc(var(--dot-target) / 2); }
+.health-copy::after { width: 3px; height: 3px; top: -10px; right: calc(var(--dot-target) / 2 - 1px); }
+@media (prefers-reduced-motion: no-preference) {
+  .health-status::details-content { transform-origin: calc(100% - var(--dot-end) - var(--dot-target) / 2) top; opacity: 0; transform: scale(.92); transition: opacity 110ms ease-out, transform 150ms cubic-bezier(.16,1,.3,1), content-visibility 150ms allow-discrete; }
+  .health-status[open]::details-content { opacity: 1; transform: none; }
+}
+@media (hover: hover) and (pointer: fine) and (not (any-pointer: coarse)) {
+  .card:has(> .health-status) { --dot-target: 28px; }
+}
 .service-main { flex: 1; color: inherit; text-decoration: none; }
-.card-editable:has(> .service-edit-button:not([hidden])) .service-main { padding-inline-end: var(--edit-space, 3rem); }
+.card-editable > .service-main { padding-inline-end: var(--controls-space, .75rem); }
+.card-editable:has(> .service-edit-button:not([hidden])) .service-main { padding-inline-end: var(--controls-space, var(--edit-space, 3rem)); }
 a.service-main:hover, a.service-main:focus-visible { background: var(--card-hover-bg); }
 /* The pencil sits across from the service icon, outside the launch link. */
 .service-edit-button { position: absolute; inset-block-start: 4px; inset-inline-end: 4px; display: grid; place-items: center; width: 44px; height: 44px; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--muted); cursor: pointer; }

@@ -94,7 +94,7 @@ function cancel(s) {s.elements['service-editor-cancel'].emit('click');}
 
 {
  const s=fixture();click(s);check(s.dialog.open,'native dialog opens');check(s.elements['service-editor-save'].disabled,'loading disables save');check(s.document.activeElement.id==='service-editor-title','picker does not steal initial focus');
- s.requests[0].resolve(200,form());await settled();check(s.elements['service-editor-name'].value==='Shared','GET populates selected service');check(!s.elements['service-editor-save'].disabled,'loaded form enables save');check(s.elements['service-editor-preview'].src==='/static/service-icons/grafana.png','finite local preview');
+ s.requests[0].resolve(200,form());await settled();check(s.document.activeElement.id==='service-editor-title','loading fields leaves focus on the heading');check(s.elements['service-editor-name'].value==='Shared','GET populates selected service');check(!s.elements['service-editor-save'].disabled,'loaded form enables save');check(s.elements['service-editor-preview'].src==='/static/service-icons/grafana.png','finite local preview');
  s.elements['service-editor-name'].value='Draft';s.button.searchHidden=true;s.root.emit('unused');s.document.body.emit('htmx:afterSwap');check(s.dialog.open && s.elements['service-editor-name'].value==='Draft','search-hidden and harmless poll preserve draft');
  s.confirm=false;cancel(s);check(s.dialog.open,'dirty close requires confirmation');s.confirm=true;cancel(s);check(!s.dialog.open && s.elements['service-editor-name'].value==='','close clears draft');check(s.requests[0].options.signal.aborted,'close aborts request signal');
 }
