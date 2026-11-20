@@ -518,7 +518,7 @@ func TestRenderServiceHealthStatusLabels(t *testing.T) {
 			store.publish(map[int]ServiceHealthResult{
 				1: {ProxyHostID: 1, State: test.state, CheckedAt: time.Now()},
 			}, time.Hour)
-			want := `<span class="health-status health-` + test.class + `" aria-label="Backend service check: ` + test.label + `">` + test.label + `</span>`
+			want := `<details class="health-status health-` + test.class + `"><summary aria-label="Backend service check: ` + test.label + `"></summary><span class="health-copy">` + test.label + `</span></details>`
 			if markup := renderServiceHealthStatus(store, 1); markup != want {
 				t.Fatalf("markup = %q, want %q", markup, want)
 			}
@@ -576,7 +576,7 @@ func TestRenderServiceHealthHelpTitleAndBodyVaryByApplicability(t *testing.T) {
 	}
 
 	both := renderServiceHealthHelp(true, true)
-	if !strings.Contains(both, "<summary>About links and backend checks</summary>") {
+	if !strings.Contains(both, "<summary>Link &amp; status guide</summary>") {
 		t.Fatalf("combined disclosure has wrong title: %s", both)
 	}
 	if !strings.Contains(both, "wildcard hostname") || !strings.Contains(both, "TCP check only confirms") {
@@ -595,7 +595,7 @@ func TestRenderServiceCardKeepsNameSeparateFromHealth(t *testing.T) {
 	markup := body.String()
 	for _, expected := range []string{
 		`<span class="card-head"><span class="card-name">very-long-service-name.example.com</span></span>`,
-		`<span class="card-meta"><span class="badge">https</span><span class="health-status health-auth-required" aria-label="Backend service check: backend denied">backend denied</span></span>`,
+		`<span class="card-meta"><span class="badge">https</span></span></a><details class="health-status health-auth-required">`,
 	} {
 		if !strings.Contains(markup, expected) {
 			t.Fatalf("service card omitted %q: %s", expected, markup)
@@ -1020,7 +1020,9 @@ func TestPortalHandler_LocalLogoControlAndHTMXRefresh(t *testing.T) {
 		`id="account-fallback"`,
 		`id="account-panel" role="dialog" aria-labelledby="account-panel-title" hidden`,
 		`id="logo-visible-checkbox"`,
-		`Show Velociportal logo`,
+		`Show Velociportal logo and name`,
+		"<span class=\"user-name\">alice@example.com</span>\n</button>",
+		"id=\"account-fallback\">\n<div class=\"user-name\">alice@example.com</div>\n</div>",
 		`var scopedKey = "velociportal.logo.visible." + scope;`,
 		`var legacyKey = "velociportal.logo.visible";`,
 		`window.localStorage.getItem(scopedKey)`,
@@ -1033,7 +1035,9 @@ func TestPortalHandler_LocalLogoControlAndHTMXRefresh(t *testing.T) {
 		`id="portal-content" hx-get="/portal" hx-trigger="every 60s" hx-target="#portal-content" hx-select="#portal-content" hx-swap="outerHTML"`,
 		`.grid { grid-template-columns: minmax(0, 1fr); }`,
 		`:is(.card, .service-main):has(> .service-icon) { grid-template-columns: auto minmax(0, 1fr); }`,
-		`.card-editable:has(> .service-edit-button:not([hidden])) .service-main { padding-inline-end: var(--edit-space, 3rem); }`,
+		`.card-editable:has(> .service-edit-button:not([hidden])) .service-main { padding-inline-end: var(--controls-space, var(--edit-space, 3rem)); }`,
+		`:root[data-logo="hidden"] .brand { display: none; }`,
+		`<label class="portal-search-label" for="portal-search-input">Search services and machines</label>`,
 		`.card-name { display: block; color: var(--text); font-weight: 600; line-height: 1.3; overflow-wrap: anywhere; }`,
 		`.card-meta { display: flex; align-items: center; gap: .5rem; min-width: 0; margin-top: auto; flex-wrap: wrap; }`,
 		`.card-meta { align-items: flex-start; }`,
