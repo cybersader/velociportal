@@ -270,10 +270,10 @@
         });
       });
     }
-    byID("personal-recovery-help").textContent = choice && backup ? "The server restarted. This browser has a copy of " + backup.document.entries.length + " services from before the restart. We cannot tell whether it is the newest. " + (state.initialized ? "A current server collection already exists; restoring over it is not allowed." : "Restore it only if you want to use this copy.") : "";
+    byID("personal-recovery-help").textContent = choice && backup ? "This browser copy predates the restart and may be out of date. " + (state.initialized ? "It can’t replace the current server copy." : "Review it before restoring.") : "";
     if (durable && choice) byID("personal-recovery-help").textContent = "Current disk state is authoritative. These browser copies are not a known-newer version. Review them or explicitly discard them; you can use current server data without choosing. " + (canImport() ? "Only the current legacy browser-storage copy may be imported while the server collection is absent." : "Restoring over durable state is not allowed.") + (displaced.length ? " Displaced copies are retained only in this tab until it closes; they are not saved in browser storage." : "") + (reviewOverflow ? " The four-copy review limit was reached; additional competing copies could not be retained." : "");
     adopt.textContent = durable ? "Discard reviewed copies; keep server data" : state && state.initialized ? "Use current server copy" : "Start without this copy";
-    summary.textContent = storageProblem || (choice ? (durable ? "Using current server data; a browser copy is retained for review." : "Choose which copy to keep before editing.") : state ? (state.document.entries.length ? "Personal to your account. Edit includes delete." : "No personal services yet. Use Add service to save a tailnet launch link.") : "Loading your services…");
+    summary.textContent = storageProblem || (choice ? (durable ? "Using current server data; a browser copy is retained for review." : "Choose which copy to keep before editing.") : state ? (state.document.entries.length ? "" : "No personal services yet. Use Add service to save a tailnet launch link.") : "Loading your services…");
     controls();
     if (focusedID && !dialog.open) {
       var replacement = list.querySelector('[data-edit-personal="' + focusedID + '"]');

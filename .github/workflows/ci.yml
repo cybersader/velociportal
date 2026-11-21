@@ -25,6 +25,8 @@ jobs:
         run: go vet ./...
       - name: go test
         run: go test -v -race -count=1 ./...
+      - name: Browser card-order regression
+        run: python3 scripts/test-card-order.py
 
   build:
     runs-on: ubuntu-latest
