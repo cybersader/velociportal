@@ -50,7 +50,7 @@ func renderPersonalServicesUI(state *PersonalServicesState) (markers, add, manag
 	}
 	add = `<button type="button" class="personal-action" data-add-personal aria-haspopup="dialog" aria-controls="personal-editor" hidden>Add service</button>`
 	manager = `<section class="account-panel-section" id="personal-manager" aria-labelledby="personal-manager-title" hidden>
-<h3 class="account-panel-heading" id="personal-manager-title">Your services</h3>
+<details class="manager-details"><summary id="personal-manager-title">Your services <small class="copy-review-hint">Review copy</small></summary>
 <p class="personal-hint" id="personal-manager-status" role="status" aria-live="polite">Loading your services…</p>
 <ul id="personal-list" class="personal-list"></ul>
 <div id="personal-recovery" hidden><p class="personal-hint" id="personal-recovery-help"></p>
@@ -58,7 +58,7 @@ func renderPersonalServicesUI(state *PersonalServicesState) (markers, add, manag
 <button type="button" class="personal-action" id="personal-restore" hidden>Restore from this browser</button>
 <button type="button" class="personal-action" id="personal-adopt" hidden>Use current server copy</button></div>
 <button type="button" class="personal-action" id="personal-refresh" hidden>Reload current services</button>
-</section>`
+</details></section>`
 	var choices strings.Builder
 	choices.WriteString(`<option value="" data-icon-path="/static/service-icons/generic.svg">Inherit shared default (otherwise generic)</option>`)
 	for _, icon := range serviceIcons {

@@ -811,9 +811,9 @@ header { max-width: 1200px; margin: 0 auto; padding: 2rem 1.5rem 1rem; display: 
 :root[data-logo="hidden"] .brand { display: none; }
 :root[data-logo="hidden"] .header-side { margin-inline-start: auto; }
 .brand-name { font-size: 1.25rem; font-weight: 700; letter-spacing: -.01em; }
-.header-side { display: flex; align-items: center; justify-content: flex-end; gap: 1rem; min-width: 0; }
-.account { position: relative; min-width: 0; }
-.account-trigger { display: block; border: 1px solid transparent; border-radius: 10px; padding: .3rem .5rem; margin: -.3rem -.5rem; background: none; text-align: right; cursor: pointer; font: inherit; color: inherit; max-width: 100%; }
+.header-side { display: flex; align-items: center; justify-content: flex-end; gap: 1rem; min-width: 0; flex: 1 1 0; }
+.account { position: relative; min-width: 0; max-width: 100%; }
+.account-trigger { display: block; width: max-content; border: 1px solid transparent; border-radius: 10px; padding: .3rem .5rem; margin: 0; background: none; text-align: right; cursor: pointer; font: inherit; color: inherit; max-width: 100%; }
 .account-trigger:hover, .account-trigger:focus-visible { border-color: var(--border); background: var(--card-bg); }
 .user { text-align: right; min-width: 0; }
 .user-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -821,7 +821,24 @@ header { max-width: 1200px; margin: 0 auto; padding: 2rem 1.5rem 1rem; display: 
 .account-trigger .user-name { display: block; }
 .account-panel .login { color: var(--muted); font-size: .85rem; overflow-wrap: anywhere; }
 .account-panel { position: absolute; top: calc(100% + .5rem); right: 0; z-index: 20; width: max-content; min-width: 14rem; max-width: min(20rem, calc(100vw - 2rem)); padding: .9rem 1rem; border: 1px solid var(--border); border-radius: 12px; background: var(--card-bg); box-shadow: 0 12px 30px rgba(0, 0, 0, .25); text-align: left; }
-.account-panel-title { margin: 0 0 .6rem; font-size: 1rem; }
+.account-panel-title { margin: 0; font-size: 1rem; }
+.account-panel { max-height: min(68dvh, 34rem); overflow-y: auto; }
+.account-panel-section:has(#clear-ssh-accounts-button[hidden]):has(.account-panel-status:empty), #personal-manager-status:empty { display: none; }
+.order-open, .manager-details > summary { font: inherit; font-size: .85rem; color: var(--text); cursor: pointer; padding: .55rem 0; }
+.copy-review-hint { display: none; color: var(--muted); margin-inline-start: .5rem; }
+.manager-details:not([open]):has(#personal-recovery:not([hidden])) .copy-review-hint { display: inline; }
+.order-open { border: 0; background: none; text-align: start; }
+.order-open:hover, .manager-details > summary:hover { color: var(--accent); }
+#card-order-list { max-height: min(46dvh, 24rem); overflow: auto; overscroll-behavior: contain; }
+#card-order-list ol { list-style: none; padding: 0; margin: 0; }
+#card-order-list h3 { color: var(--muted); font-size: .85rem; margin: .8rem 0 .35rem; }
+.order-row { display: flex; align-items: center; gap: .2rem; border-bottom: 1px solid var(--border); font-size: .88rem; }
+.order-row[data-dragging] { background: var(--card-hover-bg); }
+.order-name { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.order-grip, #card-order .order-row button { display: grid; place-items: center; width: 44px; min-height: 44px; padding: 0; color: var(--muted); }
+.order-grip { cursor: grab; touch-action: none; user-select: none; }
+#card-order .order-row button { border: 0; background: transparent; }
+#card-order-status:empty { display: none; }
 .account-panel-section + .account-panel-section { margin-top: .75rem; }
 .account-panel-heading { margin: 0 0 .4rem; font-size: .8rem; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .02em; }
 .account-panel-checkbox { display: flex; align-items: center; gap: .5rem; font-size: .9rem; cursor: pointer; }
@@ -1007,16 +1024,14 @@ a.card:hover, a.card:focus-visible { border-color: var(--accent); background: va
 <div class="account-panel" id="account-panel" role="dialog" aria-labelledby="account-panel-title" hidden>
 <h2 class="account-panel-title" id="account-panel-title">Account settings</h2>
 <div class="account-panel-section">
-<div class="account-panel-heading">Signed in as</div>
-<div class="user-name">{{USER_NAME}}</div>
 <div class="login">{{USER_LOGIN}}</div>
 </div>
 <div class="account-panel-section">
-<div class="account-panel-heading">Appearance</div>
 <label class="account-panel-checkbox">
 <input type="checkbox" id="logo-visible-checkbox">
 Show Velociportal logo and name
 </label>
+<button id="card-order-open" type="button" class="order-open" aria-haspopup="dialog" aria-controls="card-order" hidden>Edit card order</button>
 </div>
 <div class="account-panel-section">
 <div class="account-panel-heading">SSH accounts</div>
@@ -1051,6 +1066,15 @@ Show Velociportal logo and name
 </div>
 </main>
 {{BOTTOM_NAV}}
+<dialog id="card-order" class="service-editor" aria-labelledby="card-order-title" aria-describedby="card-order-help">
+<h2 id="card-order-title" tabindex="-1" autofocus>Card order</h2>
+<p id="card-order-help">Drag a grip or use the arrows. Order is saved only in this browser.</p>
+<div id="card-order-list"></div>
+<p id="card-order-status" role="status"></p>
+<div class="service-editor-actions"><button type="button" class="service-editor-primary" id="card-order-save">Save order</button><button type="button" id="card-order-cancel">Cancel</button></div>
+<div class="service-editor-secondary"><button type="button" id="card-order-default">Use default order</button></div>
+</dialog>
+<script src="/static/card-order.js" defer></script>
 {{SERVICE_EDITOR}}
 {{PERSONAL_EDITOR}}
 <datalist id="ssh-account-suggestions"></datalist>
@@ -1126,6 +1150,8 @@ document.addEventListener("click", function (event) {
     closePanel(true);
   }
 
+  // Return focus to the settings opener before the order dialog takes it.
+  document.getElementById("card-order-open").addEventListener("click", function () { closePanel(true); });
   trigger.addEventListener("click", function () {
     if (panel.hidden) openPanel(trigger);
     else closePanel(true);
