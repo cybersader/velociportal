@@ -57,9 +57,17 @@ def run():
             req(session+'/refresh', {}); assert order()=='231', 'reload lost saved order'
             open_order(); js('document.querySelector("[data-step=\\"1\\"]").click()'); click('card-order-save'); assert order()=='321'
             open_order(); click('card-order-default'); click('card-order-save'); assert order()=='123'
+            def centers(): return js('return [...document.querySelectorAll("#services .card")].map(c=>{let r=c.getBoundingClientRect();return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)}})')
+            def hold_drag(a, b, wait, kind='mouse'):
+                req(session+'/actions', {'actions':[{'type':'pointer','id':'card-'+kind,'parameters':{'pointerType':kind},'actions':[{'type':'pointerMove',**a},{'type':'pointerDown','button':0},{'type':'pause','duration':wait},{'type':'pointerMove','duration':250,**b},{'type':'pause','duration':150},{'type':'pointerUp','button':0}]}]})
+            c = centers(); hold_drag(c[0], c[2], 0); assert order()=='123', 'moving without holding must not reorder'
+            c = centers(); hold_drag(c[0], c[2], 500); assert order()=='231', 'press-and-hold drag on the page did not reorder'
+            assert not js('return document.querySelector("[data-lifted],[data-sorting]")'), 'drag state left behind'
+            req(session+'/refresh', {}); assert order()=='231', 'reload lost the dragged order'
+            c = centers(); hold_drag(c[2], c[0], 500, 'touch'); assert order()=='123', 'touch press-and-hold drag did not reorder'
             open_order(); js('document.querySelector("#services .card").remove(); document.body.dispatchEvent(new Event("htmx:afterSwap"))'); assert not js('return document.querySelector("#card-order").open') and order()=='23'
             js('document.querySelector("#portal-content").dataset.identityScope="other";document.body.dispatchEvent(new Event("htmx:afterSwap"))'); assert js('return document.querySelector("#card-order-open").hidden')
-            print('PASS account name, Cancel, pointer drag, arrows, Save, reload, default order, visibility and identity changes')
+            print('PASS account name, Cancel, pointer drag, hold-to-drag on cards (mouse and touch), arrows, Save, reload, default order, visibility and identity changes')
         finally:
             try:
                 if session: req(session, method='DELETE')
