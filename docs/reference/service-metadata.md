@@ -35,11 +35,11 @@ Legacy v1–v3 documents require exact `version` and `services` keys. Unknown, d
 }
 ```
 
-Categories and order group/sort only authorized cards, with uncategorized last and deterministic name/ID fallbacks. The dashboard edits only **name, URL and icon**. Neither editing mode changes category/order, health targets, SSH or the authorized card set. Startup does not write or migrate metadata. `suggest-hostnames` emits a strict v1 **proposal fragment**; never replace a complete v2/v3 file with that fragment. Preserve category/order/icons and unrelated entries when reviewing an operator merge.
+Categories and order group/sort only authorized cards, with uncategorized last and deterministic name/ID fallbacks. The dashboard edits only **name, URL and icon**. Neither editing mode changes category/order, health targets, SSH or the authorized card set. A shared editor can change the shared default category/order of visible NPM cards through the MCP [`shared_order_set`](mcp.md#shared-default-card-order) tool; it uses the same shared writer and never changes which cards anyone can see. Startup does not write or migrate metadata. `suggest-hostnames` emits a strict v1 **proposal fragment**; never replace a complete v2/v3 file with that fragment. Preserve category/order/icons and unrelated entries when reviewing an operator merge.
 
 ### Personal card order
 
-In **Account settings → Edit card order**, drag a grip or use the up/down buttons, then **Save order**. This changes only the order of visible services within their existing groups, not the shared metadata or anyone else's view. New services follow the ordered ones. **Use default order → Save order** returns to the server's current order. The setting stores only service IDs in this browser for this identity; it does not record clicks, sync across devices, or affect Machines.
+In **Account settings → Edit card order**, drag a grip or use the up/down buttons, then **Save order**. This changes only the order of visible services within their existing groups, not the shared metadata or anyone else's view. New services follow the ordered ones. **Use default order → Save order** returns to the server's current order. The setting stores only service IDs in this browser for this identity; it does not record clicks, sync across devices, or affect Machines. A personal order may override the shared default order in that browser.
 
 ## Editing mode selection (RC.18) { #editing-mode-selection-unreleased }
 
@@ -192,7 +192,7 @@ Empty authored personal icon means **inherit**; explicit `generic` masks a share
 
 ### Lossless writers and binding failure
 
-Ordinary browser NPM save/reset keeps legacy→v3 and v4→v4. Only an explicit shared icon set/reset may promote the complete legacy file to v4, under a valid configured binding. Even explicit icon reset can promote. Every writer preserves unrelated arrays, root binding, fields and applicable null presence; no downcast/rebinding or startup rewrite occurs. An icon-only mutation does not clear name/link/category/order.
+Ordinary browser NPM save/reset keeps legacy→v3 and v4→v4. Only an explicit shared icon set/reset may promote the complete legacy file to v4, under a valid configured binding. Even explicit icon reset can promote. Every writer preserves unrelated arrays, root binding, fields and applicable null presence; no downcast/rebinding or startup rewrite occurs. An icon-only mutation does not clear name/link/category/order. The MCP shared order writer follows the ordinary NPM rule (legacy→v3, v4→v4, v5→v5) and changes only category/order of the named entries.
 
 Configured v4 binding mismatch fails preflight when a readable v4 document is recognized, including off/browser mode; the bound runtime reader also rejects mismatched/invalid reloads without publishing a partial snapshot. Ordinary unreadable/malformed readonly metadata follows complete-refresh failure semantics, not automatic repair or empty fallback. Shared writer startup requires a valid bound document. A valid readonly v4 file does not initialize a lock or writer. Operator hostname proposals remain v1 fragments: merge offline while the writer is stopped, preserving the **entire** v4 document, never replacing it with a proposal.
 

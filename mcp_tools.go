@@ -120,7 +120,7 @@ func (t *mcpApplicationTools) List(r *http.Request) ([]any, error) {
 		}
 	}
 	if t.sharedCapability(r) == nil {
-		for _, name := range []string{"shared_targets_list", "shared_target_get", "shared_icon_set", "shared_icon_reset"} {
+		for _, name := range []string{"shared_targets_list", "shared_target_get", "shared_icon_set", "shared_icon_reset", "shared_order_set"} {
 			tools = append(tools, mcpApplicationTool(name))
 		}
 		// Opt-in only: when disabled, discovery is byte-for-byte unchanged.
@@ -214,6 +214,15 @@ func (t *mcpApplicationTools) Call(r *http.Request, name string, arguments json.
 			operationErr = t.shared.ResetMCPIcon(r, mcpSharedResetRequest{Target: ref, sharedMutationCAS: cas})
 			data = map[string]string{"status": "saved"}
 		}
+	case "shared_order_set":
+		mutation = true
+		if operationErr = t.sharedCapability(r); operationErr != nil {
+			break
+		}
+		entries, _ := mcpSharedOrderEntries(fields["entries"]) // already strictly validated
+		var revision string
+		revision, operationErr = t.shared.SetMCPOrder(r, mcpSharedOrderRequest{Revision: value("revision"), Entries: entries})
+		data = map[string]string{"status": "saved", "revision": revision}
 	case "custom_icon_import", "custom_icon_get", "custom_icon_set":
 		mutation = name != "custom_icon_get"
 		if operationErr = t.sharedCapability(r); operationErr != nil {
@@ -258,6 +267,8 @@ func mcpApplicationFields(name string) (required, optional []string, known bool)
 		return []string{"target", "revision", "target_revision", "icon"}, nil, true
 	case "shared_icon_reset":
 		return []string{"target", "revision", "target_revision"}, nil, true
+	case "shared_order_set":
+		return []string{"revision", "entries"}, nil, true
 	case "custom_icon_import":
 		return []string{"png_base64", "revision"}, nil, true
 	case "custom_icon_get":
@@ -293,13 +304,13 @@ func mcpApplicationArguments(name string, raw json.RawMessage) (map[string]json.
 	}
 	for key, raw := range fields {
 		if key == "target" {
-			target, ok := mcpObject(raw)
-			if !ok || len(target) != 2 || !mcpFields(target, "kind", "handle") {
+			if _, ok := mcpTargetArgument(raw); !ok {
 				return nil, errMCPInvalidParams
 			}
-			kind, k := mcpString(target["kind"])
-			handle, h := mcpString(target["handle"])
-			if !k || !h || validateSharedTargetRef(sharedTargetRef{Kind: sharedTargetKind(kind), Handle: handle}) != nil {
+			continue
+		}
+		if key == "entries" {
+			if _, err := mcpSharedOrderEntries(raw); err != nil {
 				return nil, errMCPInvalidParams
 			}
 			continue
@@ -350,6 +361,75 @@ func mcpApplicationArguments(name string, raw json.RawMessage) (map[string]json.
 		}
 	}
 	return fields, nil
+}
+
+// Exact nested {kind, handle}; the handle carries no target information.
+func mcpTargetArgument(raw json.RawMessage) (sharedTargetRef, bool) {
+	target, ok := mcpObject(raw)
+	if !ok || len(target) != 2 || !mcpFields(target, "kind", "handle") {
+		return sharedTargetRef{}, false
+	}
+	kind, k := mcpString(target["kind"])
+	handle, h := mcpString(target["handle"])
+	ref := sharedTargetRef{Kind: sharedTargetKind(kind), Handle: handle}
+	if !k || !h || validateSharedTargetRef(ref) != nil {
+		return sharedTargetRef{}, false
+	}
+	return ref, true
+}
+
+// Strict shared_order_set entries: 1..64 objects with exact keys target plus
+// at least one of order/category. Explicit null removes a field; an omitted
+// field is unchanged. Duplicate targets are rejected, never merged.
+func mcpSharedOrderEntries(raw json.RawMessage) ([]mcpSharedOrderEntry, error) {
+	trimmed := bytes.TrimSpace(raw)
+	var items []json.RawMessage
+	if len(trimmed) == 0 || trimmed[0] != '[' || json.Unmarshal(trimmed, &items) != nil || len(items) < 1 || len(items) > maxSharedOrderEntries {
+		return nil, errMCPInvalidParams
+	}
+	null := func(raw json.RawMessage) bool { return bytes.Equal(bytes.TrimSpace(raw), []byte("null")) }
+	entries := make([]mcpSharedOrderEntry, 0, len(items))
+	seen := make(map[sharedTargetRef]bool, len(items))
+	for _, item := range items {
+		object, ok := mcpObject(item)
+		if !ok || !mcpFields(object, "target", "order", "category") {
+			return nil, errMCPInvalidParams
+		}
+		ref, ok := mcpTargetArgument(object["target"])
+		if !ok || seen[ref] {
+			return nil, errMCPInvalidParams
+		}
+		seen[ref] = true
+		entry := mcpSharedOrderEntry{Target: ref}
+		if value, present := object["order"]; present {
+			entry.SetOrder = true
+			if !null(value) {
+				order, err := strconv.Atoi(string(value))
+				if err != nil || order < 0 || order > maxServiceMetadataOrder || strconv.Itoa(order) != string(value) {
+					return nil, errMCPInvalidParams
+				}
+				entry.Order = &order
+			}
+		}
+		if value, present := object["category"]; present {
+			entry.SetCategory = true
+			if !null(value) {
+				category, ok := mcpString(value)
+				if !ok {
+					return nil, errMCPInvalidParams
+				}
+				if _, err := validateServiceMetadataCategory(category); err != nil {
+					return nil, errMCPInvalidParams
+				}
+				entry.Category = &category
+			}
+		}
+		if validateSharedOrderEntry(entry) != nil {
+			return nil, errMCPInvalidParams
+		}
+		entries = append(entries, entry)
+	}
+	return entries, nil
 }
 
 func mcpApplicationErrorCode(err error) string {
@@ -466,7 +546,20 @@ func mcpApplicationPersonalSchema() map[string]any {
 	}, "durable", "store_id", "generation", "revision", "initialized", "document", "projection")
 }
 func mcpApplicationSummaryProperties() map[string]any {
-	return map[string]any{"target": mcpApplicationTargetSchema(), "name": mcpApplicationString(120), "shared_icon": mcpApplicationIcon(true), "effective_icon": mcpApplicationIcon(true)}
+	p := map[string]any{"target": mcpApplicationTargetSchema(), "name": mcpApplicationString(120), "shared_icon": mcpApplicationIcon(true), "effective_icon": mcpApplicationIcon(true)}
+	p["category"] = map[string]any{"type": "string", "minLength": 1, "maxLength": maxServiceMetadataCategory, "description": "NPM only: shared default category; omitted when none."}
+	p["order"] = map[string]any{"type": "integer", "minimum": 0, "maximum": maxServiceMetadataOrder, "description": "NPM only: shared default order within its category; omitted when none."}
+	return p
+}
+func mcpApplicationOrderEntriesSchema() map[string]any {
+	item := mcpApplicationObject(map[string]any{
+		"target":   mcpApplicationTargetSchema(),
+		"order":    map[string]any{"type": []string{"integer", "null"}, "minimum": 0, "maximum": maxServiceMetadataOrder, "description": "New shared default order; null removes it; omit to leave unchanged."},
+		"category": map[string]any{"type": []string{"string", "null"}, "minLength": 1, "maxLength": maxServiceMetadataCategory, "description": "New shared default category; null removes it; omit to leave unchanged."},
+	}, "target")
+	item["minProperties"] = 2
+	return map[string]any{"type": "array", "minItems": 1, "maxItems": maxSharedOrderEntries, "items": item,
+		"description": "Distinct NPM targets from shared_targets_list; all changes apply in one commit or none do."}
 }
 func mcpApplicationTool(name string) map[string]any {
 	if name == "icons_list" {
@@ -499,6 +592,8 @@ func mcpApplicationTool(name string) map[string]any {
 			properties[key] = mcpApplicationIcon(name != "shared_icon_set")
 		case "target":
 			properties[key] = mcpApplicationTargetSchema()
+		case "entries":
+			properties[key] = mcpApplicationOrderEntriesSchema()
 		case "kind":
 			properties[key] = map[string]any{"type": "string", "enum": []string{"npm", "machine", "application"}}
 		case "cursor":
@@ -536,6 +631,9 @@ func mcpApplicationTool(name string) map[string]any {
 	case "shared_icon_set", "shared_icon_reset":
 		output = mcpApplicationObject(map[string]any{"status": map[string]any{"type": "string", "const": "saved"}}, "status")
 		description = "Change only the selected shared finite icon using current document and target CAS. Preserves other presentation fields; never grants access. Lost responses require read-back, not replay."
+	case "shared_order_set":
+		output = mcpApplicationObject(map[string]any{"status": map[string]any{"type": "string", "const": "saved"}, "revision": mcpApplicationString(256)}, "status", "revision")
+		description = "Set or remove the shared default category/order of up to 64 visible NPM targets in one commit using the current document revision. Returns the new revision. Browser-local order may still override it in a given browser; never grants access. Lost responses require read-back, not replay."
 	case "custom_icon_import":
 		output = mcpApplicationObject(map[string]any{"status": map[string]any{"type": "string", "const": "saved"}, "custom_icon": map[string]any{"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}}, "status", "custom_icon")
 		description = "Store one small PNG as a reusable shared custom icon and return its content ID. Re-encoded without metadata; identical images return the same ID. Grants no card visibility."

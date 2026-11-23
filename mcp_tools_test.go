@@ -20,7 +20,7 @@ import (
 	"time"
 )
 
-var s4hToolNames = []string{"icons_list", "personal_read", "personal_create", "personal_update", "personal_delete", "shared_targets_list", "shared_target_get", "shared_icon_set", "shared_icon_reset"}
+var s4hToolNames = []string{"icons_list", "personal_read", "personal_create", "personal_update", "personal_delete", "shared_targets_list", "shared_target_get", "shared_icon_set", "shared_icon_reset", "shared_order_set"}
 
 type s4hFixture struct {
 	f     *personalOpsFixture
@@ -70,6 +70,8 @@ func s4hArgs(name string) map[string]any {
 		return cas
 	case "shared_targets_list":
 		return map[string]any{"kind": "npm"}
+	case "shared_order_set":
+		return map[string]any{"revision": "opaque", "entries": []any{map[string]any{"target": map[string]any{"kind": "npm", "handle": strings.Repeat("A", 43)}, "order": 1, "category": "Tools"}}}
 	default:
 		v := map[string]any{"target": map[string]any{"kind": "npm", "handle": strings.Repeat("A", 43)}}
 		if name != "shared_target_get" {
@@ -147,6 +149,7 @@ func TestMCPApplicationSchemas(t *testing.T) {
 	expected := map[string][]string{
 		"icons_list": {}, "personal_read": {}, "personal_create": {"generation", "name", "revision", "store_id", "url"}, "personal_update": {"generation", "id", "name", "revision", "store_id", "url"}, "personal_delete": {"generation", "id", "revision", "store_id"},
 		"shared_targets_list": {"kind"}, "shared_target_get": {"target"}, "shared_icon_set": {"icon", "revision", "target", "target_revision"}, "shared_icon_reset": {"revision", "target", "target_revision"},
+		"shared_order_set": {"entries", "revision"},
 	}
 	for _, name := range s4hToolNames {
 		t.Run(name, func(t *testing.T) {
@@ -183,6 +186,12 @@ func TestMCPApplicationSchemas(t *testing.T) {
 				v := target.(map[string]any)
 				if v["additionalProperties"] != false || !reflect.DeepEqual(s4hKeys(v["properties"].(map[string]any)), []string{"handle", "kind"}) {
 					t.Fatal("target schema")
+				}
+			}
+			if name == "shared_order_set" {
+				out := d["outputSchema"].(map[string]any)
+				if !reflect.DeepEqual(s4hKeys(out["properties"].(map[string]any)), []string{"revision", "status"}) || out["properties"].(map[string]any)["status"].(map[string]any)["const"] != "saved" {
+					t.Fatal("exact order save result")
 				}
 			}
 			if name == "shared_icon_set" || name == "shared_icon_reset" {
@@ -737,10 +746,12 @@ func TestMCPApplicationSharedGateZeroEffects(t *testing.T) {
 				// literal public gate must prevent it. This is NOT shared success evidence.
 				f.tools.shared = &SharedIconOperations{personal: f.f.s, now: func() time.Time { t.Fatal("false gate touched shared clock"); return time.Time{} }}
 				before := personalOpsBytes(t, f.f)
-				for _, name := range []string{"shared_targets_list", "shared_target_get", "shared_icon_set", "shared_icon_reset"} {
+				for _, name := range []string{"shared_targets_list", "shared_target_get", "shared_icon_set", "shared_icon_reset", "shared_order_set"} {
 					v := s4hArgs(name)
 					if name == "shared_targets_list" {
 						v["kind"] = kind
+					} else if name == "shared_order_set" {
+						v["entries"].([]any)[0].(map[string]any)["target"].(map[string]any)["kind"] = kind
 					} else {
 						v["target"].(map[string]any)["kind"] = kind
 					}
@@ -807,7 +818,7 @@ func TestMCPApplicationSeededSharedPreparedBoundary(t *testing.T) {
 				eligible := change == "fresh" || change == "private-uncertain"
 				wantTools := 1
 				if eligible {
-					wantTools = 5
+					wantTools = 6
 				}
 				if err != nil || len(list) != wantTools {
 					t.Fatal("current shared discovery", err, s4hNames(t, list))

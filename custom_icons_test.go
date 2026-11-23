@@ -621,7 +621,7 @@ func TestCustomIconMCPDisabledSurfaceUnchanged(t *testing.T) {
 		t.Fatal(err)
 	}
 	names := s4hNames(t, listed)
-	if strings.Contains(strings.Join(names, ","), "custom_icon") || strings.Join(names, ",") != "icons_list,shared_targets_list,shared_target_get,shared_icon_set,shared_icon_reset" {
+	if strings.Contains(strings.Join(names, ","), "custom_icon") || strings.Join(names, ",") != "icons_list,shared_targets_list,shared_target_get,shared_icon_set,shared_icon_reset,shared_order_set" {
 		t.Fatal("disabled discovery changed", names)
 	}
 	for _, name := range mcpCustomIconToolNames {
