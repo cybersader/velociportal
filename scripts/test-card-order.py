@@ -83,8 +83,9 @@ def run():
             server((3, 1, 2)); assert order()=='312', 'a changed shared order must win over the browser order'
             assert js('return localStorage.length')==0, 'stale browser order kept after the shared order changed'
             js('localStorage.setItem("velociportal.card-order.v1."+"a".repeat(64), JSON.stringify(["npm:2","npm:1","npm:3"]))')
-            server((3, 1, 2)); assert order()=='312', 'an older-format browser order must not override the shared order'
-            assert js('return localStorage.length')==0, 'older-format browser order was kept'
+            req(session+'/refresh', {}); assert order()=='123', 'an order saved under the old key must not override the shared order'
+            assert js('return localStorage.length')==0, 'order saved under the old key was kept'
+            server((3, 1, 2)); assert order()=='312'
             c = centers(); hold_drag(c[0], c[2], 0, 'touch'); assert order()=='312', 'a touch swipe without holding must not reorder'
             c = centers(); hold_drag(c[2], c[0], 500, 'touch'); assert order()=='231', 'touch press-and-hold drag did not reorder'
             server((1, 2, 3)); assert order()=='123', 'shared order change did not reset the touch-saved order'

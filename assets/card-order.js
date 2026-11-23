@@ -6,7 +6,10 @@
   const scope = root()?.dataset.identityScope;
   const dialog = el('card-order'), opener = el('card-order-open'), list = el('card-order-list');
   if (!/^[a-f0-9]{64}$/.test(scope || '') || !dialog?.showModal || !opener || !list) return;
-  const key = 'velociportal.card-order.v1.' + scope, limit = 2048;
+  // v2 key: orders saved under v1 could carry a wrong shared-order baseline,
+  // so they are discarded once rather than trusted.
+  const key = 'velociportal.card-order.v2.' + scope, limit = 2048;
+  try { localStorage.removeItem('velociportal.card-order.v1.' + scope); } catch (_) { /* ignore */ }
   const valid = id => typeof id === 'string' && /^(?:npm:[1-9][0-9]{0,18}|ps_[a-f0-9]{32})$/.test(id);
   const idOf = node => node.dataset.personalService || 'npm:' + node.dataset.serviceId;
   const originals = new WeakMap();
