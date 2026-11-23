@@ -836,8 +836,7 @@ header { max-width: 1200px; margin: 0 auto; padding: 2rem 1.5rem 1rem; display: 
 .order-row[data-dragging] { background: var(--card-hover-bg); }
 #services [data-service] { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
 #services .grid[data-sorting], #services.grid[data-sorting] { cursor: grabbing; }
-#services [data-service][data-lifted] { position: relative; z-index: 3; cursor: grabbing; outline: 2px solid var(--accent); outline-offset: 2px; box-shadow: 0 10px 28px rgb(0 0 0 / .22); }
-@media (prefers-reduced-motion: no-preference) { #services [data-service][data-lifted] { transform: scale(1.03); transition: transform .12s ease-out; } }
+#services [data-service][data-lifted] { position: relative; z-index: 3; cursor: grabbing; opacity: .96; will-change: transform; outline: 2px solid var(--accent); outline-offset: 2px; box-shadow: 0 10px 28px rgb(0 0 0 / .22); }
 .order-name { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .order-grip, #card-order .order-row button { display: grid; place-items: center; width: 44px; min-height: 44px; padding: 0; color: var(--muted); }
 .order-grip { cursor: grab; touch-action: none; user-select: none; }
@@ -1072,7 +1071,7 @@ Show Velociportal logo and name
 {{BOTTOM_NAV}}
 <dialog id="card-order" class="service-editor" aria-labelledby="card-order-title" aria-describedby="card-order-help">
 <h2 id="card-order-title" tabindex="-1" autofocus>Card order</h2>
-<p id="card-order-help">Drag a grip or use the arrows. You can also press and hold a card on the page, then drag it. Order is saved only in this browser.</p>
+<p id="card-order-help">Drag a grip or use the arrows. You can also drag a card on the page; on a touch screen, press and hold it first. Order is saved only in this browser.</p>
 <div id="card-order-list"></div>
 <p id="card-order-status" role="status"></p>
 <div class="service-editor-actions"><button type="button" class="service-editor-primary" id="card-order-save">Save order</button><button type="button" id="card-order-cancel">Cancel</button></div>
@@ -1299,19 +1298,45 @@ document.addEventListener("click", function (event) {
     }
   }
 
+  // A text field can keep focus after its on-screen keyboard closes (for
+  // example after the Android back gesture, then scrolling). Where the visual
+  // viewport is available, the dock returns as soon as the keyboard is no
+  // longer taking up the bottom of the screen. Right after focus it stays
+  // hidden briefly so it does not flash while the keyboard opens.
+  var vv = window.visualViewport;
+  var tallest = {};
+  var settleUntil = 0;
+  function keyboardUp() {
+    if (!vv) return true;
+    var width = Math.round(window.innerWidth);
+    var height = vv.height * (vv.scale || 1);
+    tallest[width] = Math.max(tallest[width] || 0, window.innerHeight, height);
+    return height < tallest[width] - 120;
+  }
+  function sync() {
+    var typing = isTextEntry(document.activeElement) && (Date.now() < settleUntil || keyboardUp());
+    if (typing) {
+      document.body.classList.add(TYPING_CLASS);
+      if (!dockContainsFocus()) setDockInert(true);
+    } else {
+      document.body.classList.remove(TYPING_CLASS);
+      setDockInert(false);
+    }
+  }
+  if (vv) {
+    keyboardUp();
+    vv.addEventListener("resize", sync);
+    window.addEventListener("scroll", sync, { passive: true });
+  }
   document.addEventListener("focusin", function (event) {
     if (!isTextEntry(event.target)) return;
-    document.body.classList.add(TYPING_CLASS);
-    if (!dockContainsFocus()) setDockInert(true);
+    settleUntil = Date.now() + 700;
+    sync();
+    window.setTimeout(sync, 750);
   });
   document.addEventListener("focusout", function (event) {
     if (!isTextEntry(event.target)) return;
-    window.setTimeout(function () {
-      if (!isTextEntry(document.activeElement)) {
-        document.body.classList.remove(TYPING_CLASS);
-        setDockInert(false);
-      }
-    }, 0);
+    window.setTimeout(sync, 0);
   });
 }());
 

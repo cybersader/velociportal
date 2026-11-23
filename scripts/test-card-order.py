@@ -14,10 +14,18 @@ from urllib.request import Request, build_opener, ProxyHandler
 
 ROOT = Path(__file__).resolve().parents[1]
 
+ICON = 'data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2232%22 height=%2232%22/%3E'
+
+
+def card(i):
+    return f'<article class="card card-editable" data-service="Service {i}" data-service-id="{i}"><a class="service-main" href="#s{i}"><img class="service-icon" src="{ICON}" width="32" height="32" alt=""><span class="card-head"><span class="card-name">Service {i}</span></span></a></article>'
+
+
 def fixture():
     page = (ROOT / 'handlers.go').read_text().split('const portalPage = `')[1].split('</html>`')[0] + '</html>'
     css = (ROOT / 'service_metadata_editor_ui.go').read_text().split('const serviceEditorCSS = `')[1].split('`')[0]
-    cards = ''.join(f'<a class="card" data-service="Service {i}" data-service-id="{i}"><span class="card-name">Service {i}</span></a>' for i in (1, 2, 3))
+    # Production card shape: an article holding a real link and image.
+    cards = ''.join(card(i) for i in (1, 2, 3))
     for key, value in {'USER_NAME':'SampleName', 'USER_LOGIN':'sample@example.test', 'SERVICES_CLASS':'grid', 'SERVICES_BODY':cards, 'LOGO_PREF_SCOPE':'a'*64, 'SERVICE_EDITOR_CSS':css}.items():
         page = page.replace('{{'+key+'}}', value)
     page = re.sub(r'\{\{[A-Z_]+\}\}', '', page)
@@ -60,14 +68,26 @@ def run():
             def centers(): return js('return [...document.querySelectorAll("#services .card")].map(c=>{let r=c.getBoundingClientRect();return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)}})')
             def hold_drag(a, b, wait, kind='mouse'):
                 req(session+'/actions', {'actions':[{'type':'pointer','id':'card-'+kind,'parameters':{'pointerType':kind},'actions':[{'type':'pointerMove',**a},{'type':'pointerDown','button':0},{'type':'pause','duration':wait},{'type':'pointerMove','duration':250,**b},{'type':'pause','duration':150},{'type':'pointerUp','button':0}]}]})
-            c = centers(); hold_drag(c[0], c[2], 0); assert order()=='123', 'moving without holding must not reorder'
-            c = centers(); hold_drag(c[0], c[2], 500); assert order()=='231', 'press-and-hold drag on the page did not reorder'
-            assert not js('return document.querySelector("[data-lifted],[data-sorting]")'), 'drag state left behind'
+            c = centers(); req(session+'/actions', {'actions':[{'type':'pointer','id':'tap','parameters':{'pointerType':'mouse'},'actions':[{'type':'pointerMove',**c[1]},{'type':'pointerDown','button':0},{'type':'pointerUp','button':0}]}]})
+            assert js('return location.hash')=='#s2' and order()=='123', 'a plain click must open the link without reordering'
+            js('location.hash="#start"')
+            c = centers(); hold_drag(c[0], c[2], 0); assert order()=='231', 'mouse drag on the page did not reorder'
+            assert js('return location.hash')=='#start', 'dropping a dragged card must not open its link'
+            assert not js('return document.querySelector("[data-lifted],[data-sorting],#services [style*=transform]")'), 'drag state left behind'
             req(session+'/refresh', {}); assert order()=='231', 'reload lost the dragged order'
-            c = centers(); hold_drag(c[2], c[0], 500, 'touch'); assert order()=='123', 'touch press-and-hold drag did not reorder'
+            def server(ids):
+                html = json.dumps(''.join(card(i) for i in ids))
+                js('const old=document.getElementById("services"),n=old.cloneNode(false);n.innerHTML='+html+';old.replaceWith(n);document.body.dispatchEvent(new Event("htmx:afterSwap"))')
+            server((1, 3)); assert order()=='31', 'a removed service must not discard the browser order'
+            server((1, 2, 3)); assert order()=='231', 'browser order lost after a service came back'
+            server((3, 1, 2)); assert order()=='312', 'a changed shared order must win over the browser order'
+            assert js('return localStorage.length')==0, 'stale browser order kept after the shared order changed'
+            c = centers(); hold_drag(c[0], c[2], 0, 'touch'); assert order()=='312', 'a touch swipe without holding must not reorder'
+            c = centers(); hold_drag(c[2], c[0], 500, 'touch'); assert order()=='231', 'touch press-and-hold drag did not reorder'
+            server((1, 2, 3)); assert order()=='123', 'shared order change did not reset the touch-saved order'
             open_order(); js('document.querySelector("#services .card").remove(); document.body.dispatchEvent(new Event("htmx:afterSwap"))'); assert not js('return document.querySelector("#card-order").open') and order()=='23'
             js('document.querySelector("#portal-content").dataset.identityScope="other";document.body.dispatchEvent(new Event("htmx:afterSwap"))'); assert js('return document.querySelector("#card-order-open").hidden')
-            print('PASS account name, Cancel, pointer drag, hold-to-drag on cards (mouse and touch), arrows, Save, reload, default order, visibility and identity changes')
+            print('PASS account name, Cancel, pointer drag, page drag (mouse, click-through, touch hold), shared-order precedence, arrows, Save, reload, default order, visibility and identity changes')
         finally:
             try:
                 if session: req(session, method='DELETE')
