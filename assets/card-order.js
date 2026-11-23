@@ -23,10 +23,12 @@
     const raw = localStorage.getItem(key);
     if (!raw || raw.length > 200000) return [];
     let saved; try { saved = JSON.parse(raw); } catch (_) { return []; }
+    // An older copy has no record of the shared order it was made against, so
+    // it cannot tell whether the shared order changed since. Let the current
+    // shared order win rather than adopt it as if it were fresh.
     if (Array.isArray(saved)) {
-      if (!validList(saved)) return [];
-      try { write(saved, gs); } catch (_) { /* keep using the legacy copy */ }
-      return saved;
+      try { localStorage.removeItem(key); } catch (_) { /* ignore */ }
+      return [];
     }
     if (!saved || saved.v !== 2 || !validList(saved.ids) || !validList(saved.base)) return [];
     const now = serverOrder(gs), was = new Set(saved.base), present = new Set(now);
