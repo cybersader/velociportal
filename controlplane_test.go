@@ -575,3 +575,47 @@ func TestValidateLegacyPolicyDocumentKeepsSSHWarningOnly(t *testing.T) {
 		t.Fatalf("HTTP ACLs = %#v", validated.Policy.ACLs)
 	}
 }
+
+func TestValidatePolicyDocumentIgnoresAppGrantsThatCannotReachBrowsers(t *testing.T) {
+	raw := `{
+		"groups":{"group:admin":["alice@example.com"]},
+		"tagOwners":{"tag:runner":["group:admin"],"tag:lab":["group:admin"]},
+		"grants":[
+			{"src":["tag:runner"],"dst":["tag:lab"],"ip":["tcp:8443"],"app":{"example.com/cap/lab":[{}]}},
+			{"src":["autogroup:member"],"dst":["tag:lab"],"app":{"example.com/cap/view":[{}]}},
+			{"src":["autogroup:member"],"dst":["tag:lab"],"ip":["tcp:443"]}
+		]
+	}`
+	validated, err := validatePolicyDocument([]byte(raw))
+	if err != nil {
+		t.Fatalf("validatePolicyDocument() error = %v", err)
+	}
+	grants := validated.Policy.Grants
+	if len(grants) != 2 {
+		t.Fatalf("grants = %d, want the machine-source and ordinary network grants", len(grants))
+	}
+	if len(grants[0].BrowserSrc) != 0 || len(grants[0].IPCapabilities) != 1 {
+		t.Fatalf("machine app grant = %+v, want network evidence without browser sources", grants[0])
+	}
+	if len(grants[1].BrowserSrc) != 1 {
+		t.Fatalf("ordinary grant = %+v", grants[1])
+	}
+}
+
+func TestValidatePolicyDocumentRejectsBrowserReachableAppGrants(t *testing.T) {
+	tests := map[string]string{
+		"human network app":   `{"grants":[{"src":["autogroup:member"],"dst":["*"],"ip":["tcp:443"],"app":{"example/cap":[{}]}}]}`,
+		"mixed sources app":   `{"groups":{"group:admin":["alice@example.com"]},"tagOwners":{"tag:runner":["group:admin"]},"grants":[{"src":["tag:runner","autogroup:member"],"dst":["*"],"ip":["*"],"app":{"example/cap":[{}]}}]}`,
+		"empty ip with app":   `{"grants":[{"src":["autogroup:member"],"dst":["*"],"ip":[],"app":{"example/cap":[{}]}}]}`,
+		"app-only bad source": `{"grants":[{"src":["group:missing"],"dst":["*"],"app":{"example/cap":[{}]}}]}`,
+		"app-only posture":    `{"grants":[{"src":["autogroup:member"],"dst":["*"],"app":{"example/cap":[{}]},"srcPosture":["posture:x"]}]}`,
+		"no ip without app":   `{"grants":[{"src":["autogroup:member"],"dst":["*"]}]}`,
+	}
+	for name, raw := range tests {
+		t.Run(name, func(t *testing.T) {
+			if _, err := validatePolicyDocument([]byte(raw)); err == nil {
+				t.Fatal("validatePolicyDocument() error = nil")
+			}
+		})
+	}
+}

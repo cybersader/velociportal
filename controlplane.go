@@ -6,10 +6,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -465,18 +467,18 @@ func validateGrantRules(raw json.RawMessage, policy *Policy) ([]GrantRule, error
 	}
 
 	rules := make([]GrantRule, 0, len(wireRules))
+	var skipped []int
 	for index, wire := range wireRules {
 		if unknown := firstUnknownField(wire, "src", "dst", "ip", "app", "srcPosture", "via"); unknown != "" {
 			return nil, &unsupportedPolicyError{Section: "grants", Reason: fmt.Sprintf("rule %d contains unknown field %q", index, unknown)}
 		}
+		hasApp := false
 		if value, ok := wire["app"]; ok {
 			empty, err := jsonObjectEmpty(value)
 			if err != nil {
 				return nil, &unsupportedPolicyError{Section: "grants", Reason: fmt.Sprintf("rule %d has invalid app: %v", index, err)}
 			}
-			if !empty {
-				return nil, &unsupportedPolicyError{Section: "grants", Reason: fmt.Sprintf("rule %d uses unsupported app semantics", index)}
-			}
+			hasApp = !empty
 		}
 		for _, field := range []string{"srcPosture", "via"} {
 			if value, ok := wire[field]; ok {
@@ -497,8 +499,13 @@ func validateGrantRules(raw json.RawMessage, policy *Policy) ([]GrantRule, error
 		if err := unmarshalRequiredStringSlice(wire, "dst", &dst); err != nil {
 			return nil, fmt.Errorf("decode policy grants rule %d: %w", index, err)
 		}
-		if err := unmarshalRequiredStringSlice(wire, "ip", &ip); err != nil {
-			return nil, fmt.Errorf("decode policy grants rule %d: %w", index, err)
+		// An app-only grant carries application capabilities and opens no network path.
+		_, hasIP := wire["ip"]
+		appOnly := hasApp && !hasIP
+		if !appOnly {
+			if err := unmarshalRequiredStringSlice(wire, "ip", &ip); err != nil {
+				return nil, fmt.Errorf("decode policy grants rule %d: %w", index, err)
+			}
 		}
 
 		sourceKinds := make([]grantSourceKind, 0, len(src))
@@ -524,6 +531,19 @@ func validateGrantRules(raw json.RawMessage, policy *Policy) ([]GrantRule, error
 			return nil, &unsupportedPolicyError{Section: "grants", Reason: fmt.Sprintf("rule %d uses autogroup:self with a non-human source", index)}
 		}
 
+		// Application capabilities are unmodeled. Skip them only where they cannot
+		// affect a browser identity: app-only grants, or grants whose every source
+		// is a machine selector. Human-reachable network grants still fail closed.
+		if hasApp && !appOnly && len(browserSources) > 0 {
+			return nil, &unsupportedPolicyError{Section: "grants", Reason: fmt.Sprintf("rule %d uses unsupported app semantics", index)}
+		}
+		if appOnly {
+			skipped = append(skipped, index)
+			continue
+		}
+		if hasApp {
+			skipped = append(skipped, index)
+		}
 		capabilities := make([]grantIPCapability, 0, len(ip))
 		for _, value := range ip {
 			capability, err := parseGrantIPCapability(value)
@@ -539,7 +559,27 @@ func validateGrantRules(raw json.RawMessage, policy *Policy) ([]GrantRule, error
 			IPCapabilities: capabilities,
 		})
 	}
+	noteIgnoredAppGrants(skipped)
 	return rules, nil
+}
+
+var lastIgnoredAppGrants struct {
+	sync.Mutex
+	value string
+}
+
+// noteIgnoredAppGrants logs rule positions only when the ignored set changes.
+func noteIgnoredAppGrants(rules []int) {
+	value := fmt.Sprint(rules)
+	lastIgnoredAppGrants.Lock()
+	defer lastIgnoredAppGrants.Unlock()
+	if value == lastIgnoredAppGrants.value {
+		return
+	}
+	lastIgnoredAppGrants.value = value
+	if len(rules) > 0 {
+		slog.Info("ignoring grant app capabilities that cannot affect browser visibility", "grant_rules", rules)
+	}
 }
 
 func normalizeSSHPolicy(raw json.RawMessage, policy *Policy, normalizeRules bool) SSHPolicy {

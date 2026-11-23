@@ -71,7 +71,7 @@ The policy validator reports `legacy_acl_visibility_v1` for ACL-only input and `
 - exact humans, defined groups, `*`, and Users-API-authoritative human-role autogroups may become Grant browser card sources;
 - valid tags, IPs, CIDRs, host aliases, `autogroup:tagged`, `autogroup:shared`, and other machine selectors may load but never map to a human browser identity;
 - attr-only `nodeAttrs` accept only `*`, individual users, defined groups, tags, and `autogroup:member` targets with the `funnel` attribute, and never authorize cards;
-- postures, IP sets, services, non-empty `via`, application capabilities, malformed capabilities, and unknown semantics fail the refresh;
+- postures, IP sets, services, non-empty `via`, application capabilities on grants a person can match, malformed capabilities, and unknown semantics fail the refresh; app-only grants and app capabilities on machine-source-only grants are ignored;
 - SSH is not card evidence and is reported separately; and
 - empty policy is a complete zero-card snapshot.
 
