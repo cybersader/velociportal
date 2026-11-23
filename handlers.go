@@ -836,8 +836,7 @@ header { max-width: 1200px; margin: 0 auto; padding: 2rem 1.5rem 1rem; display: 
 .order-row[data-dragging] { background: var(--card-hover-bg); }
 #services [data-service] { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
 #services .grid[data-sorting], #services.grid[data-sorting] { cursor: grabbing; }
-#services [data-service][data-lifted] { position: relative; z-index: 3; cursor: grabbing; outline: 2px solid var(--accent); outline-offset: 2px; box-shadow: 0 10px 28px rgb(0 0 0 / .22); }
-@media (prefers-reduced-motion: no-preference) { #services [data-service][data-lifted] { transform: scale(1.03); transition: transform .12s ease-out; } }
+#services [data-service][data-lifted] { position: relative; z-index: 3; cursor: grabbing; opacity: .96; will-change: transform; outline: 2px solid var(--accent); outline-offset: 2px; box-shadow: 0 10px 28px rgb(0 0 0 / .22); }
 .order-name { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .order-grip, #card-order .order-row button { display: grid; place-items: center; width: 44px; min-height: 44px; padding: 0; color: var(--muted); }
 .order-grip { cursor: grab; touch-action: none; user-select: none; }
@@ -1072,7 +1071,7 @@ Show Velociportal logo and name
 {{BOTTOM_NAV}}
 <dialog id="card-order" class="service-editor" aria-labelledby="card-order-title" aria-describedby="card-order-help">
 <h2 id="card-order-title" tabindex="-1" autofocus>Card order</h2>
-<p id="card-order-help">Drag a grip or use the arrows. You can also press and hold a card on the page, then drag it. Order is saved only in this browser.</p>
+<p id="card-order-help">Drag a grip or use the arrows. You can also drag a card on the page; on a touch screen, press and hold it first. Order is saved only in this browser.</p>
 <div id="card-order-list"></div>
 <p id="card-order-status" role="status"></p>
 <div class="service-editor-actions"><button type="button" class="service-editor-primary" id="card-order-save">Save order</button><button type="button" id="card-order-cancel">Cancel</button></div>

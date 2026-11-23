@@ -17,7 +17,9 @@ ROOT = Path(__file__).resolve().parents[1]
 def fixture():
     page = (ROOT / 'handlers.go').read_text().split('const portalPage = `')[1].split('</html>`')[0] + '</html>'
     css = (ROOT / 'service_metadata_editor_ui.go').read_text().split('const serviceEditorCSS = `')[1].split('`')[0]
-    cards = ''.join(f'<a class="card" data-service="Service {i}" data-service-id="{i}"><span class="card-name">Service {i}</span></a>' for i in (1, 2, 3))
+    icon = 'data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2232%22 height=%2232%22/%3E'
+    # Production card shape: an article holding a real link and image.
+    cards = ''.join(f'<article class="card card-editable" data-service="Service {i}" data-service-id="{i}"><a class="service-main" href="#s{i}"><img class="service-icon" src="{icon}" width="32" height="32" alt=""><span class="card-head"><span class="card-name">Service {i}</span></span></a></article>' for i in (1, 2, 3))
     for key, value in {'USER_NAME':'SampleName', 'USER_LOGIN':'sample@example.test', 'SERVICES_CLASS':'grid', 'SERVICES_BODY':cards, 'LOGO_PREF_SCOPE':'a'*64, 'SERVICE_EDITOR_CSS':css}.items():
         page = page.replace('{{'+key+'}}', value)
     page = re.sub(r'\{\{[A-Z_]+\}\}', '', page)
@@ -60,14 +62,18 @@ def run():
             def centers(): return js('return [...document.querySelectorAll("#services .card")].map(c=>{let r=c.getBoundingClientRect();return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)}})')
             def hold_drag(a, b, wait, kind='mouse'):
                 req(session+'/actions', {'actions':[{'type':'pointer','id':'card-'+kind,'parameters':{'pointerType':kind},'actions':[{'type':'pointerMove',**a},{'type':'pointerDown','button':0},{'type':'pause','duration':wait},{'type':'pointerMove','duration':250,**b},{'type':'pause','duration':150},{'type':'pointerUp','button':0}]}]})
-            c = centers(); hold_drag(c[0], c[2], 0); assert order()=='123', 'moving without holding must not reorder'
-            c = centers(); hold_drag(c[0], c[2], 500); assert order()=='231', 'press-and-hold drag on the page did not reorder'
-            assert not js('return document.querySelector("[data-lifted],[data-sorting]")'), 'drag state left behind'
+            c = centers(); req(session+'/actions', {'actions':[{'type':'pointer','id':'tap','parameters':{'pointerType':'mouse'},'actions':[{'type':'pointerMove',**c[1]},{'type':'pointerDown','button':0},{'type':'pointerUp','button':0}]}]})
+            assert js('return location.hash')=='#s2' and order()=='123', 'a plain click must open the link without reordering'
+            js('location.hash="#start"')
+            c = centers(); hold_drag(c[0], c[2], 0); assert order()=='231', 'mouse drag on the page did not reorder'
+            assert js('return location.hash')=='#start', 'dropping a dragged card must not open its link'
+            assert not js('return document.querySelector("[data-lifted],[data-sorting],#services [style*=transform]")'), 'drag state left behind'
             req(session+'/refresh', {}); assert order()=='231', 'reload lost the dragged order'
+            c = centers(); hold_drag(c[0], c[2], 0, 'touch'); assert order()=='231', 'a touch swipe without holding must not reorder'
             c = centers(); hold_drag(c[2], c[0], 500, 'touch'); assert order()=='123', 'touch press-and-hold drag did not reorder'
             open_order(); js('document.querySelector("#services .card").remove(); document.body.dispatchEvent(new Event("htmx:afterSwap"))'); assert not js('return document.querySelector("#card-order").open') and order()=='23'
             js('document.querySelector("#portal-content").dataset.identityScope="other";document.body.dispatchEvent(new Event("htmx:afterSwap"))'); assert js('return document.querySelector("#card-order-open").hidden')
-            print('PASS account name, Cancel, pointer drag, hold-to-drag on cards (mouse and touch), arrows, Save, reload, default order, visibility and identity changes')
+            print('PASS account name, Cancel, pointer drag, page drag (mouse, click-through, touch hold), arrows, Save, reload, default order, visibility and identity changes')
         finally:
             try:
                 if session: req(session, method='DELETE')

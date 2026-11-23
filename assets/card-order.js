@@ -118,34 +118,44 @@
     } catch (_) { el('card-order-status').textContent='Could not save in this browser. Your changes are still here.'; return; }
     dialog.close(); refresh();
   });
-  // Press and hold a card on the page, then drag it within its group. Moving
-  // before the hold completes is a scroll or ordinary link drag, not a reorder.
-  const HOLD_MS = 350, SLOP = 8;
+  // Drag a card on the page to move it within its group. A mouse or pen drag
+  // starts after a few pixels of movement; touch needs a short press and hold
+  // first so ordinary scrolling still works. A plain click still opens the link.
+  const HOLD_MS = 350, SLOP = 8, MOUSE_START = 5;
   let live = null, swallowUntil = 0;
   function cardAt(x, y) {
     return document.elementsFromPoint(x, y).map(n => n.closest('[data-service]'))
       .find(n => n && n !== live.card && n.parentElement === live.grid) || null;
   }
+  // Keep the lifted card under the pointer while its slot moves in the grid.
+  function track() {
+    const {card,x,y} = live, r = card.getBoundingClientRect();
+    live.tx = x - live.gx - (r.left - live.tx); live.ty = y - live.gy - (r.top - live.ty);
+    card.style.transform = `translate(${live.tx}px, ${live.ty}px)`;
+  }
   function follow() {
     const {x,y,card,grid} = live, edge = 48, h = window.innerHeight;
-    if (y < edge) window.scrollBy(0, -8); else if (y > h-edge) window.scrollBy(0, 8);
+    if (y < edge) window.scrollBy(0, -10); else if (y > h-edge) window.scrollBy(0, 10);
     const other = cardAt(x,y);
     if (other) grid.insertBefore(card, card.compareDocumentPosition(other) & Node.DOCUMENT_POSITION_FOLLOWING ? other.nextSibling : other);
+    track();
     live.frame = requestAnimationFrame(follow);
   }
   function lift() {
     if (!live || dialog.open) return end(false);
-    live.active = true;
+    const r = live.card.getBoundingClientRect();
+    Object.assign(live, {active:true, gx:live.x0-r.left, gy:live.y0-r.top, tx:0, ty:0});
     live.card.setAttribute('data-lifted',''); live.grid.setAttribute('data-sorting','');
-    navigator.vibrate?.(10);
-    live.frame = requestAnimationFrame(follow);
+    document.getSelection()?.removeAllRanges();
+    if (live.touch) navigator.vibrate?.(10);
+    track(); live.frame = requestAnimationFrame(follow);
   }
   function end(commit) {
     if (!live) return;
     const {card,grid,before,active,timer,frame} = live; live = null;
     clearTimeout(timer); cancelAnimationFrame(frame);
     if (!active) return;
-    card.removeAttribute('data-lifted'); grid.removeAttribute('data-sorting');
+    card.style.transform = ''; card.removeAttribute('data-lifted'); grid.removeAttribute('data-sorting');
     swallowUntil = Date.now() + 500;
     const now = [...grid.children];
     if (now.every((n,i) => n === before[i])) return;
@@ -155,25 +165,30 @@
     }
     grid.append(...before);
   }
+  const draggable = target => target.closest?.('#services [data-service]') && !target.closest('button, details, input, select, textarea');
   document.addEventListener('pointerdown', e => {
-    if (live || dialog.open || e.button !== 0 || !e.isPrimary) return;
-    const card = e.target.closest?.('#services [data-service]');
-    if (!card || e.target.closest('button, details, input, select, textarea')) return;
+    if (live || dialog.open || e.button !== 0 || !e.isPrimary || !draggable(e.target)) return;
+    const card = e.target.closest('[data-service]');
     const g = groups().find(g => g.grid === card.parentElement && g.cards.includes(card));
     if (!g || g.cards.length < 2) return;
-    live = {card, grid:g.grid, id:e.pointerId, x0:e.clientX, y0:e.clientY, x:e.clientX, y:e.clientY, active:false, before:[...g.grid.children], frame:0};
-    live.timer = setTimeout(lift, HOLD_MS);
+    const touch = e.pointerType === 'touch';
+    live = {card, grid:g.grid, id:e.pointerId, touch, x0:e.clientX, y0:e.clientY, x:e.clientX, y:e.clientY, active:false, before:[...g.grid.children], frame:0};
+    if (touch) live.timer = setTimeout(lift, HOLD_MS);
   });
   document.addEventListener('pointermove', e => {
     if (!live || e.pointerId !== live.id) return;
     live.x = e.clientX; live.y = e.clientY;
-    if (!live.active && Math.hypot(live.x-live.x0, live.y-live.y0) > SLOP) end(false);
+    if (live.active) return;
+    const moved = Math.hypot(live.x-live.x0, live.y-live.y0);
+    if (live.touch) { if (moved > SLOP) end(false); }
+    else if (moved > MOUSE_START) lift();
   });
   document.addEventListener('pointerup', e => { if (live?.id === e.pointerId) end(true); });
   document.addEventListener('pointercancel', e => { if (live?.id === e.pointerId) end(false); });
-  // Once lifted, keep the page from scrolling, selecting or opening a link menu.
+  // The browser's own link and image dragging would steal the gesture.
+  document.addEventListener('dragstart', e => { if (draggable(e.target)) e.preventDefault(); });
+  // Once lifted, keep the page from scrolling or opening a link menu.
   document.addEventListener('touchmove', e => { if (live?.active) e.preventDefault(); }, {passive:false});
-  document.addEventListener('dragstart', e => { if (live?.active) e.preventDefault(); else if (live) end(false); });
   document.addEventListener('contextmenu', e => { if (live) e.preventDefault(); });
   document.addEventListener('click', e => {
     if (Date.now() < swallowUntil && e.target.closest?.('#services')) { e.preventDefault(); e.stopPropagation(); swallowUntil = 0; }
