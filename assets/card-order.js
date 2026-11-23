@@ -118,6 +118,69 @@
     } catch (_) { el('card-order-status').textContent='Could not save in this browser. Your changes are still here.'; return; }
     dialog.close(); refresh();
   });
+  // Press and hold a card on the page, then drag it within its group. Moving
+  // before the hold completes is a scroll or ordinary link drag, not a reorder.
+  const HOLD_MS = 350, SLOP = 8;
+  let live = null, swallowUntil = 0;
+  function cardAt(x, y) {
+    return document.elementsFromPoint(x, y).map(n => n.closest('[data-service]'))
+      .find(n => n && n !== live.card && n.parentElement === live.grid) || null;
+  }
+  function follow() {
+    const {x,y,card,grid} = live, edge = 48, h = window.innerHeight;
+    if (y < edge) window.scrollBy(0, -8); else if (y > h-edge) window.scrollBy(0, 8);
+    const other = cardAt(x,y);
+    if (other) grid.insertBefore(card, card.compareDocumentPosition(other) & Node.DOCUMENT_POSITION_FOLLOWING ? other.nextSibling : other);
+    live.frame = requestAnimationFrame(follow);
+  }
+  function lift() {
+    if (!live || dialog.open) return end(false);
+    live.active = true;
+    live.card.setAttribute('data-lifted',''); live.grid.setAttribute('data-sorting','');
+    navigator.vibrate?.(10);
+    live.frame = requestAnimationFrame(follow);
+  }
+  function end(commit) {
+    if (!live) return;
+    const {card,grid,before,active,timer,frame} = live; live = null;
+    clearTimeout(timer); cancelAnimationFrame(frame);
+    if (!active) return;
+    card.removeAttribute('data-lifted'); grid.removeAttribute('data-sorting');
+    swallowUntil = Date.now() + 500;
+    const now = [...grid.children];
+    if (now.every((n,i) => n === before[i])) return;
+    if (commit && root()?.dataset.identityScope === scope && !blocked) {
+      try { localStorage.setItem(key, JSON.stringify(groups().flatMap(g => g.cards.map(idOf)))); refresh(); return; }
+      catch (_) { /* fall through and put the card back */ }
+    }
+    grid.append(...before);
+  }
+  document.addEventListener('pointerdown', e => {
+    if (live || dialog.open || e.button !== 0 || !e.isPrimary) return;
+    const card = e.target.closest?.('#services [data-service]');
+    if (!card || e.target.closest('button, details, input, select, textarea')) return;
+    const g = groups().find(g => g.grid === card.parentElement && g.cards.includes(card));
+    if (!g || g.cards.length < 2) return;
+    live = {card, grid:g.grid, id:e.pointerId, x0:e.clientX, y0:e.clientY, x:e.clientX, y:e.clientY, active:false, before:[...g.grid.children], frame:0};
+    live.timer = setTimeout(lift, HOLD_MS);
+  });
+  document.addEventListener('pointermove', e => {
+    if (!live || e.pointerId !== live.id) return;
+    live.x = e.clientX; live.y = e.clientY;
+    if (!live.active && Math.hypot(live.x-live.x0, live.y-live.y0) > SLOP) end(false);
+  });
+  document.addEventListener('pointerup', e => { if (live?.id === e.pointerId) end(true); });
+  document.addEventListener('pointercancel', e => { if (live?.id === e.pointerId) end(false); });
+  // Once lifted, keep the page from scrolling, selecting or opening a link menu.
+  document.addEventListener('touchmove', e => { if (live?.active) e.preventDefault(); }, {passive:false});
+  document.addEventListener('dragstart', e => { if (live?.active) e.preventDefault(); else if (live) end(false); });
+  document.addEventListener('contextmenu', e => { if (live) e.preventDefault(); });
+  document.addEventListener('click', e => {
+    if (Date.now() < swallowUntil && e.target.closest?.('#services')) { e.preventDefault(); e.stopPropagation(); swallowUntil = 0; }
+  }, true);
+  document.addEventListener('keydown', e => { if (e.key === 'Escape' && live) end(false); });
+  window.addEventListener('blur', () => end(false));
+  document.body.addEventListener('htmx:beforeSwap', () => end(false));
   window.addEventListener('storage', e => { if (e.key === key || e.key === null) { if (dialog.open) dialog.close(); refresh(); } });
   document.body.addEventListener('htmx:afterSwap', refresh);
   document.body.addEventListener('htmx:responseError', e => {
