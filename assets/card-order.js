@@ -11,11 +11,30 @@
   const idOf = node => node.dataset.personalService || 'npm:' + node.dataset.serviceId;
   const originals = new WeakMap();
   let signature = '', drag = null, reset = false, blocked = false;
-  function read() {
+  const validList = ids => Array.isArray(ids) && ids.length <= limit && ids.every(valid) && new Set(ids).size === ids.length;
+  // The server (shared) order each grid had before this browser's order was applied.
+  const serverOrder = gs => gs.flatMap(g => originals.get(g.grid) || []);
+  // Saved as {ids, base}: base is the shared order at save time. When the shared
+  // order later changes (for example an agent reorders the portal), the newer
+  // shared order wins and this browser's copy is dropped. Added or removed
+  // services alone do not count as a change.
+  function write(ids, gs) { localStorage.setItem(key, JSON.stringify({v:2, ids, base:serverOrder(gs)})); }
+  function read(gs) {
     const raw = localStorage.getItem(key);
-    if (!raw || raw.length > 100000) return [];
-    let ids; try { ids = JSON.parse(raw); } catch (_) { return []; }
-    return Array.isArray(ids) && ids.length <= limit && ids.every(valid) && new Set(ids).size === ids.length ? ids : [];
+    if (!raw || raw.length > 200000) return [];
+    let saved; try { saved = JSON.parse(raw); } catch (_) { return []; }
+    if (Array.isArray(saved)) {
+      if (!validList(saved)) return [];
+      try { write(saved, gs); } catch (_) { /* keep using the legacy copy */ }
+      return saved;
+    }
+    if (!saved || saved.v !== 2 || !validList(saved.ids) || !validList(saved.base)) return [];
+    const now = serverOrder(gs), was = new Set(saved.base), present = new Set(now);
+    if (now.filter(id => was.has(id)).join() !== saved.base.filter(id => present.has(id)).join()) {
+      try { localStorage.removeItem(key); } catch (_) { /* ignore */ }
+      return [];
+    }
+    return saved.ids;
   }
   // Discover only currently rendered services; never reconstruct a card from storage.
   function groups() {
@@ -37,7 +56,7 @@
   function refresh() {
     const gs = groups();
     if (dialog.open && stamp(gs) !== signature) dialog.close();
-    let ids; try { ids = read(); } catch (_) { ids = []; }
+    let ids; try { ids = read(gs); } catch (_) { ids = []; }
     const all = gs.flatMap(g => g.cards.map(idOf));
     opener.hidden = !gs.some(g => g.cards.length > 1) || all.length > limit || new Set(all).size !== all.length;
     for (const {cards,grid} of gs) {
@@ -114,7 +133,7 @@
     if (stamp(groups()) !== signature) { dialog.close(); return; }
     try {
       if (reset) localStorage.removeItem(key);
-      else localStorage.setItem(key,JSON.stringify([...list.querySelectorAll('.order-row')].map(n => n.dataset.id)));
+      else write([...list.querySelectorAll('.order-row')].map(n => n.dataset.id), groups());
     } catch (_) { el('card-order-status').textContent='Could not save in this browser. Your changes are still here.'; return; }
     dialog.close(); refresh();
   });
@@ -160,7 +179,7 @@
     const now = [...grid.children];
     if (now.every((n,i) => n === before[i])) return;
     if (commit && root()?.dataset.identityScope === scope && !blocked) {
-      try { localStorage.setItem(key, JSON.stringify(groups().flatMap(g => g.cards.map(idOf)))); refresh(); return; }
+      try { const gs = groups(); write(gs.flatMap(g => g.cards.map(idOf)), gs); refresh(); return; }
       catch (_) { /* fall through and put the card back */ }
     }
     grid.append(...before);

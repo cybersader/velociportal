@@ -1298,19 +1298,45 @@ document.addEventListener("click", function (event) {
     }
   }
 
+  // A text field can keep focus after its on-screen keyboard closes (for
+  // example after the Android back gesture, then scrolling). Where the visual
+  // viewport is available, the dock returns as soon as the keyboard is no
+  // longer taking up the bottom of the screen. Right after focus it stays
+  // hidden briefly so it does not flash while the keyboard opens.
+  var vv = window.visualViewport;
+  var tallest = {};
+  var settleUntil = 0;
+  function keyboardUp() {
+    if (!vv) return true;
+    var width = Math.round(window.innerWidth);
+    var height = vv.height * (vv.scale || 1);
+    tallest[width] = Math.max(tallest[width] || 0, window.innerHeight, height);
+    return height < tallest[width] - 120;
+  }
+  function sync() {
+    var typing = isTextEntry(document.activeElement) && (Date.now() < settleUntil || keyboardUp());
+    if (typing) {
+      document.body.classList.add(TYPING_CLASS);
+      if (!dockContainsFocus()) setDockInert(true);
+    } else {
+      document.body.classList.remove(TYPING_CLASS);
+      setDockInert(false);
+    }
+  }
+  if (vv) {
+    keyboardUp();
+    vv.addEventListener("resize", sync);
+    window.addEventListener("scroll", sync, { passive: true });
+  }
   document.addEventListener("focusin", function (event) {
     if (!isTextEntry(event.target)) return;
-    document.body.classList.add(TYPING_CLASS);
-    if (!dockContainsFocus()) setDockInert(true);
+    settleUntil = Date.now() + 700;
+    sync();
+    window.setTimeout(sync, 750);
   });
   document.addEventListener("focusout", function (event) {
     if (!isTextEntry(event.target)) return;
-    window.setTimeout(function () {
-      if (!isTextEntry(document.activeElement)) {
-        document.body.classList.remove(TYPING_CLASS);
-        setDockInert(false);
-      }
-    }, 0);
+    window.setTimeout(sync, 0);
   });
 }());
 
