@@ -264,7 +264,7 @@ func mcpWriteTool(w http.ResponseWriter, id json.RawMessage, result mcpToolResul
 	body, err := mcpApplicationResponse(id, result)
 	if err != nil {
 		failure := error(errPersonalUnavailable)
-		if !result.IsError && (name == "personal_create" || name == "personal_update" || name == "personal_delete" || name == "shared_icon_set" || name == "shared_icon_reset" || name == "custom_icon_import" || name == "custom_icon_set") {
+		if !result.IsError && (name == "personal_create" || name == "personal_update" || name == "personal_delete" || name == "shared_icon_set" || name == "shared_icon_reset" || name == "shared_order_set" || name == "custom_icon_import" || name == "custom_icon_set") {
 			failure = errMetadataUncertain
 		}
 		body, err = mcpApplicationResponse(id, mcpApplicationResult(nil, failure, false))

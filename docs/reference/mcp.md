@@ -1,6 +1,6 @@
 # Service-hosted MCP (RC.20 candidate)
 
-The current source adds an **opt-in `/mcp` endpoint in the existing Velociportal service**, for finite icons, the caller's durable personal entries, and shared presentation icons on already-authorized cards. No workstation hosts a second server. There is no model, upstream administration, login system, token issuer, database, or new listener.
+The current source adds an **opt-in `/mcp` endpoint in the existing Velociportal service**, for finite icons, the caller's durable personal entries, and shared presentation icons and default card order on already-authorized cards. No workstation hosts a second server. There is no model, upstream administration, login system, token issuer, database, or new listener.
 
 !!! warning "RC.20 candidate, not verified deployment or universal client support"
     `v0.2.0-rc.20` is the selected prerelease candidate for MCP, durable personal storage and metadata v4. Immutable RC.18/19 do not contain these features; RC.19 fixes the earlier route panic. This preparation does not assert an RC.20 image/digest has been published. Use these opt-ins only with a verified compatible immutable image and separately approved storage/deployment. On 2026-11-14 the owner authorized prerelease publication with the remaining native-client and live-acceptance gaps disclosed, rather than blocking publication. This is not a compatibility, security, deployment or support certification; it authorizes no live NAS, storage, permissions, network or Serve changes. Tailscale remains preview.
@@ -52,7 +52,7 @@ There is no permissive CORS or alternative bearer/cookie/session authentication.
 - **16 KiB complete request**, JSON depth **16**, route-local read/write deadline **10 seconds**, and **256 KiB complete response**, including RPC envelope/ID and both `structuredContent` and text representations. No truncated success. JSON rejects unknown, duplicate, case-variant and null fields where not explicitly permitted; tool objects have exact allowed keys. Encoding failure after a successful mutation is uncertain, not rollback.
 - Identity-derived responses are `no-store`. Tool arguments, private URLs, ownership IDs and result bodies must not be logged. Client-side transcripts may contain the caller's authored data: treat them as private too.
 
-## The nine fixed tools
+## The ten fixed tools
 
 Discovery is recomputed per request and may advertise fewer tools when storage/ownership/freshness/editor capability is unavailable. Dispatch repeats authority checks even if the client retained a descriptor.
 
@@ -64,13 +64,37 @@ Discovery is recomputed per request and may advertise fewer tools when storage/o
 | `personal_update` | Create fields plus own `id` | Replace that own entry's authored fields; omitted icon clears the authored override to inherit |
 | `personal_delete` | `store_id`, `generation`, `revision`, own `id` | Own confirmed state after delete; initialized-empty remains authoritative |
 | `shared_targets_list` | `kind`; optional `cursor`, `limit` | Current caller-visible targets of one kind: `npm`, `machine`, or `application` |
-| `shared_target_get` | `target` exactly `{kind, handle}` | Selected name/shared/effective icon and opaque `revision`, `target_revision` |
+| `shared_target_get` | `target` exactly `{kind, handle}` | Selected name/shared/effective icon, NPM `category`/`order` when set, and opaque `revision`, `target_revision` |
 | `shared_icon_set` | `target`, `revision`, `target_revision`, finite nonempty `icon` | `{"status":"saved"}` only after confirmed shared commit |
 | `shared_icon_reset` | `target`, `revision`, `target_revision` | Remove only selected shared icon/default; same confirmed-save result |
+| `shared_order_set` | `revision`, `entries` (1–64 distinct NPM targets) | Set or remove shared default `category`/`order` in one commit; `{"status":"saved","revision":"…"}` |
 
 Personal results contain own authored document, `durable`, stable `store_id`, process `generation`, collection `revision`, initialized state and coarse projection—not a whole private file, browser CSRF token, foreign collection or policy snapshot. There is no MCP restore/import tool. No tool accepts an arbitrary shared destination URL/path/digest/provider-ID tuple. Icons are finite embedded IDs, never uploads, external logos or filesystem paths.
 
 Shared target selection uses actual current card evidence: policy-matched NPM service; full supported SSH + independent Grant TCP/22 + current device capability for a Machine; or the maintainer's **own active personal entry** for an application. It never enumerates foreign personal records, the global digest map, matching-user counts or backend topology. No icon creates a card or supplies authorization.
+
+### Shared default card order
+
+`shared_targets_list` and `shared_target_get` include an NPM target's current shared `category` (string) and `order` (integer 0–1,000,000) when the shared file sets them; absent fields are omitted. Machine and application summaries never carry them.
+
+`shared_order_set` takes the shared document `revision` from either read tool and `entries`, an array of 1–64 objects. Each entry has exactly `target` plus at least one of `order` and `category`:
+
+```json
+{"revision": "…", "entries": [
+  {"target": {"kind": "npm", "handle": "…"}, "order": 10, "category": "Media"},
+  {"target": {"kind": "npm", "handle": "…"}, "order": null}
+]}
+```
+
+- A value sets the field, `null` removes it, and an omitted field is left unchanged. A touched entry left with no fields is removed from the file.
+- Every target must be a distinct, currently visible NPM service for the caller. Duplicate targets are invalid arguments. A machine, application, missing or invisible target returns the unavailable-target response (`not_found`) and nothing is written.
+- All entries are applied in **one** commit with whole-document CAS, or none are. Every target is rechecked immediately before the rename. A stale `revision` returns `conflict`. Setting values that are already current returns the current revision without writing.
+- The result carries the new document `revision`, so a client can chain another call without re-reading. Lost or uncertain responses still require read-back, not replay.
+- The writer is the ordinary lossless NPM writer: a legacy file becomes v3, v4 stays v4 and v5 stays v5. Name, link, icon, custom icon, other entries, machine/application arrays, binding and null presence are preserved.
+- It requires the same shared-editor capability as the icon tools. It changes presentation order only: it never creates, hides or authorizes a card.
+- Sixty-four entries with 64-character ASCII categories fit the 16 KiB request limit; long non-ASCII categories may need smaller batches.
+
+This sets the **shared default** order everyone sees. A personal order saved in a browser (**Account settings → Edit card order**) still applies on top of it in that browser.
 
 ### Opt-in custom PNG logo tools (unreleased source) { #opt-in-custom-png-logo-tools-unreleased-source }
 

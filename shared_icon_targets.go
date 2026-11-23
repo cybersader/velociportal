@@ -37,6 +37,11 @@ type sharedTargetSummary struct {
 	Name          string          `json:"name"`
 	SharedIcon    string          `json:"shared_icon"`
 	EffectiveIcon string          `json:"effective_icon"`
+
+	// NPM only: the shared default category/order, omitted when absent. Order
+	// is a canonical decimal json.Number so the summary stays comparable.
+	Category string      `json:"category,omitempty"`
+	Order    json.Number `json:"order,omitempty"`
 }
 
 type sharedTargetForm struct {
@@ -245,7 +250,10 @@ func (o *SharedIconOperations) sharedNPMSummary(identity *Identity, data *CacheD
 	if override.Icon != "" && !validServiceIcon(override.Icon) || card.Icon != "" && !validServiceIcon(card.Icon) {
 		return sharedSelectedTarget{}, errMetadataStale
 	}
-	summary := sharedTargetSummary{Target: ref, Name: sharedTargetDisplayName(card.Name, "Service"), SharedIcon: override.Icon, EffectiveIcon: card.Icon}
+	summary := sharedTargetSummary{Target: ref, Name: sharedTargetDisplayName(card.Name, "Service"), SharedIcon: override.Icon, EffectiveIcon: card.Icon, Category: override.Category}
+	if override.Order != nil {
+		summary.Order = json.Number(strconv.Itoa(*override.Order))
+	}
 	order := ""
 	if card.Order != nil {
 		order = strconv.Itoa(*card.Order)

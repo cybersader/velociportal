@@ -866,7 +866,7 @@ func TestSharedNPMOperationsNoCapabilitiesAdded(t *testing.T) {
 	if json.Unmarshal(w.Body.Bytes(), &response) != nil || len(response.Result.Tools) != 1 || response.Result.Tools[0].Name != "icons_list" {
 		t.Fatal("new capabilities advertised", w.Body.String())
 	}
-	for _, name := range []string{"shared_targets_list", "shared_target_get", "shared_icon_set", "shared_icon_reset", "personal_read", "personal_create", "personal_update", "personal_delete"} {
+	for _, name := range []string{"shared_targets_list", "shared_target_get", "shared_icon_set", "shared_icon_reset", "shared_order_set", "personal_read", "personal_create", "personal_update", "personal_delete"} {
 		body, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": map[string]any{"name": name, "arguments": map[string]any{}}})
 		w := httptest.NewRecorder()
 		mux.ServeHTTP(w, mcpTestRequest(string(body), true))
