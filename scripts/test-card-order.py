@@ -20,6 +20,27 @@ ICON = 'data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%
 def card(i):
     return f'<article class="card card-editable" data-service="Service {i}" data-service-id="{i}"><a class="service-main" href="#s{i}"><img class="service-icon" src="{ICON}" width="32" height="32" alt=""><span class="card-head"><span class="card-name">Service {i}</span></span></a></article>'
 
+# Drive a slow drag frame by frame: the lifted card must stay exactly under the
+# pointer (no lagging transition) and a card must not swap back and forth while
+# the pointer rests just past its middle.
+STEADY = r"""
+const done = arguments[arguments.length-1], frame = () => new Promise(r => requestAnimationFrame(() => r()));
+const order = () => [...document.querySelectorAll('#services .card')].map(n => n.dataset.serviceId).join('');
+const [a, b] = document.querySelectorAll('#services .card'), ra = a.getBoundingClientRect(), x = ra.left + ra.width/2, y0 = ra.top + ra.height/2;
+const fire = (type, y) => (type === 'pointerdown' ? a.querySelector('.card-name') : document).dispatchEvent(new PointerEvent(type, {bubbles:true, pointerId:7, isPrimary:true, button:0, pointerType:'mouse', clientX:x, clientY:y}));
+(async () => {
+  fire('pointerdown', y0); fire('pointermove', y0 + 10); await frame();
+  const out = {transition: getComputedStyle(a).transitionDuration, seen: [], lag: 0};
+  const rb = b.getBoundingClientRect(), stop = rb.top + rb.height * .6;
+  for (let y = y0 + 10; y <= stop; y += 3) {
+    fire('pointermove', y); await frame();
+    out.lag = Math.max(out.lag, Math.abs(a.getBoundingClientRect().top + ra.height/2 - y));
+  }
+  for (let i = 0; i < 30; i++) { await frame(); out.seen.push(order()); }
+  fire('pointerup', stop); out.final = order(); done(out);
+})();
+"""
+
 
 def fixture():
     page = (ROOT / 'handlers.go').read_text().split('const portalPage = `')[1].split('</html>`')[0] + '</html>'
@@ -67,6 +88,8 @@ def run():
             open_order(); click('card-order-default'); click('card-order-save'); assert order()=='123'
             def centers(): return js('return [...document.querySelectorAll("#services .card")].map(c=>{let r=c.getBoundingClientRect();return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)}})')
             def hold_drag(a, b, wait, kind='mouse'):
+                # A card moves once the pointer reaches the middle of the card it is passing.
+                b = {'x': b['x'], 'y': b['y'] + (6 if b['y'] > a['y'] else -6 if b['y'] < a['y'] else 0)}
                 req(session+'/actions', {'actions':[{'type':'pointer','id':'card-'+kind,'parameters':{'pointerType':kind},'actions':[{'type':'pointerMove',**a},{'type':'pointerDown','button':0},{'type':'pause','duration':wait},{'type':'pointerMove','duration':250,**b},{'type':'pause','duration':150},{'type':'pointerUp','button':0}]}]})
             c = centers(); req(session+'/actions', {'actions':[{'type':'pointer','id':'tap','parameters':{'pointerType':'mouse'},'actions':[{'type':'pointerMove',**c[1]},{'type':'pointerDown','button':0},{'type':'pointerUp','button':0}]}]})
             assert js('return location.hash')=='#s2' and order()=='123', 'a plain click must open the link without reordering'
@@ -87,11 +110,16 @@ def run():
             assert js('return localStorage.length')==0, 'order saved under the old key was kept'
             server((3, 1, 2)); assert order()=='312'
             c = centers(); hold_drag(c[0], c[2], 0, 'touch'); assert order()=='312', 'a touch swipe without holding must not reorder'
-            c = centers(); hold_drag(c[2], c[0], 500, 'touch'); assert order()=='231', 'touch press-and-hold drag did not reorder'
+            c = centers(); hold_drag(c[2], c[0], 500, 'touch'); assert order()=='231', f'touch press-and-hold drag did not reorder: {order()}'
             server((1, 2, 3)); assert order()=='123', 'shared order change did not reset the touch-saved order'
+            r = req(session+'/execute/async', {'script':STEADY, 'args':[]})
+            assert all(d in ('0s', '') for d in r['transition'].split(', ')), f"lifted card still animates its position: {r['transition']}"
+            assert r['lag'] < 2, f"lifted card trails the pointer by {r['lag']}px"
+            assert set(r['seen'])=={'213'} and r['final']=='213', f"cards jumped around while the pointer rested: {r['seen']}"
+            open_order(); click('card-order-default'); click('card-order-save'); assert order()=='123'
             open_order(); js('document.querySelector("#services .card").remove(); document.body.dispatchEvent(new Event("htmx:afterSwap"))'); assert not js('return document.querySelector("#card-order").open') and order()=='23'
             js('document.querySelector("#portal-content").dataset.identityScope="other";document.body.dispatchEvent(new Event("htmx:afterSwap"))'); assert js('return document.querySelector("#card-order-open").hidden')
-            print('PASS account name, Cancel, pointer drag, page drag (mouse, click-through, touch hold), shared-order precedence, arrows, Save, reload, default order, visibility and identity changes')
+            print('PASS account name, Cancel, pointer drag, page drag (mouse, click-through, touch hold, steady under the pointer), shared-order precedence, arrows, Save, reload, default order, visibility and identity changes')
         finally:
             try:
                 if session: req(session, method='DELETE')

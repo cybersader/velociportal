@@ -147,21 +147,63 @@
   // first so ordinary scrolling still works. A plain click still opens the link.
   const HOLD_MS = 350, SLOP = 8, MOUSE_START = 5;
   let live = null, swallowUntil = 0;
-  function cardAt(x, y) {
-    return document.elementsFromPoint(x, y).map(n => n.closest('[data-service]'))
-      .find(n => n && n !== live.card && n.parentElement === live.grid) || null;
+  const calm = matchMedia('(prefers-reduced-motion: reduce)');
+  // Hit-test against where the other cards sit in the layout (page coordinates),
+  // not where they are drawn, so sliding cards and scrolling never feed back
+  // into the next move.
+  function pos(n) {
+    const g = live.grid, b = g.getBoundingClientRect(), own = n.offsetParent === g;
+    const l = b.left + scrollX + n.offsetLeft - (own ? -g.clientLeft : g.offsetLeft);
+    const t = b.top + scrollY + n.offsetTop - (own ? -g.clientTop : g.offsetTop);
+    return {n, l, t, r:l + n.offsetWidth, b:t + n.offsetHeight};
   }
+  function measure() { live.slots = [...live.grid.children].filter(n => n !== live.card).map(pos); }
   // Keep the lifted card under the pointer while its slot moves in the grid.
   function track() {
     const {card,x,y} = live, r = card.getBoundingClientRect();
     live.tx = x - live.gx - (r.left - live.tx); live.ty = y - live.gy - (r.top - live.ty);
     card.style.transform = `translate(${live.tx}px, ${live.ty}px)`;
   }
+  // The card under the pointer, once the pointer reaches its middle in the
+  // direction of travel. Only reaching the middle moves a card, so a move
+  // cannot immediately undo itself.
+  function target() {
+    const px = live.x + scrollX, py = live.y + scrollY, c = pos(live.card);
+    const s = live.slots.find(s => px >= s.l && px <= s.r && py >= s.t && py <= s.b);
+    if (!s) return null;
+    const after = live.card.compareDocumentPosition(s.n) & Node.DOCUMENT_POSITION_FOLLOWING;
+    const sameRow = Math.abs(s.t - c.t) < (s.b - s.t) / 2;
+    const mid = sameRow ? (s.l + s.r) / 2 : (s.t + s.b) / 2, at = sameRow ? px : py;
+    return (after ? at >= mid : at <= mid) ? {n:s.n, after} : null;
+  }
+  // Slide the cards that made room instead of letting them jump.
+  function slide(seen) {
+    if (calm.matches) return;
+    for (const [n, was] of seen) {
+      const r = n.getBoundingClientRect(), dx = was.left - r.left, dy = was.top - r.top;
+      if (dx || dy) n.animate([{transform:`translate(${dx}px, ${dy}px)`}, {transform:'none'}], {duration:160, easing:'cubic-bezier(.2,.7,.3,1)'});
+    }
+  }
+  // Scroll near the top or bottom of the visible area, above the phone dock,
+  // faster the closer the pointer is to the edge.
+  function autoscroll() {
+    const dock = document.getElementById('bottom-nav'), d = dock && dock.offsetParent ? dock.getBoundingClientRect() : null;
+    const top = 0, bottom = d && d.top > 0 ? d.top : innerHeight, edge = Math.min(72, (bottom - top) / 5), y = live.y;
+    let v = 0;
+    if (y < top + edge) v = -(top + edge - y); else if (y > bottom - edge) v = y - (bottom - edge);
+    if (v) window.scrollBy(0, Math.max(-18, Math.min(18, v / edge * 18)));
+  }
   function follow() {
-    const {x,y,card,grid} = live, edge = 48, h = window.innerHeight;
-    if (y < edge) window.scrollBy(0, -10); else if (y > h-edge) window.scrollBy(0, 10);
-    const other = cardAt(x,y);
-    if (other) grid.insertBefore(card, card.compareDocumentPosition(other) & Node.DOCUMENT_POSITION_FOLLOWING ? other.nextSibling : other);
+    autoscroll();
+    const hit = target();
+    if (hit) {
+      // Where each card is drawn now, mid-slide included, so it moves on from there.
+      const seen = live.slots.map(s => [s.n, s.n.getBoundingClientRect()]);
+      live.grid.insertBefore(live.card, hit.after ? hit.n.nextSibling : hit.n);
+      measure();
+      for (const [n] of seen) n.getAnimations().forEach(a => a.cancel());
+      slide(seen);
+    }
     track();
     live.frame = requestAnimationFrame(follow);
   }
@@ -172,7 +214,7 @@
     live.card.setAttribute('data-lifted',''); live.grid.setAttribute('data-sorting','');
     document.getSelection()?.removeAllRanges();
     if (live.touch) navigator.vibrate?.(10);
-    track(); live.frame = requestAnimationFrame(follow);
+    measure(); track(); live.frame = requestAnimationFrame(follow);
   }
   function end(commit) {
     if (!live) return;

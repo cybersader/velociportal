@@ -836,7 +836,7 @@ header { max-width: 1200px; margin: 0 auto; padding: 2rem 1.5rem 1rem; display: 
 .order-row[data-dragging] { background: var(--card-hover-bg); }
 #services [data-service] { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
 #services .grid[data-sorting], #services.grid[data-sorting] { cursor: grabbing; }
-#services [data-service][data-lifted] { position: relative; z-index: 3; cursor: grabbing; opacity: .96; will-change: transform; outline: 2px solid var(--accent); outline-offset: 2px; box-shadow: 0 10px 28px rgb(0 0 0 / .22); }
+#services [data-service][data-lifted] { position: relative; z-index: 3; cursor: grabbing; opacity: .96; transition: none; will-change: transform; outline: 2px solid var(--accent); outline-offset: 2px; box-shadow: 0 10px 28px rgb(0 0 0 / .22); }
 .order-name { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .order-grip, #card-order .order-row button { display: grid; place-items: center; width: 44px; min-height: 44px; padding: 0; color: var(--muted); }
 .order-grip { cursor: grab; touch-action: none; user-select: none; }
