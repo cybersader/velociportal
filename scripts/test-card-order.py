@@ -88,6 +88,8 @@ def run():
             open_order(); click('card-order-default'); click('card-order-save'); assert order()=='123'
             def centers(): return js('return [...document.querySelectorAll("#services .card")].map(c=>{let r=c.getBoundingClientRect();return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)}})')
             def hold_drag(a, b, wait, kind='mouse'):
+                # A card moves once the pointer reaches the middle of the card it is passing.
+                b = {'x': b['x'], 'y': b['y'] + (6 if b['y'] > a['y'] else -6 if b['y'] < a['y'] else 0)}
                 req(session+'/actions', {'actions':[{'type':'pointer','id':'card-'+kind,'parameters':{'pointerType':kind},'actions':[{'type':'pointerMove',**a},{'type':'pointerDown','button':0},{'type':'pause','duration':wait},{'type':'pointerMove','duration':250,**b},{'type':'pause','duration':150},{'type':'pointerUp','button':0}]}]})
             c = centers(); req(session+'/actions', {'actions':[{'type':'pointer','id':'tap','parameters':{'pointerType':'mouse'},'actions':[{'type':'pointerMove',**c[1]},{'type':'pointerDown','button':0},{'type':'pointerUp','button':0}]}]})
             assert js('return location.hash')=='#s2' and order()=='123', 'a plain click must open the link without reordering'
@@ -108,7 +110,7 @@ def run():
             assert js('return localStorage.length')==0, 'order saved under the old key was kept'
             server((3, 1, 2)); assert order()=='312'
             c = centers(); hold_drag(c[0], c[2], 0, 'touch'); assert order()=='312', 'a touch swipe without holding must not reorder'
-            js('window.__ev=[];for(const t of ["pointerdown","pointermove","pointerup","pointercancel"])document.addEventListener(t,e=>__ev.push(t[7]+Math.round(e.clientY)),true)'); c = centers(); hold_drag(c[2], c[0], 500, 'touch'); assert order()=='231', f'touch press-and-hold drag did not reorder: {order()} {c} {js("return __ev.join(\" \")")}'
+            c = centers(); hold_drag(c[2], c[0], 500, 'touch'); assert order()=='231', f'touch press-and-hold drag did not reorder: {order()}'
             server((1, 2, 3)); assert order()=='123', 'shared order change did not reset the touch-saved order'
             r = req(session+'/execute/async', {'script':STEADY, 'args':[]})
             assert all(d in ('0s', '') for d in r['transition'].split(', ')), f"lifted card still animates its position: {r['transition']}"
