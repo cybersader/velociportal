@@ -164,8 +164,8 @@
     live.tx = x - live.gx - (r.left - live.tx); live.ty = y - live.gy - (r.top - live.ty);
     card.style.transform = `translate(${live.tx}px, ${live.ty}px)`;
   }
-  // The card under the pointer, once the pointer is past its middle in the
-  // direction of travel. Only crossing the middle moves a card, so a move
+  // The card under the pointer, once the pointer reaches its middle in the
+  // direction of travel. Only reaching the middle moves a card, so a move
   // cannot immediately undo itself.
   function target() {
     const px = live.x + scrollX, py = live.y + scrollY, c = pos(live.card);
@@ -174,7 +174,7 @@
     const after = live.card.compareDocumentPosition(s.n) & Node.DOCUMENT_POSITION_FOLLOWING;
     const sameRow = Math.abs(s.t - c.t) < (s.b - s.t) / 2;
     const mid = sameRow ? (s.l + s.r) / 2 : (s.t + s.b) / 2, at = sameRow ? px : py;
-    return (after ? at > mid : at < mid) ? {n:s.n, after} : null;
+    return (after ? at >= mid : at <= mid) ? {n:s.n, after} : null;
   }
   // Slide the cards that made room instead of letting them jump.
   function slide(seen) {
