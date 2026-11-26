@@ -108,7 +108,7 @@ def run():
             assert js('return localStorage.length')==0, 'order saved under the old key was kept'
             server((3, 1, 2)); assert order()=='312'
             c = centers(); hold_drag(c[0], c[2], 0, 'touch'); assert order()=='312', 'a touch swipe without holding must not reorder'
-            c = centers(); hold_drag(c[2], c[0], 500, 'touch'); assert order()=='231', 'touch press-and-hold drag did not reorder'
+            js('window.__ev=[];for(const t of ["pointerdown","pointermove","pointerup","pointercancel"])document.addEventListener(t,e=>__ev.push(t[7]+Math.round(e.clientY)),true)'); c = centers(); hold_drag(c[2], c[0], 500, 'touch'); assert order()=='231', f'touch press-and-hold drag did not reorder: {order()} {c} {js("return __ev.join(\" \")")}'
             server((1, 2, 3)); assert order()=='123', 'shared order change did not reset the touch-saved order'
             r = req(session+'/execute/async', {'script':STEADY, 'args':[]})
             assert all(d in ('0s', '') for d in r['transition'].split(', ')), f"lifted card still animates its position: {r['transition']}"
